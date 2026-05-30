@@ -113,6 +113,16 @@ if [[ "$INSTALL" -eq 1 ]]; then
   makepkg_args+=(--install)
 fi
 
+# 隔离 makepkg 的构建目录。
+# 默认 $srcdir=$startdir/src、$pkgdir=$startdir/pkg，会与本项目自身的 src/ 目录撞名；
+# 叠加下面的 --clean，会在打包后删除 $srcdir → 把前端源码 src/ 整个清空（已踩过坑）。
+# 用独立的 BUILDDIR 让 $srcdir/$pkgdir 落到临时目录；$startdir 仍是仓库根，
+# PKGBUILD 里的 $startdir/...（二进制、图标、LICENSE）与 $srcdir/flymd.desktop 都照常可用。
+# 产物 .pkg.tar.* 仍写到 PKGDEST（默认 = $startdir = 仓库根），与原行为一致。
+build_tmp="$(mktemp -d "${TMPDIR:-/tmp}/flymd-makepkg.XXXXXX")"
+trap 'rm -rf "$build_tmp"' EXIT
+export BUILDDIR="$build_tmp"
+
 echo "==> Building pacman package with makepkg"
 makepkg "${makepkg_args[@]}"
 
