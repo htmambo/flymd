@@ -219,6 +219,60 @@ async function confirmTabClose(tab: TabDocument): Promise<boolean> {
 }
 
 /**
+ * 同步一次激活标签的 dirty 状态后，返回所有未保存标签的快照。
+ * 所见模式下 dirty 经 ~200ms 轮询同步，可能滞后；这里主动同步一次，避免漏判激活标签。
+ */
+function collectDirtyTabs(): TabDocument[] {
+  const flymd = getFlymd()
+  try {
+    if (tabManager.getActiveTab() && flymd.flymdIsDirty?.()) {
+      tabManager.markCurrentTabDirty()
+    }
+  } catch {}
+  return tabManager.getTabs().filter(t => t.dirty)
+}
+
+/**
+ * 退出前：统计所有未保存标签数量（含激活标签）。
+ * 供 main.ts 的关闭流程判断是否需要弹出"保存/放弃/取消"对话框。
+ */
+function countDirtyTabs(): number {
+  return collectDirtyTabs().length
+}
+
+/**
+ * 退出前：保存所有未保存标签。
+ * 策略与单标签关闭一致——逐个 switchToTab 后调用挂钩的 flymdSaveFile（无路径时其内部走另存为）。
+ * 返回 true 表示全部已保存；false 表示中途失败或用户在"另存为"对话框取消（此时不应退出）。
+ */
+async function saveAllDirtyTabs(): Promise<boolean> {
+  const flymd = getFlymd()
+  const dirtyTabs = collectDirtyTabs()
+  if (dirtyTabs.length === 0) return true
+
+  // 切换标签期间暂停轮询/同步，避免 restoreTabState 触发误判
+  pausePathWatcher(5000)
+  pauseDirtySyncFor(5000)
+
+  for (const tab of dirtyTabs) {
+    try {
+      // 切到该标签：编辑器载入它的内容、currentFilePath 指向它
+      await tabManager.switchToTab(tab.id)
+      if (typeof flymd.flymdSaveFile === 'function') {
+        await flymd.flymdSaveFile()
+      }
+      // 仍为脏：通常是无路径标签在"另存为"里被取消，或保存失败 → 中止退出，避免丢数据
+      const after = tabManager.findTabById(tab.id)
+      if (after && after.dirty) return false
+    } catch (e) {
+      console.error('[Tabs] 退出前保存标签失败:', e)
+      return false
+    }
+  }
+  return true
+}
+
+/**
  * 初始化标签系统
  * 在 DOM 就绪后调用
  */
@@ -290,6 +344,10 @@ export async function initTabSystem(): Promise<void> {
   hookSaveFile()
   hookFileSavedEvent()
   hookKeyboardShortcuts()
+
+  // 退出前"保存所有未保存标签"能力：供 main.ts 的窗口关闭流程调用
+  ;(window as any).flymdCountDirtyTabs = countDirtyTabs
+  ;(window as any).flymdSaveAllDirtyTabs = saveAllDirtyTabs
 
   // 监听编辑器变化，同步 dirty 状态
   setupDirtySync()

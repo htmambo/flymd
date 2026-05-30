@@ -10560,35 +10560,42 @@ function bindEvents() {
         try { await destroyWin() } catch {}
       }
 
-      if (!dirty) {
+      // 统计所有标签的未保存数量（标签系统未就绪时退回到“仅当前文档”）
+      const tabApi = window as any
+      const dirtyCount: number = (typeof tabApi.flymdCountDirtyTabs === 'function')
+        ? tabApi.flymdCountDirtyTabs()
+        : (dirty ? 1 : 0)
+
+      if (dirtyCount === 0) {
         await exitNow()
         return
       }
 
       try { await saveCurrentDocPosNow() } catch {}
 
-      let shouldExit = false
-      let wantSave = false
+      // 使用自定义三按钮对话框（多语言文案）；多个未保存文档时给出数量
+      const msg = dirtyCount > 1
+        ? t('dlg.exit.unsavedMulti', { count: dirtyCount })
+        : t('dlg.exit.unsaved')
+      const result = await showThreeButtonDialog(msg, t('dlg.exit.title'))
 
-      // 使用自定义三按钮对话框（多语言文案）
-      const result = await showThreeButtonDialog(
-        t('dlg.exit.unsaved'),
-        t('dlg.exit.title')
-      )
-
-      if (result === 'save') {
-        // 保存并退出
-        wantSave = true
-      } else if (result === 'discard') {
-        // 直接退出，放弃更改
-        shouldExit = true
-      } else {
-        // cancel - 取消退出，不做任何操作
+      if (result === 'cancel') {
+        // 取消退出，不做任何操作
+        return
+      }
+      if (result === 'discard') {
+        // 直接退出，放弃所有未保存更改
+        await exitNow()
         return
       }
 
-      if (wantSave) {
-        try {
+      // result === 'save'：保存所有未保存标签；任一未完成（含另存为取消/失败）则不退出
+      let allSaved = false
+      try {
+        if (typeof tabApi.flymdSaveAllDirtyTabs === 'function') {
+          allSaved = await tabApi.flymdSaveAllDirtyTabs()
+        } else {
+          // 退回：仅保存当前文档
           const wasDirty = dirty
           if (!currentFilePath) {
             await saveAs()
@@ -10597,18 +10604,14 @@ function bindEvents() {
           }
           // 仅当 dirty 从 true 变为 false 时视为保存成功；
           // 如果用户在文件选择器中点击了“取消”或保存失败，保持窗口不退出
-          if (wasDirty && !dirty) {
-            shouldExit = true
-          } else {
-            shouldExit = false
-          }
-        } catch (e) {
-          showError('保存失败', e)
-          shouldExit = false
+          allSaved = wasDirty ? !dirty : true
         }
+      } catch (e) {
+        showError('保存失败', e)
+        allSaved = false
       }
 
-      if (shouldExit) {
+      if (allSaved) {
         await exitNow()
       }
     })
