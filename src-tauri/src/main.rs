@@ -264,6 +264,79 @@ fn is_markdown_like_path(path: &std::path::Path) -> bool {
   }
 }
 
+fn normalize_startup_doc_path(path: std::path::PathBuf) -> Option<std::path::PathBuf> {
+  let candidate = if path.is_absolute() {
+    path
+  } else {
+    match std::env::current_dir() {
+      Ok(cwd) => cwd.join(path),
+      Err(_) => path,
+    }
+  };
+
+  if !is_supported_doc_path(&candidate) {
+    return None;
+  }
+
+  Some(candidate.canonicalize().unwrap_or(candidate))
+}
+
+fn startup_open_path_from_args() -> Option<std::path::PathBuf> {
+  use std::path::PathBuf;
+
+  let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+  if args.iter().any(|arg| arg.to_string_lossy() == "--sticky-note") {
+    return None;
+  }
+
+  args
+    .into_iter()
+    .filter_map(|arg| normalize_startup_doc_path(PathBuf::from(arg)))
+    .next()
+}
+
+// 单实例回调专用：用“第二个实例的 cwd”解析相对路径（不能用当前进程的 cwd）。
+fn normalize_doc_path_with_cwd(path: std::path::PathBuf, cwd: &str) -> Option<std::path::PathBuf> {
+  let candidate = if path.is_absolute() {
+    path
+  } else {
+    std::path::PathBuf::from(cwd).join(path)
+  };
+
+  if !is_supported_doc_path(&candidate) {
+    return None;
+  }
+
+  Some(candidate.canonicalize().unwrap_or(candidate))
+}
+
+// 单实例：第二个实例启动时（文件关联/“打开方式”/“在新实例打开”/“生成便签”）的处理。
+// 统一语义：把传入的文件并入已运行实例，作为“新标签”打开，并把主窗口拉到前台；
+// 第二个实例随后由插件自动退出，不再出现第二个窗口。
+fn handle_second_instance_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>, argv: &[String], cwd: &str) {
+  use std::path::PathBuf;
+
+  // 取第一个受支持的文档路径；忽略 --sticky-note 等开关 token（按用户选择统一并入标签页）。
+  let doc = argv
+    .iter()
+    .skip(1)
+    .filter(|a| !a.starts_with("--"))
+    .filter_map(|a| normalize_doc_path_with_cwd(PathBuf::from(a), cwd))
+    .next();
+
+  // 单实例语义即“聚焦已有窗口”：无论是否带文件，都先把主窗口唤起到前台。
+  if let Some(win) = app.get_webview_window("main") {
+    let _ = win.unminimize();
+    let _ = win.show();
+    let _ = win.set_focus();
+  }
+
+  if let Some(path) = doc {
+    // 复用统一分发：写入 PendingOpenPath 兜底 + 向前端发送 open-file（前端走标签系统新开标签）
+    dispatch_open_file_event(app, &path);
+  }
+}
+
 // 统一的“打开方式/默认程序”事件分发：写入 PendingOpenPath，并向前端发送 open-file 事件
 fn dispatch_open_file_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: &std::path::Path) {
   if !is_supported_doc_path(path) {
@@ -1721,7 +1794,18 @@ fn main() {
   init_linux_render_env();
 
   let builder = tauri::Builder::default()
-    .manage(PendingOpenPath::default())
+    .manage(PendingOpenPath::default());
+
+  // 单实例插件必须最先注册。第二个实例启动时把参数转交给已运行实例（见 handle_second_instance_open），
+  // 实现“单应用、多标签”：文件关联/“打开方式”/“在新实例打开”/“生成便签”统一并入主窗口标签页。
+  // 仅 Windows / Linux：macOS 由系统复用同一实例（RunEvent::Opened），无需单实例插件。
+  #[cfg(any(target_os = "windows", target_os = "linux"))]
+  let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+    write_startup_log(&format!("[single-instance] argc={} cwd={}", argv.len(), cwd));
+    handle_second_instance_open(app, &argv, &cwd);
+  }));
+
+  let builder = builder
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_store::Builder::default().build())
@@ -1811,28 +1895,12 @@ fn main() {
       init_startup_log(&app.handle());
       write_startup_log("[setup] begin");
 
-      // Windows "打开方式/默认程序" 传入的文件参数处理
-      #[cfg(target_os = "windows")]
-      {
-        use std::env;
-        use std::path::PathBuf;
-        let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
-        if let Some(p) = args.into_iter().find(|p| crate::is_supported_doc_path(p)) {
-          let app_handle = app.handle();
-          dispatch_open_file_event(&app_handle, &p);
-        }
+      // 处理 `flymd path/to/file.md` 以及文件关联传入的启动参数。
+      if let Some(p) = startup_open_path_from_args() {
+        let app_handle = app.handle();
+        dispatch_open_file_event(&app_handle, &p);
       }
-      // macOS：Finder 通过“打开方式/双击”传入的文件参数处理
-      #[cfg(target_os = "macos")]
-      {
-        use std::env;
-        use std::path::PathBuf;
-        let args: Vec<PathBuf> = env::args_os().skip(1).map(PathBuf::from).collect();
-        if let Some(p) = args.into_iter().find(|p| crate::is_supported_doc_path(p)) {
-          let app_handle = app.handle();
-          dispatch_open_file_event(&app_handle, &p);
-        }
-      }
+
       // 其它初始化逻辑
       if let Some(win) = app.get_webview_window("main") {
         // Windows：隐藏 menubar 但保留加速键（用于 PDF iframe 场景下也能呼出命令面板）。

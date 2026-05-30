@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "package:manjaro": "bash scripts/package-manjaro.sh",
     "pretauri:dev": "node scripts/ensure-icons.cjs",
     "pretauri:build": "node scripts/ensure-icons.cjs"
   },

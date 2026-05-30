@@ -3,6 +3,7 @@ node_modules/
 dist/
 coverage/
 .cache/
+.omc/
 *.tsbuildinfo
 *.eslintcache
 *.swp
@@ -23,6 +24,8 @@ src-tauri/gen/
 *.msi
 *.deb
 *.AppImage
+*.pkg.tar.zst
+pkg/
 
 # OS / Editor
 .DS_Store

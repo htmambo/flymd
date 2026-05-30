@@ -1,0 +1,18 @@
+post_install() {
+  update-desktop-database -q /usr/share/applications 2>/dev/null
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null
+  echo ""
+  echo "飞速 MarkDown 已安装！"
+  echo "  启动命令: flymd"
+  echo "  或从应用菜单中找到「飞速MarkDown」"
+  echo ""
+}
+
+post_upgrade() {
+  post_install
+}
+
+post_remove() {
+  update-desktop-database -q /usr/share/applications 2>/dev/null
+  gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null
+}
