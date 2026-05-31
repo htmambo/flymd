@@ -8852,3 +8852,368 @@ body.no-native-decorations.window-maximized .window-resize-handle {
   outline: none !important;
   box-shadow: none !important;
 }
+
+/* ========== Obsidian Callout 样式 ========== */
+
+/* 基础结构 */
+.callout {
+  --callout-info-rgb: 59, 130, 246;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 124, 58, 237;
+  --callout-accent-rgb: var(--callout-info-rgb);
+
+  border-radius: var(--radius-md, 6px);
+  padding: 12px 16px;
+  margin: 1em 0;
+  background: rgba(var(--callout-accent-rgb), 0.07);
+  border-left: 4px solid rgb(var(--callout-accent-rgb));
+  position: relative;
+}
+
+.callout-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.95em;
+  margin-bottom: 8px;
+  color: rgb(var(--callout-accent-rgb));
+  user-select: none;
+}
+
+.callout-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.callout-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.callout-title-inner {
+  flex: 1;
+  min-width: 0;
+}
+
+.callout-fold-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.callout-fold-icon:hover {
+  background: rgba(var(--callout-accent-rgb), 0.12);
+}
+
+.callout-fold-icon svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+
+.callout.folded .callout-fold-icon svg {
+  transform: rotate(-90deg);
+}
+
+.callout-content > *:first-child {
+  margin-top: 0;
+}
+
+.callout-content > *:last-child {
+  margin-bottom: 0;
+}
+
+/* 类型 -> 语义色映射 */
+.callout[data-callout="note"],
+.callout[data-callout="quote"],
+.callout[data-callout="cite"] {
+  --callout-accent-rgb: var(--callout-info-rgb);
+}
+
+.callout[data-callout="abstract"],
+.callout[data-callout="summary"],
+.callout[data-callout="tldr"],
+.callout[data-callout="info"],
+.callout[data-callout="todo"],
+.callout[data-callout="question"],
+.callout[data-callout="help"],
+.callout[data-callout="faq"] {
+  --callout-accent-rgb: var(--callout-info-rgb);
+}
+
+.callout[data-callout="tip"],
+.callout[data-callout="hint"],
+.callout[data-callout="important"],
+.callout[data-callout="success"],
+.callout[data-callout="check"],
+.callout[data-callout="done"] {
+  --callout-accent-rgb: var(--callout-success-rgb);
+}
+
+.callout[data-callout="warning"],
+.callout[data-callout="caution"],
+.callout[data-callout="attention"] {
+  --callout-accent-rgb: var(--callout-warning-rgb);
+}
+
+.callout[data-callout="failure"],
+.callout[data-callout="fail"],
+.callout[data-callout="missing"],
+.callout[data-callout="danger"],
+.callout[data-callout="error"],
+.callout[data-callout="bug"] {
+  --callout-accent-rgb: var(--callout-danger-rgb);
+}
+
+.callout[data-callout="example"] {
+  --callout-accent-rgb: var(--callout-example-rgb);
+}
+
+/* ---- 各主题配色覆盖 ---- */
+
+/* GitHub 风 */
+.container.md-github .callout {
+  --callout-info-rgb: 9, 105, 218;
+  --callout-success-rgb: 31, 136, 61;
+  --callout-warning-rgb: 154, 103, 0;
+  --callout-danger-rgb: 207, 34, 46;
+  --callout-example-rgb: 130, 80, 223;
+}
+
+/* Notion 风 */
+.container.md-notion .callout {
+  --callout-info-rgb: 59, 130, 246;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 139, 92, 246;
+  background: rgba(var(--callout-accent-rgb), 0.04);
+  border-left-width: 3px;
+}
+
+/* Journal 风（暖色调） */
+.container.md-journal .callout {
+  --callout-info-rgb: 70, 130, 180;
+  --callout-success-rgb: 60, 150, 100;
+  --callout-warning-rgb: 200, 150, 60;
+  --callout-danger-rgb: 190, 70, 70;
+  --callout-example-rgb: 130, 90, 170;
+}
+
+/* Card 风 */
+.container.md-card .callout {
+  --callout-info-rgb: 37, 99, 235;
+  --callout-success-rgb: 22, 163, 74;
+  --callout-warning-rgb: 217, 119, 6;
+  --callout-danger-rgb: 220, 38, 38;
+  --callout-example-rgb: 124, 58, 237;
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+/* Docs 风 */
+.container.md-docs .callout {
+  --callout-info-rgb: 29, 78, 216;
+  --callout-success-rgb: 21, 128, 61;
+  --callout-warning-rgb: 194, 100, 20;
+  --callout-danger-rgb: 185, 28, 28;
+  --callout-example-rgb: 109, 40, 217;
+}
+
+/* Typora 风 */
+.container.md-typora .callout {
+  --callout-info-rgb: 66, 133, 244;
+  --callout-success-rgb: 52, 168, 83;
+  --callout-warning-rgb: 251, 188, 5;
+  --callout-danger-rgb: 234, 67, 53;
+  --callout-example-rgb: 123, 83, 223;
+  background: rgba(var(--callout-accent-rgb), 0.04);
+}
+
+/* Obsidian 风（紫色主调） */
+.container.md-obsidian .callout {
+  --callout-info-rgb: 99, 102, 241;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 139, 92, 246;
+  background: rgba(var(--callout-accent-rgb), 0.08);
+  border-left-width: 3px;
+}
+
+/* Bear 风（红色主调） */
+.container.md-bear .callout {
+  --callout-info-rgb: 60, 120, 180;
+  --callout-success-rgb: 50, 140, 90;
+  --callout-warning-rgb: 190, 140, 50;
+  --callout-danger-rgb: 210, 60, 60;
+  --callout-example-rgb: 140, 80, 180;
+}
+
+/* Minimalist 风 */
+.container.md-minimalist .callout {
+  --callout-info-rgb: 100, 116, 139;
+  --callout-success-rgb: 71, 160, 100;
+  --callout-warning-rgb: 180, 140, 60;
+  --callout-danger-rgb: 190, 80, 80;
+  --callout-example-rgb: 130, 100, 170;
+  background: transparent;
+  border-left-width: 2px;
+  padding: 8px 14px;
+}
+
+/* ---- 暗色模式覆盖 ---- */
+body.dark-mode .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-github .callout {
+  --callout-info-rgb: 83, 155, 245;
+  --callout-success-rgb: 87, 171, 90;
+  --callout-warning-rgb: 210, 153, 34;
+  --callout-danger-rgb: 248, 81, 73;
+  --callout-example-rgb: 161, 123, 243;
+}
+
+body.dark-mode .container.md-notion .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-journal .callout {
+  --callout-info-rgb: 100, 160, 210;
+  --callout-success-rgb: 90, 180, 130;
+  --callout-warning-rgb: 220, 180, 90;
+  --callout-danger-rgb: 220, 100, 100;
+  --callout-example-rgb: 170, 130, 210;
+}
+
+body.dark-mode .container.md-card .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-docs .callout {
+  --callout-info-rgb: 147, 197, 253;
+  --callout-success-rgb: 134, 239, 172;
+  --callout-warning-rgb: 253, 186, 116;
+  --callout-danger-rgb: 252, 165, 165;
+  --callout-example-rgb: 216, 180, 254;
+}
+
+body.dark-mode .container.md-typora .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-obsidian .callout {
+  --callout-info-rgb: 129, 140, 248;
+  --callout-success-rgb: 134, 239, 172;
+  --callout-warning-rgb: 253, 186, 116;
+  --callout-danger-rgb: 252, 165, 165;
+  --callout-example-rgb: 192, 132, 252;
+}
+
+body.dark-mode .container.md-bear .callout {
+  --callout-info-rgb: 120, 170, 220;
+  --callout-success-rgb: 100, 190, 140;
+  --callout-warning-rgb: 210, 170, 80;
+  --callout-danger-rgb: 230, 100, 100;
+  --callout-example-rgb: 180, 140, 220;
+}
+
+body.dark-mode .container.md-minimalist .callout {
+  --callout-info-rgb: 148, 163, 184;
+  --callout-success-rgb: 110, 190, 140;
+  --callout-warning-rgb: 200, 170, 90;
+  --callout-danger-rgb: 210, 110, 110;
+  --callout-example-rgb: 170, 140, 200;
+}
+
+/* ---- WYSIWYG 模式下的 Callout ---- */
+.container.wysiwyg-v2 .ProseMirror .callout {
+  margin: 0.8em 0;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-title {
+  pointer-events: auto;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-content > * {
+  margin: 0.4em 0;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-content > *:first-child {
+  margin-top: 0;
+}
+
+/* 预览模式嵌套 callout 修复 */
+.preview .callout .callout {
+  margin: 0.6em 0;
+}
+
+/* 打印导出时保持 callout 可见 */
+@media print {
+  .callout-content {
+    display: block !important;
+  }
+  .callout-fold-icon {
+    display: none !important;
+  }
+}
+
+/* ---- Callout 复制按钮 ---- */
+.callout-copy-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+  margin-left: 2px;
+  opacity: 0.55;
+}
+
+.callout-copy-icon:hover {
+  background: rgba(var(--callout-accent-rgb), 0.12);
+  opacity: 1;
+}
+
+.callout-copy-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 标题栏hover时显示复制按钮（可选，当前保持始终可见但半透明） */
+.callout-title:hover .callout-copy-icon {
+  opacity: 0.85;
+}

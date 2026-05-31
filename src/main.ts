@@ -2201,6 +2201,8 @@ try {
 // 任务列表：扫描与回写（阅读模式）
 let _taskMapLast: Array<{ line: number; ch: number }> = []
 let _taskEventsBound = false
+let _calloutFoldEventsBound = false
+let _calloutCopyEventsBound = false
 
 try {
   // 便签快速待办：编辑框失焦或按下回车后自动返回阅读模式（仅在从阅读模式触发的待办插入场景生效）
@@ -2240,6 +2242,47 @@ function scanTaskList(md: string): Array<{ line: number; ch: number }> {
     }
     return out
   } catch { return [] }
+}
+
+function onCalloutFoldClick(ev: Event) {
+  try {
+    const target = ev.target as HTMLElement | null
+    const foldBtn = target?.closest?.('.callout-fold-icon') as HTMLElement | null
+    if (!foldBtn) return
+    const callout = foldBtn.closest('.callout') as HTMLElement | null
+    if (!callout) return
+    const content = callout.querySelector('.callout-content') as HTMLElement | null
+    if (!content) return
+    const isFolded = callout.classList.toggle('folded')
+    callout.dataset.folded = String(isFolded)
+    content.style.display = isFolded ? 'none' : ''
+    const svg = foldBtn.querySelector('svg')
+    if (svg) {
+      svg.style.transform = isFolded ? 'rotate(-90deg)' : ''
+    }
+  } catch {}
+}
+
+function onCalloutCopyClick(ev: Event) {
+  try {
+    const target = ev.target as HTMLElement | null
+    const copyBtn = target?.closest?.('.callout-copy-icon') as HTMLElement | null
+    if (!copyBtn) return
+    const callout = copyBtn.closest('.callout') as HTMLElement | null
+    if (!callout) return
+    const content = callout.querySelector('.callout-content') as HTMLElement | null
+    if (!content) return
+    const texts: string[] = []
+    content.querySelectorAll(':scope > *').forEach((el) => {
+      const text = (el as HTMLElement).innerText || ''
+      const trimmed = text.trim()
+      if (trimmed) texts.push(trimmed)
+    })
+    const result = texts.join('\n\n')
+    if (result) {
+      navigator.clipboard.writeText(result).catch(() => {})
+    }
+  } catch {}
 }
 
 function onTaskCheckboxChange(ev: Event) {
@@ -2564,6 +2607,13 @@ async function renderPreviewLight() {
   } catch {}
   // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整行当数学渲染
   raw = protectExcelDollarRefs(raw)
+  // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被 CommonMark 分断的问题
+  try {
+    const { normalizeCalloutMarkdown } = await import('./plugins/markdownItCallout')
+    if (typeof normalizeCalloutMarkdown === 'function') {
+      raw = normalizeCalloutMarkdown(raw)
+    }
+  } catch {}
   const html = md!.render(raw)
   // 方案 A：占位符机制不需要 DOMPurify
   // KaTeX 占位符（data-math 属性）是安全的，后续会用 KaTeX.render() 替换
@@ -3780,6 +3830,15 @@ async function ensureRenderer() {
     // 表格横向滚动支持：为所有表格添加包装器
     md.renderer.rules.table_open = () => '<div class="table-wrapper">\n<table>\n'
     md.renderer.rules.table_close = () => '</table>\n</div>\n'
+
+    // 启用 Obsidian Callout 支持（>[!type] 语法）
+    try {
+      const calloutMod = await import('./plugins/markdownItCallout')
+      const applyCallout = (calloutMod as any).default as ((m: any) => void) | undefined
+      if (typeof applyCallout === 'function') applyCallout(md)
+    } catch (e) {
+      console.warn('markdown-it-callout 加载失败：', e)
+    }
   }
 }
 
@@ -3916,6 +3975,13 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   } catch {}
   // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整段当数学渲染
   raw = protectExcelDollarRefs(raw)
+  // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被 CommonMark 分断的问题
+  try {
+    const { normalizeCalloutMarkdown } = await import('./plugins/markdownItCallout')
+    if (typeof normalizeCalloutMarkdown === 'function') {
+      raw = normalizeCalloutMarkdown(raw)
+    }
+  } catch {}
   const html = md!.render(raw)
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
   try {
@@ -3946,6 +4012,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         boxes.forEach((el, i) => { try { (el as HTMLInputElement).setAttribute('type','checkbox') } catch {}; try { (el as any).dataset.taskId = String(i) } catch {} })
         _taskMapLast = taskMapNow
         if (!_taskEventsBound) { try { preview.addEventListener('click', onTaskCheckboxChange as any, true); preview.addEventListener('change', onTaskCheckboxChange, true) } catch {} ; _taskEventsBound = true }
+        if (!_calloutFoldEventsBound) { try { preview.addEventListener('click', onCalloutFoldClick as any, true) } catch {} ; _calloutFoldEventsBound = true }
+        if (!_calloutCopyEventsBound) { try { preview.addEventListener('click', onCalloutCopyClick as any, true) } catch {} ; _calloutCopyEventsBound = true }
       }
     } catch {}
     try {
@@ -10598,6 +10666,8 @@ function bindEvents() {
       }
 
       const exitNow = async () => {
+        // 保存标签会话（所有打开的文件）
+        try { (window as any).flymdSaveTabSession?.() } catch {}
         try { await restoreStickyIfNeeded() } catch {}
         try { await runPortableExportOnExit() } catch {}
         try { await runShutdownSyncIfEnabled() } catch {}
@@ -10669,6 +10739,7 @@ function bindEvents() {
     if (!isTauriRuntime()) {
       window.addEventListener('beforeunload', (e) => {
         try { void saveCurrentDocPosNow() } catch {}
+        try { (window as any).flymdSaveTabSession?.() } catch {}
         if (dirty) {
           e.preventDefault()
           ;(e as any).returnValue = ''

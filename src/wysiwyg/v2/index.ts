@@ -25,6 +25,7 @@ import { normalizeTabIndentText } from '../../utils/tabIndent'
 import { mermaidPlugin } from './plugins/mermaid'
 import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
 import { htmlMediaPlugin } from './plugins/htmlMedia'
+import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -452,6 +453,9 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(mathBlockViewPlugin)
     .use(mermaidPlugin)
     .use(htmlMediaPlugin)
+    .use(calloutNode)
+    .use(calloutRemark)
+    .use(calloutViewPlugin)
     .use(automd)
     .use(listener)
     .use(history)
