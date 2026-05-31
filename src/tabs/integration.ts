@@ -11,6 +11,7 @@ import { getTabDisplayName, type EditorMode, type TabDocument } from './types'
 import { TextareaUndoManager } from './TextareaUndoManager'
 import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 import { initTabTransferReceiver } from './tabTransferReceiver'
+import { readTextFileAnySafe } from '../core/fsSafe'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -272,6 +273,30 @@ async function saveAllDirtyTabs(): Promise<boolean> {
   return true
 }
 
+// ---- 会话保存/恢复 ----
+const SESSION_KEY = 'flymd:tabSession:v1'
+
+function saveTabSession(): void {
+  try {
+    const state = tabManager.exportState()
+    localStorage.setItem(SESSION_KEY, JSON.stringify(state))
+  } catch (e) {
+    console.warn('[Tabs] 保存会话失败:', e)
+  }
+}
+
+async function restoreTabSession(): Promise<void> {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return
+    const state = JSON.parse(raw)
+    await tabManager.importState(state, async (path) => readTextFileAnySafe(path))
+    console.log('[Tabs] 会话已恢复，标签数:', tabManager.getTabs().length)
+  } catch (e) {
+    console.warn('[Tabs] 恢复会话失败:', e)
+  }
+}
+
 /**
  * 初始化标签系统
  * 在 DOM 就绪后调用
@@ -348,9 +373,17 @@ export async function initTabSystem(): Promise<void> {
   // 退出前"保存所有未保存标签"能力：供 main.ts 的窗口关闭流程调用
   ;(window as any).flymdCountDirtyTabs = countDirtyTabs
   ;(window as any).flymdSaveAllDirtyTabs = saveAllDirtyTabs
+  ;(window as any).flymdSaveTabSession = saveTabSession
 
   // 监听编辑器变化，同步 dirty 状态
   setupDirtySync()
+
+  // 自动恢复上次会话
+  try {
+    await restoreTabSession()
+  } catch (e) {
+    console.warn('[Tabs] 自动恢复会话失败:', e)
+  }
 
   // 跨窗口拖拽接收端：收到其它窗口的标签后，在本窗口创建/激活标签
   // 注意：不 await，避免阻塞标签系统主流程；失败（非 Tauri 环境）也无所谓

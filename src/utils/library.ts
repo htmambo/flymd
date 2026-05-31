@@ -13,6 +13,8 @@ export type Library = {
   lastUsedAt?: number
   // 是否在“库切换器”（侧栏内/垂直标题栏）中显示（默认 true；不影响顶部库切换菜单）
   sidebarVisible?: boolean
+  // 该库上次打开的文件路径（用于启动时恢复）
+  lastOpenFile?: string
 }
 
 async function getStore(): Promise<Store> {
@@ -59,6 +61,7 @@ function toStoreLibrary(l: Library): Record<string, any> {
   if (typeof l?.lastUsedAt === 'number' && Number.isFinite(l.lastUsedAt) && l.lastUsedAt > 0) out.lastUsedAt = l.lastUsedAt
   // 默认 true：只在 false 时显式存，避免污染配置
   if (l?.sidebarVisible === false) out.sidebarVisible = false
+  if (typeof l?.lastOpenFile === 'string' && l.lastOpenFile) out.lastOpenFile = l.lastOpenFile
   return out
 }
 
@@ -100,9 +103,11 @@ export async function getLibraries(): Promise<Library[]> {
       const createdAt = Number((it as any).createdAt) > 0 ? Number((it as any).createdAt) : undefined
       const lastUsedAt = Number((it as any).lastUsedAt) > 0 ? Number((it as any).lastUsedAt) : undefined
       const sidebarVisible = (it as any).sidebarVisible === false ? false : true
+      const lastOpenFile = typeof (it as any).lastOpenFile === 'string' ? (it as any).lastOpenFile : undefined
       const l: Library = { id, name, root, sidebarVisible }
       if (typeof createdAt === 'number') l.createdAt = createdAt
       if (typeof lastUsedAt === 'number') l.lastUsedAt = lastUsedAt
+      if (lastOpenFile) l.lastOpenFile = lastOpenFile
       arr.push(l)
     }
     return arr
@@ -159,6 +164,20 @@ export async function setActiveLibraryId(id: string): Promise<void> {
 export async function getActiveLibraryRoot(): Promise<string | null> {
   const lib = await getActiveLibrary()
   return lib?.root ?? null
+}
+
+export async function setLibraryLastOpenFile(libId: string, filePath: string | null): Promise<void> {
+  const libs = await getLibraries()
+  const idx = libs.findIndex(x => x.id === libId)
+  if (idx < 0) return
+  libs[idx] = { ...libs[idx], lastOpenFile: filePath || undefined }
+  await setLibraries(libs)
+}
+
+export async function getLibraryLastOpenFile(libId: string): Promise<string | null> {
+  const libs = await getLibraries()
+  const lib = libs.find(x => x.id === libId)
+  return lib?.lastOpenFile ?? null
 }
 
 export async function upsertLibrary(input: { id?: string; name?: string; root: string }): Promise<Library> {

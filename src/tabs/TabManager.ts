@@ -634,6 +634,9 @@ export class TabManager {
     if (currentTab) {
       await this.restoreTabState(currentTab)
     }
+
+    // 通知 UI 刷新标签栏
+    this.emit({ type: 'tabs-reordered', tabs: this.tabs })
   }
 
   /**
