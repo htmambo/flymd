@@ -1,6 +1,6 @@
 # Maintainer: 果农
 pkgname=flymd
-pkgver=1.3.9
+pkgver=$(bash "$startdir/scripts/get-version.sh" "$startdir/package.json" 2>/dev/null || echo "1.3.9")
 pkgrel=1
 pkgdesc="飞速 Markdown 编辑器 - 轻量高性能本地 Markdown 编辑器"
 arch=('x86_64')

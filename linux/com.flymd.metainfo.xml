@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.flymd</id>
+  <name>飞速MarkDown</name>
+  <name xml:lang="zh_CN">飞速MarkDown</name>
+  <summary>轻量高性能本地 Markdown 编辑器</summary>
+  <summary xml:lang="zh_CN">轻量高性能本地 Markdown 编辑器</summary>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>LicenseRef-flyMD-NC-1.0</project_license>
+  <description>
+    <p>飞速 Markdown 编辑器，支持实时预览、PDF 导出、文件关联等功能。</p>
+    <p xml:lang="zh_CN">飞速 Markdown 编辑器，支持实时预览、PDF 导出、文件关联等功能。</p>
+  </description>
+  <launchable type="desktop-id">flymd.desktop</launchable>
+  <url type="homepage">https://github.com/flyhunterl/flymd</url>
+  <provides>
+    <binary>flymd</binary>
+    <mediatype>text/markdown</mediatype>
+    <mediatype>application/pdf</mediatype>
+  </provides>
+  <content_rating type="oars-1.1" />
+</component>

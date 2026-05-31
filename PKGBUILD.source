@@ -1,6 +1,6 @@
 # Maintainer: 果农
 pkgname=flymd
-pkgver=1.3.9
+pkgver=$(bash "$startdir/scripts/get-version.sh" "$startdir/package.json" 2>/dev/null || echo "1.3.9")
 pkgrel=1
 pkgdesc="飞速 Markdown 编辑器 - 轻量高性能本地 Markdown 编辑器"
 arch=('x86_64')
@@ -14,8 +14,8 @@ source=(
 )
 sha256sums=('SKIP' 'SKIP')
 
-# 从 git 生成源码包：
-#   git archive --format=tar.gz --prefix="flymd-1.3.9/" -o flymd-1.3.9.tar.gz HEAD
+# 从 git 生成源码包（版本号会自动与上游标签同步）：
+#   git archive --format=tar.gz --prefix="flymd-${pkgver}/" -o "flymd-${pkgver}.tar.gz" HEAD
 
 build() {
   cd "$pkgname-$pkgver"

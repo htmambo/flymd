@@ -1,10 +1,14 @@
 [Desktop Entry]
+Version=1.0
 Name=飞速MarkDown
 GenericName=Markdown Editor
 Comment=轻量高性能本地 Markdown 编辑器
 Exec=flymd %F
+TryExec=flymd
 Icon=flymd
 Type=Application
+NoDisplay=false
+Hidden=false
 Categories=Office;TextEditor;Utility;
 MimeType=text/markdown;application/pdf;
 Keywords=markdown;editor;text;pdf;

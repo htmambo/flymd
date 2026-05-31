@@ -84,10 +84,10 @@ if [[ ! -f flymd.desktop ]]; then
   exit 1
 fi
 
-package_version="$(node -p "require('./package.json').version")"
+package_version="$(bash "$ROOT_DIR/scripts/get-version.sh" "$ROOT_DIR/package.json")"
 pkgbuild_version="$(sed -n 's/^pkgver=//p' PKGBUILD | sed -n '1p')"
 if [[ -n "$pkgbuild_version" && "$package_version" != "$pkgbuild_version" ]]; then
-  echo "Warning: package.json version ($package_version) differs from PKGBUILD pkgver ($pkgbuild_version)" >&2
+  echo "Warning: detected version ($package_version) differs from PKGBUILD pkgver ($pkgbuild_version)" >&2
 fi
 
 if [[ "$NPM_CI_MODE" == "always" || ( "$NPM_CI_MODE" == "auto" && ! -d node_modules ) ]]; then
