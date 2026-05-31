@@ -1,5 +1,7 @@
 import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
 import { t } from './i18n'
+import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
+import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 
 export type FileTreeOptions = {
   // 获取库根目录（未设置时返回 null）
@@ -273,7 +275,7 @@ async function moveFileSafe(src: string, dst: string): Promise<void> {
   }
 }
 
-export async function newFileSafe(dir: string, hint = '新建文档.md'): Promise<string> {
+export async function newFileSafe(dir: string, hint = '新建文档.md', content?: string): Promise<string> {
   const s = sep(dir)
   let n = hint, i = 1
   while (await exists(dir + s + n)) {
@@ -282,7 +284,7 @@ export async function newFileSafe(dir: string, hint = '新建文档.md'): Promis
   }
   const full = dir + s + n
   await ensureDir(dir)
-  await writeTextFile(full, '# 标题\n\n', {} as any)
+  await writeTextFile(full, content ?? '# 标题\n\n', {} as any)
   return full
 }
 
@@ -340,6 +342,13 @@ async function ensureDirExpanded(root: string, dirPath: string): Promise<void> {
   if (kids.childElementCount === 0) {
     await buildDir(root, dirPath, kids)
   }
+  // 切换文件夹图标为展开状态
+  const oldIcon = row.querySelector('.lib-ico-folder')
+  if (oldIcon) {
+    const newIcon = makeFolderIcon(dirPath, false, true) as unknown as SVGElement
+    oldIcon.replaceWith(newIcon)
+  }
+  requestAnimationFrame(updateAllTreeLines)
 }
 
 function normToSep(p: string, s: string): string {
@@ -553,17 +562,35 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
 
 function makeTg(): HTMLElement { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.classList.add('lib-tg'); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d','M9 6l6 6-6 6'); s.appendChild(p); return s as any }
 
-// 轻量线条文件夹图标（Lucide 风格）
+// 闭合文件夹图标（收起状态）
 function makeFolderSvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('width', '16')
   svg.setAttribute('height', '16')
   svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-folder')
-  // Lucide folder 图标
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
   path.setAttribute('d', 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z')
   path.setAttribute('fill', 'none')
+  path.setAttribute('stroke', 'currentColor')
+  path.setAttribute('stroke-width', '2')
+  path.setAttribute('stroke-linecap', 'round')
+  path.setAttribute('stroke-linejoin', 'round')
+  svg.appendChild(path)
+  return svg
+}
+
+// 开口文件夹图标（展开状态）——使用淡色填充，和闭合状态明显区分
+function makeFolderOpenSvg(): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', '16')
+  svg.setAttribute('height', '16')
+  svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-folder-open')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z')
+  path.setAttribute('fill', 'currentColor')
+  path.setAttribute('fill-opacity', '0.2')
   path.setAttribute('stroke', 'currentColor')
   path.setAttribute('stroke-width', '2')
   path.setAttribute('stroke-linecap', 'round')
@@ -656,10 +683,13 @@ function makePdfSvg(): SVGElement {
   return svg
 }
 
-// 文件夹图标：顶级库使用书架图标，普通文件夹使用实心文件夹
-function makeFolderIcon(_path?: string, isRoot?: boolean): HTMLElement {
+// 文件夹图标：顶级库使用书架图标，普通文件夹根据展开状态切换图标
+function makeFolderIcon(_path?: string, isRoot?: boolean, expanded?: boolean): HTMLElement {
   if (isRoot) {
     return makeLibrarySvg() as unknown as HTMLElement
+  }
+  if (expanded) {
+    return makeFolderOpenSvg() as unknown as HTMLElement
   }
   return makeFolderSvg() as unknown as HTMLElement
 }
@@ -692,16 +722,15 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
     row.title = e.name
 
     if (e.isDir) {
-      const tg = makeTg()
-      const ico = makeFolderIcon(e.path)
-      row.appendChild(tg); row.appendChild(ico); row.appendChild(label)
+      const exp = state.expanded.has(e.path)
+      const ico = makeFolderIcon(e.path, false, exp)
+      row.appendChild(ico); row.appendChild(label)
       const kids = document.createElement('div')
       kids.className = 'lib-children'
       kids.style.display = 'none'
       parent.appendChild(row)
       parent.appendChild(kids)
 
-      const exp = state.expanded.has(e.path)
       if (exp) { kids.style.display = ''; row.classList.add('expanded'); await buildDir(root, e.path, kids) }
 
       row.addEventListener('click', async (ev) => {
@@ -712,7 +741,19 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         setExpandedState(e.path, now)
         kids.style.display = now ? '' : 'none'
         row.classList.toggle('expanded', now)
-        if (now && kids.childElementCount === 0) await buildDir(root, e.path, kids)
+        // 切换文件夹图标
+        const oldIcon = row.querySelector('.lib-ico-folder, .lib-ico-folder-open')
+        if (oldIcon) {
+          const newIcon = makeFolderIcon(e.path, false, now) as unknown as SVGElement
+          oldIcon.replaceWith(newIcon)
+        }
+        if (now) {
+          if (kids.childElementCount === 0) {
+            await buildDir(root, e.path, kids)
+          }
+        }
+        // 展开或收起都会改变本层及所有祖先层的竖线高度，统一重算
+        requestAnimationFrame(updateAllTreeLines)
       })
 
       // 目录同级内部拖拽排序（仅作用于显示顺序，不移动真实文件）
@@ -1116,6 +1157,44 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
       parent.appendChild(row)
     }
   }
+  // 标记最后一个子节点（用于 └─ 拐角）
+  const childNodes = parent.querySelectorAll(':scope > .lib-node')
+  childNodes.forEach((node, index) => {
+    if (index === childNodes.length - 1) {
+      node.classList.add('last-child')
+    }
+  })
+  // 计算并设置树线竖线高度
+  updateTreeLine(parent)
+}
+
+function updateTreeLine(parent: HTMLElement): void {
+  const childNodes = parent.querySelectorAll(':scope > .lib-node')
+  if (childNodes.length > 0) {
+    const lastNode = childNodes[childNodes.length - 1] as HTMLElement
+    const lineHeight = lastNode.offsetTop + 13
+    parent.style.setProperty('--tree-line-height', `${lineHeight}px`)
+  } else {
+    parent.style.setProperty('--tree-line-height', '0px')
+  }
+}
+
+// 重算容器内所有层级的竖线高度。
+// 构建期 buildDir/renderRoot 在“游离 DOM”上运行（renderRoot 末尾才 replaceChildren 挂载），
+// 此时 offsetTop 恒为 0，单独的 updateTreeLine 会把每条竖线压成 13px；
+// 且展开/收起子目录会改变祖先层高度。故挂载后/展开收起后统一在此重新量算。
+// 先批量读取再批量写入，避免逐元素读写造成的多次回流。
+function updateAllTreeLines(): void {
+  const c = state.container
+  if (!c) return
+  const levels = Array.from(c.querySelectorAll('.lib-children')) as HTMLElement[]
+  const heights = levels.map((el) => {
+    const kids = el.querySelectorAll(':scope > .lib-node')
+    if (kids.length === 0) return 0
+    const last = kids[kids.length - 1] as HTMLElement
+    return last.offsetTop + 13
+  })
+  levels.forEach((el, i) => el.style.setProperty('--tree-line-height', `${heights[i]}px`))
 }
 
 async function renderRoot(root: string) {
@@ -1139,17 +1218,18 @@ async function renderRoot(root: string) {
     const topRow = document.createElement('div')
     topRow.className = 'lib-node lib-dir'
     ;(topRow as any).dataset.path = root
-    const tg = makeTg(); const ico = makeFolderIcon(root, true); const label = document.createElement('span'); label.className='lib-name'; label.textContent = nameOf(root) || root
+    const ico = makeFolderIcon(root, true); const label = document.createElement('span'); label.className='lib-name'; label.textContent = nameOf(root) || root
     // 根目录也可能被省略号截断：悬浮显示完整路径
     label.title = root
     topRow.title = root
-    topRow.appendChild(tg); topRow.appendChild(ico); topRow.appendChild(label)
+    topRow.appendChild(ico); topRow.appendChild(label)
     const kids = document.createElement('div')
     kids.className = 'lib-children'
     const rootExpanded = state.expanded.has(root)
     topRow.classList.toggle('expanded', rootExpanded)
     kids.style.display = rootExpanded ? '' : 'none'
     if (rootExpanded) await buildDir(root, root, kids)
+    updateTreeLine(kids)
 
     // 关键点：直到新树准备好，才一次性替换旧树；中间不出现“空白态”，自然就不闪
     if (_renderJobId !== jobId) return
@@ -1164,6 +1244,9 @@ async function renderRoot(root: string) {
         if (hit) { hit.classList.add('selected') }
       }
     } catch {}
+
+    // 关键：树此刻才挂载，构建期（游离态）量算的 offsetTop 全为 0，必须挂载后重新量算竖线高度
+    requestAnimationFrame(updateAllTreeLines)
 
     // 根节点的拖放处理
     topRow.addEventListener('dragover', (ev) => {
@@ -1212,6 +1295,7 @@ async function renderRoot(root: string) {
       kids.style.display = now ? '' : 'none'
       topRow.classList.toggle('expanded', now)
       if (now && kids.childElementCount === 0) await buildDir(root, root, kids)
+      requestAnimationFrame(updateAllTreeLines)
     })
   } finally {
     // 只有当前任务才能收尾，避免旧任务把新任务的 loading/透明度干掉
@@ -1316,7 +1400,46 @@ async function newFileInSelected() {
   const root = await state.opts!.getRoot()
   if (!root) return
   const dir = state.selectedIsDir ? (state.selected || root) : base(state.selected || root)
-  const p = await newFileSafe(dir)
+
+  // 检查文件夹模板
+  let initialContent: string | undefined
+  let fileNameHint = '新建文档'
+  try {
+    const relativeDir = dir.replace(/[\\/]+$/, '').substring(root.length).replace(/^[\\/]+/, '')
+    const cfg = await findTemplateForFolder(root, relativeDir)
+    if (cfg) {
+      let templateContent = await resolveTemplateContent(root, cfg.templatePath)
+      if (templateContent) {
+        const s = sep(dir)
+        const varsBase = {
+          fileName: '新建文档',
+          fileExt: 'md',
+          fileTitle: '新建文档',
+          now: new Date(),
+          filePath: dir + s + '新建文档.md',
+          fileRelativePath: relativeDir ? relativeDir + '/新建文档.md' : '新建文档.md',
+          folderPath: dir,
+          folderRelativePath: relativeDir,
+          fileCreationDate: new Date(),
+          fileModifiedDate: new Date(),
+        }
+        const { filename, cleanedTemplate } = await extractFilenameFromTemplate(templateContent, varsBase)
+        if (filename) {
+          fileNameHint = filename
+        }
+        templateContent = cleanedTemplate
+        initialContent = await renderTemplate(templateContent, {
+          ...varsBase,
+          fileName: fileNameHint,
+          fileTitle: fileNameHint,
+          filePath: dir + s + fileNameHint + '.md',
+          fileRelativePath: relativeDir ? relativeDir + '/' + fileNameHint + '.md' : fileNameHint + '.md',
+        })
+      }
+    }
+  } catch {}
+
+  const p = await newFileSafe(dir, fileNameHint + '.md', initialContent)
   if (state.opts?.onOpenNewFile) await state.opts.onOpenNewFile(p); else await state.opts!.onOpenFile(p)
   await refresh()
 }

@@ -8,6 +8,8 @@ import { newFileSafe, newFolderSafe } from '../fileTree'
 import { showLibraryDeleteDialog } from '../dialog'
 import { dispatchPathDeleted } from '../core/pathEvents'
 import { registerMenuCloser, closeAllMenus } from './menuManager'
+import { findTemplateForFolder, resolveTemplateContent } from '../core/folderTemplates'
+import { renderTemplate, extractFilenameFromTemplate } from '../core/templateEngine'
 
 // 模块级关闭函数引用
 let _closeLibraryContextMenu: (() => void) | null = null
@@ -172,19 +174,70 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
     if (isDir) {
       menu.appendChild(mkItem(t('ctx.newFile'), async () => {
         try {
-          // 1. 先弹出命名对话框
-          const defaultStem = '新建文档'
           const defaultExt = '.md'
+          let defaultStem = '新建文档'
+          let templateContent: string | null = null
+
+          // 1. 先检查模板，提取默认文件名
+          try {
+            const root = await deps.getLibraryRoot()
+            if (root) {
+              const relativeDir = path.replace(/[\\/]+$/, '').substring(root.length).replace(/^[\\/]+/, '')
+              const cfg = await findTemplateForFolder(root, relativeDir)
+              if (cfg) {
+                templateContent = await resolveTemplateContent(root, cfg.templatePath)
+                if (templateContent) {
+                  const { filename } = await extractFilenameFromTemplate(templateContent, {
+                    fileName: defaultStem,
+                    fileExt: defaultExt.replace('.', ''),
+                    fileTitle: defaultStem,
+                    now: new Date(),
+                    folderPath: path,
+                    folderRelativePath: relativeDir,
+                    fileCreationDate: new Date(),
+                    fileModifiedDate: new Date(),
+                  })
+                  if (filename) {
+                    defaultStem = filename
+                  }
+                }
+              }
+            }
+          } catch {}
+
+          // 2. 弹出命名对话框（默认值为模板指定的文件名或"新建文档"）
           const newStem = await openRenameDialog(defaultStem, defaultExt)
 
-          // 2. 用户取消则直接返回
+          // 3. 用户取消则直接返回
           if (!newStem) return
 
-          // 3. 创建文件（使用直接导入的函数）
-          const fileName = newStem + defaultExt
-          const fullPath = await newFileSafe(path, fileName)
+          // 4. 渲染模板内容（此时文件名已确定）
+          let initialContent: string | undefined
+          if (templateContent) {
+            const fileNameWithExt = newStem + defaultExt
+            try {
+              const root = await deps.getLibraryRoot()
+              const relativeDir = root ? path.replace(/[\\/]+$/, '').substring(root.length).replace(/^[\\/]+/, '') : ''
+              initialContent = await renderTemplate(templateContent, {
+                fileName: newStem,
+                fileExt: defaultExt.replace('.', ''),
+                fileTitle: newStem,
+                now: new Date(),
+                filePath: path + '/' + fileNameWithExt,
+                fileRelativePath: relativeDir ? relativeDir + '/' + fileNameWithExt : fileNameWithExt,
+                folderPath: path,
+                folderRelativePath: relativeDir,
+                fileCreationDate: new Date(),
+                fileModifiedDate: new Date(),
+              })
+            } catch {}
+          }
 
-          // 4. 打开文件
+          // 5. 创建文件
+          const fileName = newStem + defaultExt
+          const fullPath = await newFileSafe(path, fileName, initialContent)
+
+          // 5. 打开文件
           await deps.openFile(fullPath)
         } catch (e) {
           console.error('新建文件失败', e)

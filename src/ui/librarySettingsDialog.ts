@@ -4,6 +4,7 @@
 import { t } from '../i18n'
 import { getLibraries, getActiveLibraryId, applyLibrariesSettings, getLibSwitcherPosition, setLibSwitcherPosition, upsertLibrary, renameLibrary, removeLibrary, type LibSwitcherPosition } from '../utils/library'
 import { getWebdavSyncConfigForLibrary, setWebdavSyncConfigForLibrary, openWebdavSyncDialog } from '../extensions/webdavSync'
+import { getFolderTemplates, saveFolderTemplates, scanLibraryForFoldersAndTemplates, type FolderTemplateConfig } from '../core/folderTemplates'
 import { openRenameDialog } from './linkDialogs'
 import { ask, open } from '@tauri-apps/plugin-dialog'
 import { normalizePath as normalizeFsPath } from '../core/fsSafe'
@@ -115,6 +116,17 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
         <div class="lib-settings-sep"></div>
 
         <div class="lib-settings-subtitle-row">
+          <div class="lib-settings-subtitle">文件夹模板</div>
+          <span class="upl-hint">在指定文件夹内新建文件时，自动使用模板填充内容</span>
+        </div>
+        <div id="lib-settings-templates-list" class="lib-settings-templates-list"></div>
+        <div class="lib-settings-templates-actions">
+          <button id="lib-settings-templates-add" type="button" class="btn-secondary">+ 添加绑定</button>
+        </div>
+
+        <div class="lib-settings-sep"></div>
+
+        <div class="lib-settings-subtitle-row">
           <div class="lib-settings-subtitle">${t('lib.settings.order') || '库顺序与侧栏显示'}</div>
           <button id="lib-settings-add" type="button" class="btn-secondary lib-settings-add-btn">${t('lib.settings.add') || '新增库…'}</button>
         </div>
@@ -147,6 +159,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   const elWebdavRoot = overlay.querySelector('#lib-settings-webdav-root') as HTMLInputElement
   const elList = overlay.querySelector('#lib-settings-list') as HTMLDivElement
   const elOpenWebdav = overlay.querySelector('#lib-settings-open-webdav') as HTMLButtonElement | null
+  const elTemplatesList = overlay.querySelector('#lib-settings-templates-list') as HTMLDivElement
 
   let libs0 = await getLibraries()
   let activeId = await getActiveLibraryId()
@@ -164,6 +177,10 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   const draftWebdav = new Map<string, { enabled: boolean; rootPathInput: string }>()
   const dirtyWebdav = new Set<string>()
 
+  const draftTemplates = new Map<string, FolderTemplateConfig[]>()
+  const dirtyTemplates = new Set<string>()
+  const scanCache = new Map<string, { folders: string[]; templates: string[] }>()
+
   async function ensureWebdavDraftLoaded(id: string): Promise<void> {
     if (!id) return
     if (draftWebdav.has(id)) return
@@ -180,6 +197,18 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       return
     }
     draftWebdav.set(id, { enabled: !!cfg.enabled, rootPathInput: String(cfg.rootPath || '').trim() })
+  }
+
+  async function ensureTemplatesDraftLoaded(id: string): Promise<void> {
+    if (!id) return
+    if (draftTemplates.has(id)) return
+    const lib = libs0.find(x => x.id === id)
+    if (!lib?.root) {
+      draftTemplates.set(id, [])
+      return
+    }
+    const configs = await getFolderTemplates(lib.root)
+    draftTemplates.set(id, configs)
   }
 
   function syncSelectedUiFromDraft(): void {
@@ -219,13 +248,18 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
     if (!nextId) return
     selectedLibId = nextId
     await ensureWebdavDraftLoaded(nextId)
+    await ensureTemplatesDraftLoaded(nextId)
+    scanCache.delete(nextId) // 切换库时清除扫描缓存，确保重新加载
     syncSelectedUiFromDraft()
     renderList()
+    renderTemplatesList()
   }
 
   if (selectedLibId) {
     await ensureWebdavDraftLoaded(selectedLibId)
+    await ensureTemplatesDraftLoaded(selectedLibId)
     syncSelectedUiFromDraft()
+    renderTemplatesList()
   }
 
   elWebdavEnabled.addEventListener('change', () => {
@@ -340,6 +374,8 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
             draftSidebarVisible.delete(lib.id)
             dirtyWebdav.delete(lib.id)
             draftWebdav.delete(lib.id)
+            dirtyTemplates.delete(lib.id)
+            draftTemplates.delete(lib.id)
 
             activeId = await getActiveLibraryId()
             if (selectedLibId === lib.id) selectedLibId = activeId || libs0[0]?.id || null
@@ -413,6 +449,255 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   }
   renderList()
 
+  function renderTemplatesList(): void {
+    try {
+      elTemplatesList.innerHTML = ''
+      if (!selectedLibId) {
+        const empty = document.createElement('div')
+        empty.className = 'pmm-empty'
+        empty.textContent = '请先选择一个库'
+        elTemplatesList.appendChild(empty)
+        return
+      }
+      const configs = draftTemplates.get(selectedLibId) || []
+      if (configs.length === 0) {
+        const empty = document.createElement('div')
+        empty.className = 'pmm-empty'
+        empty.textContent = '暂无绑定，点击下方按钮添加'
+        elTemplatesList.appendChild(empty)
+        return
+      }
+
+      const cached = scanCache.get(selectedLibId)
+      if (!cached) {
+        // 异步加载库目录扫描结果
+        const loading = document.createElement('div')
+        loading.className = 'pmm-empty'
+        loading.textContent = '正在加载目录列表…'
+        elTemplatesList.appendChild(loading)
+
+        const lib = libs0.find(x => x.id === selectedLibId)
+        if (lib?.root) {
+          scanLibraryForFoldersAndTemplates(lib.root)
+            .then((result) => {
+              scanCache.set(selectedLibId!, result)
+              renderTemplatesList()
+            })
+            .catch(() => {
+              loading.textContent = '加载目录列表失败，请手动输入'
+            })
+        }
+        return
+      }
+
+      const { folders, templates } = cached
+
+      const mkSearchableSelect = (
+        options: string[],
+        value: string,
+        placeholder: string,
+        onChange: (v: string) => void,
+      ) => {
+        const wrap = document.createElement('div')
+        wrap.style.display = 'flex'
+        wrap.style.flexDirection = 'column'
+        wrap.style.gap = '4px'
+        wrap.style.flex = '1'
+        wrap.style.minWidth = '0'
+        wrap.style.position = 'relative'
+
+        const input = document.createElement('input')
+        input.type = 'text'
+        input.placeholder = placeholder
+        input.value = value
+        input.className = 'lib-settings-select'
+        input.style.width = '100%'
+        input.style.boxSizing = 'border-box'
+
+        const dropdown = document.createElement('div')
+        dropdown.className = 'searchable-dropdown'
+        dropdown.style.display = 'none'
+
+        const searchBox = document.createElement('input')
+        searchBox.type = 'text'
+        searchBox.placeholder = '搜索…'
+        searchBox.className = 'searchable-dropdown-search'
+
+        const list = document.createElement('div')
+        list.className = 'searchable-dropdown-list'
+
+        let filtered = options
+        let activeIndex = -1
+
+        function renderOptions() {
+          list.innerHTML = ''
+          if (filtered.length === 0) {
+            const empty = document.createElement('div')
+            empty.className = 'searchable-dropdown-empty'
+            empty.textContent = '无匹配项'
+            list.appendChild(empty)
+            return
+          }
+          for (let i = 0; i < filtered.length; i++) {
+            const opt = filtered[i]
+            if (!opt) continue
+            const item = document.createElement('div')
+            item.className = 'searchable-dropdown-item'
+            item.textContent = opt
+            if (i === activeIndex) item.classList.add('active')
+            item.addEventListener('mouseenter', () => {
+              activeIndex = i
+              renderOptions()
+            })
+            item.addEventListener('mousedown', (e) => {
+              e.preventDefault()
+              selectOption(opt)
+            })
+            list.appendChild(item)
+          }
+        }
+
+        function selectOption(opt: string) {
+          input.value = opt
+          onChange(opt)
+          dropdown.style.display = 'none'
+          if (selectedLibId) dirtyTemplates.add(selectedLibId)
+        }
+
+        function showDropdown() {
+          dropdown.style.display = 'block'
+          searchBox.value = ''
+          filtered = [...options]
+          activeIndex = filtered.indexOf(input.value)
+          if (activeIndex < 0) activeIndex = 0
+          renderOptions()
+          searchBox.focus()
+        }
+
+        function hideDropdown() {
+          dropdown.style.display = 'none'
+        }
+
+        input.addEventListener('focus', showDropdown)
+        input.addEventListener('input', () => {
+          try {
+            onChange(input.value)
+            if (selectedLibId) dirtyTemplates.add(selectedLibId)
+          } catch {}
+          showDropdown()
+        })
+
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            showDropdown()
+            activeIndex = Math.min(activeIndex + 1, filtered.length - 1)
+            renderOptions()
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            showDropdown()
+            activeIndex = Math.max(activeIndex - 1, 0)
+            renderOptions()
+          } else if (e.key === 'Enter') {
+            if (dropdown.style.display === 'block' && activeIndex >= 0 && activeIndex < filtered.length) {
+              selectOption(filtered[activeIndex])
+            }
+          } else if (e.key === 'Escape') {
+            hideDropdown()
+          }
+        })
+
+        searchBox.addEventListener('input', () => {
+          const q = searchBox.value.toLowerCase()
+          filtered = options.filter((o) => o.toLowerCase().includes(q))
+          activeIndex = 0
+          renderOptions()
+        })
+
+        searchBox.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            activeIndex = Math.min(activeIndex + 1, filtered.length - 1)
+            renderOptions()
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            activeIndex = Math.max(activeIndex - 1, 0)
+            renderOptions()
+          } else if (e.key === 'Enter') {
+            if (activeIndex >= 0 && activeIndex < filtered.length) {
+              selectOption(filtered[activeIndex])
+            }
+          } else if (e.key === 'Escape') {
+            hideDropdown()
+            input.focus()
+          }
+        })
+
+        // 点击外部关闭
+        const onDocClick = (e: MouseEvent) => {
+          if (!wrap.contains(e.target as Node)) {
+            hideDropdown()
+          }
+        }
+        document.addEventListener('click', onDocClick)
+
+        dropdown.appendChild(searchBox)
+        dropdown.appendChild(list)
+        wrap.appendChild(input)
+        wrap.appendChild(dropdown)
+        return wrap
+      }
+
+      for (let i = 0; i < configs.length; i++) {
+        const cfg = configs[i]
+        const row = document.createElement('div')
+        row.className = 'lib-settings-template-row'
+
+        const folderSelect = mkSearchableSelect(
+          folders,
+          cfg.folderPath,
+          '选择文件夹…',
+          (v) => { cfg.folderPath = v },
+        )
+
+        const templateSelect = mkSearchableSelect(
+          templates,
+          cfg.templatePath,
+          '选择模板文件…',
+          (v) => { cfg.templatePath = v },
+        )
+
+        const btnRemove = document.createElement('button')
+        btnRemove.type = 'button'
+        btnRemove.className = 'lib-settings-order-btn danger'
+        btnRemove.textContent = '删除'
+        btnRemove.addEventListener('click', () => {
+          try {
+            const next = (draftTemplates.get(selectedLibId!) || []).filter((_, idx) => idx !== i)
+            draftTemplates.set(selectedLibId!, next)
+            dirtyTemplates.add(selectedLibId!)
+            renderTemplatesList()
+          } catch {}
+        })
+
+        row.appendChild(folderSelect)
+        row.appendChild(templateSelect)
+        row.appendChild(btnRemove)
+        elTemplatesList.appendChild(row)
+      }
+    } catch {}
+  }
+
+  overlay.querySelector('#lib-settings-templates-add')?.addEventListener('click', () => {
+    try {
+      if (!selectedLibId) return
+      const next = [...(draftTemplates.get(selectedLibId) || []), { folderPath: '', templatePath: '' }]
+      draftTemplates.set(selectedLibId, next)
+      dirtyTemplates.add(selectedLibId)
+      renderTemplatesList()
+    } catch {}
+  })
+
   overlay.querySelector('#lib-settings-add')?.addEventListener('click', async () => {
     try {
       const root = await pickLibraryRoot()
@@ -474,12 +759,35 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
         await setWebdavSyncConfigForLibrary(libId, next)
       }
 
+      // 文件夹模板：按 dirty 落盘到库根目录（独立 try-catch，避免影响其他设置保存）
+      let templateSaveError = ''
+      for (const libId of dirtyTemplates) {
+        const lib = libs0.find(x => x.id === libId)
+        if (!lib?.root) continue
+        const configs = draftTemplates.get(libId) || []
+        try {
+          await saveFolderTemplates(lib.root, configs)
+        } catch (e: any) {
+          console.warn(`[库设置] 保存库“${lib.name || libId}”的模板配置失败:`, e)
+          templateSaveError = String(e?.message || e)
+        }
+      }
+
       if (opts.onRefreshUi) await opts.onRefreshUi({ rebuildTree: false })
-      showNotice(t('common.saved') || '已保存')
-      close()
+
+      if (templateSaveError) {
+        // 使用 alert 弹窗显示完整错误，阻塞等待用户确认
+        alert((t('common.saved') || '其他设置已保存') + '，但模板配置保存失败：\n\n' + templateSaveError + '\n\n请检查库目录权限或路径是否正确。')
+        showNotice(t('common.saved') || '已保存')
+        // 不关闭对话框，方便用户修改后重试
+      } else {
+        showNotice(t('common.saved') || '已保存')
+        close()
+      }
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
       console.warn('[库设置] 保存失败', e)
-      showNotice(t('common.saveFailed') || '保存失败')
+      alert((t('common.saveFailed') || '保存失败') + '：\n\n' + msg)
     }
   })
 }

@@ -54,6 +54,8 @@ import {
 import { saveImageToLocalAndGetPathCore, toggleUploaderEnabledFromMenuCore } from './core/imagePaste'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
 import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition } from './utils/library'
+import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
+import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 import { initRibbonLibraryList, type RibbonLibraryListApi } from './ui/ribbonLibraryList'
 import { bindSharedStore } from './utils/sharedStore'
 import { decorateCodeBlocks } from './decorate'
@@ -7886,7 +7888,7 @@ async function deleteFileSafe(p: string, permanent = false): Promise<void> {
 
   throw lastError ?? new Error('删除失败')
 }
-async function newFileSafe(dir: string, name = '新建文档.md'): Promise<string> {
+async function newFileSafe(dir: string, name = '新建文档.md', content?: string): Promise<string> {
   const sep = dir.includes('\\') ? '\\' : '/'
   let n = name, i = 1
   while (await exists(dir + sep + n)) {
@@ -7895,7 +7897,7 @@ async function newFileSafe(dir: string, name = '新建文档.md'): Promise<strin
   }
   const full = dir + sep + n
   await ensureDir(dir)
-  await writeTextFile(full, '# 标题\n\n', {} as any)
+  await writeTextFile(full, content ?? '# 标题\n\n', {} as any)
   return full
 }
 async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<string> {
@@ -9838,7 +9840,49 @@ function bindEvents() {
         if (!dir) dir = await pickLibraryRoot()
       }
       if (!dir) return
-      const p = await newFileSafe(dir)
+
+      // 检查文件夹模板
+      let initialContent: string | undefined
+      let fileNameHint = '新建文档'
+      try {
+        const root = await getLibraryRoot()
+        if (root) {
+          const relativeDir = dir.replace(/[\\/]+$/, '').substring(root.length).replace(/^[\\/]+/, '')
+          const cfg = await findTemplateForFolder(root, relativeDir)
+          if (cfg) {
+            let templateContent = await resolveTemplateContent(root, cfg.templatePath)
+            if (templateContent) {
+              const s = dir.includes('\\') ? '\\' : '/'
+              const varsBase = {
+                fileName: '新建文档',
+                fileExt: 'md',
+                fileTitle: '新建文档',
+                now: new Date(),
+                filePath: dir + s + '新建文档.md',
+                fileRelativePath: relativeDir ? relativeDir + '/新建文档.md' : '新建文档.md',
+                folderPath: dir,
+                folderRelativePath: relativeDir,
+                fileCreationDate: new Date(),
+                fileModifiedDate: new Date(),
+              }
+              const { filename, cleanedTemplate } = await extractFilenameFromTemplate(templateContent, varsBase)
+              if (filename) {
+                fileNameHint = filename
+              }
+              templateContent = cleanedTemplate
+              initialContent = await renderTemplate(templateContent, {
+                ...varsBase,
+                fileName: fileNameHint,
+                fileTitle: fileNameHint,
+                filePath: dir + s + fileNameHint + '.md',
+                fileRelativePath: relativeDir ? relativeDir + '/' + fileNameHint + '.md' : fileNameHint + '.md',
+              })
+            }
+          }
+        }
+      } catch {}
+
+      const p = await newFileSafe(dir, fileNameHint + '.md', initialContent)
       await openFile2(p)
       mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {}
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null

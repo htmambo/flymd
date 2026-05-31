@@ -2240,10 +2240,52 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 }
 .library .lib-node:hover .lib-toggle { opacity: 0.8; }
 .library .lib-node.expanded .lib-toggle { transform: rotate(90deg); }
+/* 树形缩进：竖线 + ├─ / └─ 连接线 */
 .library .lib-children {
-  margin-left: 10px;
-  padding-left: 8px;
-  border-left: 1px solid var(--border);
+  margin-left: 0;
+  padding-left: 10px;
+  position: relative;
+}
+/* lib-node 统一建立定位上下文（根行不在 .lib-children 内，也需要它来定位 ::after 分支线） */
+.library .lib-node {
+  position: relative;
+}
+/* 竖线：位于本层缩进区中部（left:8px），高度由 JS 量算到最后一个子节点中心 */
+.library .lib-children::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  height: var(--tree-line-height, 0);
+  width: 1px;
+  background: rgba(127,127,127,0.4);
+}
+/* 横线：从竖线(本层 x=8) 连到子节点图标左缘。节点左缘 = 缩进10 + 外边距4 = 14，
+   故 left:-6 回到竖线(x=8)；节点 padding-left 为 14（图标在节点内 x=14，即本层 x=28），
+   width:20 = 从 x=8 一路抵达图标(8→28)，在 ┬ 两侧各留出一段 ─（├ 后较短、┬ 后较长）。 */
+.library .lib-children > .lib-node::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 13px;
+  width: 20px;
+  height: 1px;
+  background: rgba(127,127,127,0.4);
+  z-index: 1;
+}
+/* 展开的目录：从横线中点向下延伸一小段竖线，连到子级 rail，形成 ├─┬─ / └─┬─。
+   子级 .lib-children 左缘 = 本节点缩进 10，其 rail 在 +8 = 本层 x=18；
+   节点左缘在本层 x=14，故 left:4px(=18-14) 正好落在子级竖线上（与缩进/内边距无关，各级恒成立）。
+   bottom:-2px 越过节点底部与子级 rail 顶部相接。 */
+.library .lib-node.expanded::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 13px;
+  bottom: -2px;
+  width: 1px;
+  background: rgba(127,127,127,0.4);
+  z-index: 1;
 }
 
 /* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
@@ -4406,9 +4448,23 @@ body.sticky-note-mode .width-bubble {
 .lib-settings-order-btn.danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); }
 .lib-settings-webdav-actions { margin-top: 8px; }
 
+.lib-settings-templates-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.lib-settings-template-row { display: flex; align-items: flex-start; gap: 8px; }
+.lib-settings-template-row input { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg); font-size: 13px; box-sizing: border-box; }
+.lib-settings-template-row input:focus { outline: none; border-color: rgba(37, 99, 235, 0.55); box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) inset; }
+.lib-settings-templates-actions { display: flex; justify-content: flex-start; }
+
+.searchable-dropdown { position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.2); z-index: 9999; overflow: hidden; display: flex; flex-direction: column; }
+.searchable-dropdown-search { width: 100%; padding: 8px 12px; border: none; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; outline: none; box-sizing: border-box; }
+.searchable-dropdown-list { max-height: 200px; overflow-y: auto; }
+.searchable-dropdown-item { padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.searchable-dropdown-item:hover,
+.searchable-dropdown-item.active { background: var(--active-bg); }
+.searchable-dropdown-empty { padding: 8px 12px; color: var(--muted); font-size: 12px; }
+
 /* === UI 美化补充（库侧栏与图床设置）=== */
 /* 库侧栏：紧凑模式 */
-.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 8px; }
+.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 8px 2px 14px; }
 .library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; font-size: 13px; }
 .library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); opacity: 0.3; }
 .library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--muted); opacity: 0.5; }
@@ -4423,8 +4479,7 @@ body.sticky-note-mode .width-bubble {
 /* 文件夹名称微微加粗 */
 .library .lib-dir .lib-name { font-weight: 450; }
 
-/* 树形缩进 */
-.library .lib-children { margin-left: 6px; padding-left: 6px; border-left: 1px solid rgba(127,127,127,0.1); }
+/* 树形缩进：已由上方 .library .lib-children 统一定义 */
 
 /* 不按扩展名上色：保持一致性 */
 
