@@ -26,6 +26,18 @@ declare module 'markdown-it' {
 }
 declare module 'markdown-it-footnote'
 
+// js-yaml（项目只用了 load，minimal interface 够用）
+declare module 'js-yaml' {
+  export function load(s: string): any
+  export function dump(obj: any): string
+}
+
+// mermaid 的 ESM 备用路径（动态 import，仅做类型透传）
+declare module 'mermaid/dist/mermaid.esm.mjs' {
+  const mermaid: any
+  export default mermaid
+}
+
 // 通用 CSS / 资源模块声明（与 vite 静态资源加载约定一致）
 declare module '*.css'
 

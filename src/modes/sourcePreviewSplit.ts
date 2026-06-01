@@ -363,3 +363,5 @@ if (document.readyState === 'loading') {
 } else {
   setTimeout(initSplitPreview, 800)
 }
+
+export {}
