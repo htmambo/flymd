@@ -211,7 +211,7 @@ export async function uploadImageFromContextMenu(ctx: ContextMenuContext): Promi
 
     try {
       if (cfg.convertToWebp) {
-        const blob = new Blob([bytes], { type: mime })
+        const blob = new Blob([bytes as BlobPart], { type: mime })
         const r = await transcodeToWebpIfNeeded(blob, nameForUpload, cfg.webpQuality ?? 0.85, {
           skipAnimated: true,
         })

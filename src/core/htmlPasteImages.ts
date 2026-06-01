@@ -171,7 +171,7 @@ async function fetchRemoteImageAsBlob(
       if (bytes.byteLength > maxBytes) throw new Error('image too large')
       const mimeRaw = headerValue(resp.headers, 'content-type').split(';')[0].trim()
       const mime = /^image\//i.test(mimeRaw) ? mimeRaw : ''
-      return { blob: new Blob([bytes], { type: mime || 'application/octet-stream' }), mime }
+      return { blob: new Blob([bytes as BlobPart], { type: mime || 'application/octet-stream' }), mime }
     }
 
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null
@@ -214,7 +214,7 @@ function dataImageToBlob(src: string, maxBytes: number): { blob: Blob; mime: str
     bytes = new TextEncoder().encode(decoded)
   }
   if (bytes.byteLength > maxBytes) throw new Error('image too large')
-  return { blob: new Blob([bytes], { type: mime }), mime }
+  return { blob: new Blob([bytes as BlobPart], { type: mime }), mime }
 }
 
 async function runWithConcurrency<T>(

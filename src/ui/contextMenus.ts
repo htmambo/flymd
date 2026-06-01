@@ -100,7 +100,7 @@ export function removeContextMenu(): void {
 function renderContextMenuItem(
   item: ContextMenuItemConfig,
   ctx: ContextMenuContext,
-  callbacks: Map<string, () => void>,
+  callbacks: Map<string, () => unknown>,
   idCounter: { value: number },
   dragKey: string = '',
   isBuiltin: boolean = false,
@@ -235,7 +235,7 @@ export async function showContextMenu(
     menu.style.position = 'fixed'
     menu.style.zIndex = '10000'
 
-    const callbacks = new Map<string, () => void>()
+    const callbacks = new Map<string, () => unknown>()
     const idCounter = { value: 0 }
     let menuHtml = ''
 

@@ -44,8 +44,10 @@ async function sha256Hex(data: ArrayBuffer | string): Promise<string> {
 }
 
 async function hmacSha256Raw(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
-  const k = key instanceof ArrayBuffer ? key : key.buffer
-  const cryptoKey = await crypto.subtle.importKey('raw', k, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  // key 已是 BufferSource（ArrayBuffer 或 Uint8Array/ArrayBufferView），
+  // TS 5.4+ 区分 ArrayBuffer 与 SharedArrayBuffer 的泛型参数导致直接传
+  // key 给 importKey 报错，这里用断言表达意图
+  const cryptoKey = await crypto.subtle.importKey('raw', key as BufferSource, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data))
   return sig
 }
@@ -264,7 +266,7 @@ export async function uploadImageToS3R2(input: Blob | ArrayBuffer | Uint8Array, 
 
   let bytes: ArrayBuffer
   if (input instanceof Blob) bytes = await input.arrayBuffer()
-  else if (input instanceof Uint8Array) bytes = input.buffer
+  else if (input instanceof Uint8Array) bytes = input.buffer as ArrayBuffer
   else bytes = input
 
   const key = await makeKeyFromTemplate(cfg.keyTemplate || '{year}/{month}{fileName}{md5}.{extName}', fileName, contentType, bytes)

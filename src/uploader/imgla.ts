@@ -111,7 +111,7 @@ export async function uploadImageToImgLa(
     try {
       if (input instanceof Blob) return input
       if (input instanceof ArrayBuffer) return new Blob([new Uint8Array(input)], { type: contentType || 'application/octet-stream' })
-      return new Blob([input], { type: contentType || 'application/octet-stream' })
+      return new Blob([input as BlobPart], { type: contentType || 'application/octet-stream' })
     } catch {
       return new Blob([], { type: contentType || 'application/octet-stream' })
     }

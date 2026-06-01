@@ -199,7 +199,9 @@ function pickBreakYByWhitespace(canvas: HTMLCanvasElement, yStart: number, yTarg
     if (maxY <= safeMinY) return tgt
 
     const bandH = (maxY - safeMinY + 1) | 0
-    const img = ctx.getImageData(0, safeMinY, width, bandH).data
+    // ctx: RenderingContext 是 CanvasRenderingContext2D | ImageBitmapRenderingContext 的联合
+    // 此处基于 2d canvas 上下文 getImageData，因此用类型断言收窄
+    const img = (ctx as CanvasRenderingContext2D).getImageData(0, safeMinY, width, bandH).data
     const stepX = Math.max(8, Math.floor(width / 420)) // 采样约 300~500 点，速度与稳定性都够
 
     let bestRow = -1
