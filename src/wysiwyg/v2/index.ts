@@ -12,7 +12,7 @@ import { replaceAll, getMarkdown } from '@milkdown/utils'
 import { commonmark } from '@milkdown/preset-commonmark'
 import { gfm } from '@milkdown/preset-gfm'
 import { automd } from '@milkdown/plugin-automd'
-import { listener, listenerCtx } from '@milkdown/plugin-listener'
+import { listener, listenerCtx, type ListenerManager } from '@milkdown/plugin-listener'
 import { upload, uploadConfig } from '@milkdown/plugin-upload'
 import { uploader } from './plugins/paste'
 import { protectExcelDollarRefs, unprotectExcelDollarRefs } from '../../utils/excelFormula'
@@ -322,7 +322,7 @@ function rewriteLocalImagesToAsset() {
             default: return 'application/octet-stream'
           }
         })()
-        const blob = new Blob([bytes], { type: mime })
+        const blob = new Blob([bytes as BlobPart], { type: mime })
         const dataUrl = await new Promise<string>((resolve, reject) => {
           try {
             const fr = new FileReader()
@@ -648,9 +648,11 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   // 监听内容更新并回写给外层（用于保存与切回源码视图）
   try {
     const ctx = (editor as any).ctx
-    const lm = ctx.get(listenerCtx)
+    const lm = ctx.get(listenerCtx) as ListenerManager
     try {
-      lm.docChanged((_ctx) => {
+      // 注：ListenerManager 上原方法名是 'updated'，原代码误写为 'docChanged'
+      // （老版本 listener API 曾有同名方法，新版本已合并到 updated）
+      lm.updated((_ctx) => {
         if (_suppressInitialUpdate) return
         // scheduleMermaidRender() // 已由 Milkdown 插件处理
         try { scheduleMathBlockReparse() } catch {}
@@ -816,8 +818,10 @@ function updateFirstLinkLabel(oldLabel: string, newLabel: string, href: string) 
     const schema = st.schema as any
     const linkType = schema?.marks?.link
     if (!linkType) return
+    // 注：TS 5.x 闭包内的赋值无法跨回调传播；用本地 alias 重新声明为声明类型，
+    // 避免 TS 把 let 变量在闭包外的类型漏为 null 进而窄化成 never。
     let target: { from: number, to: number, node: any } | null = null
-    st.doc.descendants((node: any, pos: number) => {
+    st.doc.descendants((node: any, pos: number): boolean => {
       if (!node?.isText) return true
       const text = String(node.text || '')
       if (text !== oldLabel) return true
@@ -826,15 +830,16 @@ function updateFirstLinkLabel(oldLabel: string, newLabel: string, href: string) 
       target = { from: pos, to: pos + text.length, node }
       return false
     })
-    if (!target) return
+    const found = target as { from: number, to: number, node: any } | null
+    if (!found) return
     // 提取现有 link mark 的属性
-    const targetNode = target.node
+    const targetNode = found.node
     const existingLink = (targetNode.marks || []).find((m: any) => m.type === linkType)
     const attrs = existingLink?.attrs || { href }
     // 创建带 link mark 的新文本节点
     const textNode = schema.text(newLabel, [linkType.create(attrs)])
     // 用 replaceWith 替换，保留 link mark
-    const tr = st.tr.replaceWith(target.from, target.to, textNode).scrollIntoView()
+    const tr = st.tr.replaceWith(found.from, found.to, textNode).scrollIntoView()
     view.dispatch(tr)
   } catch {}
 }
