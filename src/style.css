@@ -2308,6 +2308,11 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }
+/* 展开状态：用强调色 + 较高填充透明度强化对比，与收起态的灰色轮廓一眼可辨；
+   hover/selected 仍保持强调色，让"展开"状态在任意行交互下都稳定可见 */
+.library .lib-ico-folder-open,
+.library .lib-node:hover .lib-ico-folder-open,
+.library .lib-node.selected .lib-ico-folder-open { color: var(--accent); }
 
 /* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
 .container.with-library-left { --gap-left-library: var(--library-width, 240px); }

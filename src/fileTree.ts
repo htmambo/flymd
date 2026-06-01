@@ -580,7 +580,8 @@ function makeFolderSvg(): SVGElement {
   return svg
 }
 
-// 开口文件夹图标（展开状态）——使用淡色填充，和闭合状态明显区分
+// 开口文件夹图标（展开状态）——Lucide folder-open 形状：前盖向右下翻开、后背板在上方
+// 与闭合态轮廓本身就不同，叠加 .lib-ico-folder-open 的强调色样式后双重提示
 function makeFolderOpenSvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
@@ -588,9 +589,10 @@ function makeFolderOpenSvg(): SVGElement {
   svg.setAttribute('height', '16')
   svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-folder-open')
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-  path.setAttribute('d', 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z')
+  // Lucide folder-open（v0.x）：从前盖左上点开始，沿外轮廓回到后背板右侧
+  path.setAttribute('d', 'M6 14l1.45-2.9A2 2 0 0 1 9.24 12H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2')
   path.setAttribute('fill', 'currentColor')
-  path.setAttribute('fill-opacity', '0.2')
+  path.setAttribute('fill-opacity', '0.22')
   path.setAttribute('stroke', 'currentColor')
   path.setAttribute('stroke-width', '2')
   path.setAttribute('stroke-linecap', 'round')
