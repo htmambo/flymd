@@ -1,7 +1,7 @@
 // 代码块语法高亮 NodeView：使用 highlight.js 为非 mermaid 代码块添加高亮
 // 采用 overlay 方式：contentDOM 保持纯文本可编辑，下方叠加高亮显示层
 import type { Node } from '@milkdown/prose/model'
-import type { EditorView, NodeView } from '@milkdown/prose/view'
+import type { EditorView, NodeView, ViewMutationRecord } from '@milkdown/prose/view'
 
 // 常用语言列表（带图标）
 const POPULAR_LANGUAGES = [
@@ -462,7 +462,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
     return true
   }
 
-  ignoreMutation(mutation: MutationRecord) {
+  ignoreMutation(mutation: ViewMutationRecord) {
     // 忽略高亮层的任何变化
     if (mutation.target === this.highlightLayer || this.highlightLayer.contains(mutation.target as globalThis.Node)) {
       return true
