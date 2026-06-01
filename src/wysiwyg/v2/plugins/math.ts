@@ -68,8 +68,12 @@ function observeMathOnce(el: Element, onVisible: () => void) {
   try {
     const IO: any = (globalThis as any).IntersectionObserver
     if (typeof IO !== 'function') { onVisible(); return }
-    if (!_mathIO) {
-      _mathIO = new IO((entries: any[]) => {
+    // 闭包内 _mathIO?.unobserve(...) 会让 TS 把外部 _mathIO 加宽回
+    // IntersectionObserver | null，导致下一行 _mathIO.observe(el) 报错。
+    // 用局部 observer 承接实例，对 _mathIO 的赋值也保留。
+    let observer: IntersectionObserver | null = _mathIO
+    if (!observer) {
+      observer = new IO((entries: any[]) => {
         for (const ent of entries || []) {
           try {
             if (!ent || !ent.isIntersecting) continue
@@ -82,9 +86,11 @@ function observeMathOnce(el: Element, onVisible: () => void) {
           } catch {}
         }
       }, { root: null, rootMargin: '800px 0px', threshold: 0 })
+      _mathIO = observer
     }
     _mathIOHandlers.set(el, onVisible)
-    _mathIO.observe(el)
+    // 闭包未修改 observer，if 分支保证此处非空
+    observer!.observe(el)
   } catch {
     onVisible()
   }
