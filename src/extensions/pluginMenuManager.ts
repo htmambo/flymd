@@ -358,7 +358,9 @@ export async function openPluginMenuManager(host: PluginMenuManagerHost): Promis
         const id = el.getAttribute('data-plugin-id') || ''
         if (!id) return
         try {
-          const v = (el.value === 'bottom' ? 'bottom' : 'top') as const
+          // 原代码用 `as const`，但 el.value 类型为 string，三元结果会被推为 string
+          // 不再是字面量；改为显式字面量联合
+          const v: 'top' | 'bottom' = el.value === 'bottom' ? 'bottom' : 'top'
           setPluginRibbonPosition(id, v)
           refreshAllRibbonButtonPlacement()
           refreshAllRibbonButtonOrder()

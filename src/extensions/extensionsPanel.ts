@@ -597,7 +597,7 @@ function renderInstalledExtensions(
       const btnSet = document.createElement('button'); btnSet.className = 'btn'; btnSet.textContent = t('ext.settings')
       btnSet.addEventListener('click', async () => {
         try {
-          await host.openPluginSettings(p)
+          await host!.openPluginSettings(p)
         } catch {}
       })
       actions.appendChild(btnSet)
@@ -610,10 +610,10 @@ function renderInstalledExtensions(
           p.enabled = !p.enabled
           installedMap[p.id] = p
           await setInstalledPluginsToStore(installedMap)
-          if (p.enabled) await host.activatePlugin(p)
-          else await host.deactivatePlugin(p.id)
+          if (p.enabled) await host!.activatePlugin(p)
+          else await host!.deactivatePlugin(p.id)
           await refreshInstalledExtensionsUI()
-        } catch (err) { host.showError(t('ext.toggle.fail'), err) }
+        } catch (err) { host!.showError(t('ext.toggle.fail'), err) }
       })
       const info = updateMap[p.id]
       if (info) {
@@ -624,11 +624,11 @@ function renderInstalledExtensions(
             await updateInstalledPlugin(p, info)
             try { delete _extLastUpdateMap[p.id] } catch {}
             await refreshInstalledExtensionsUI()
-            host.pluginNotice(t('ext.update.ok'), 'ok', 1500)
+            host!.pluginNotice(t('ext.update.ok'), 'ok', 1500)
           } catch (err) {
             try { btnUpdate.textContent = t('ext.update.btn') } catch {}
             try { (btnUpdate as HTMLButtonElement).disabled = false } catch {}
-            host.showError(t('ext.update.fail'), err)
+            host!.showError(t('ext.update.fail'), err)
           }
         })
         actions.appendChild(btnUpdate)
@@ -876,7 +876,7 @@ export async function refreshExtensionsUI(): Promise<void> {
             actions.appendChild(tag)
           } catch {}
           const btn = document.createElement('button'); btn.className = 'btn primary'; btn.textContent = t('ext.settings')
-          btn.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openUploaderDialog() } catch {} })
+          btn.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host!.openUploaderDialog() } catch {} })
           actions.appendChild(btn)
         } else if (b.id === 'webdav-sync') {
           try {
@@ -886,7 +886,7 @@ export async function refreshExtensionsUI(): Promise<void> {
             actions.appendChild(tag)
           } catch {}
           const btn2 = document.createElement('button'); btn2.className = 'btn primary'; btn2.textContent = t('ext.settings')
-          btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host.openWebdavSyncDialog() } catch {} })
+          btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host!.openWebdavSyncDialog() } catch {} })
           actions.appendChild(btn2)
         }
         row.appendChild(meta); row.appendChild(actions)
@@ -1033,7 +1033,7 @@ export async function refreshExtensionsUI(): Promise<void> {
           }
           if (it.homepage && host) {
             const a = document.createElement('a'); a.href = it.homepage!; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = t('ext.homepage')
-            a.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); try { void host.openInBrowser(it.homepage!) } catch {} })
+            a.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); try { void host!.openInBrowser(it.homepage!) } catch {} })
             desc.appendChild(a)
           }
         }
@@ -1049,19 +1049,19 @@ export async function refreshExtensionsUI(): Promise<void> {
           btnInstall.addEventListener('click', async () => {
             try {
               btnInstall.textContent = t('ext.install.btn') + '...'; (btnInstall as HTMLButtonElement).disabled = true
-              const rec = await host.installPluginFromGit(it.install.ref)
-              await host.activatePlugin(rec)
+              const rec = await host!.installPluginFromGit(it.install.ref)
+              await host!.activatePlugin(rec)
               try {
                 await refreshInstalledExtensionsUI()
                 await applyMarketFilter()
               } catch {}
-              host.pluginNotice(t('ext.install.ok'), 'ok', 1500)
+              host!.pluginNotice(t('ext.install.ok'), 'ok', 1500)
             } catch (e) {
               try { btnInstall.textContent = t('ext.install.btn') } catch {}
               try { (btnInstall as HTMLButtonElement).disabled = false } catch {}
               void appendLog('ERROR', t('ext.install.fail'), e)
               const errMsg = (e instanceof Error) ? e.message : String(e)
-              host.pluginNotice(t('ext.install.fail') + (errMsg ? ': ' + errMsg : ''), 'err', 3000)
+              host!.pluginNotice(t('ext.install.fail') + (errMsg ? ': ' + errMsg : ''), 'err', 3000)
             }
           })
           right.appendChild(btnInstall)

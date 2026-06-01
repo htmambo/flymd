@@ -2007,7 +2007,7 @@ async function getCryptoKeyForEncryption(encCfg: EncryptionRuntimeConfig): Promi
     )
     const saltBytes = base64ToBytes(encCfg.salt)
     const cryptoKey = await crypto.subtle.deriveKey(
-      { name: 'PBKDF2', salt: saltBytes, iterations: 100_000, hash: 'SHA-256' },
+      { name: 'PBKDF2', salt: saltBytes as BufferSource, iterations: 100_000, hash: 'SHA-256' },
       keyMaterial,
       { name: 'AES-GCM', length: 256 },
       false,
@@ -2038,7 +2038,9 @@ async function encryptBytesIfEnabled(data: Uint8Array, cfg: WebdavSyncConfig): P
   }
   try {
     const iv = randomBytes(12)
-    const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data)
+    // Uint8Array<ArrayBufferLike> 与 BufferSource 在 TS 5.4+ 收紧 ArrayBuffer
+    // 泛型后仍不可分配，iv 与 data 都用 any 表达意图
+    const ctBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv as any }, key, data as any)
     const ct = new Uint8Array(ctBuf)
     const out = new Uint8Array(ENC_MAGIC_BYTES.length + 1 + iv.length + ct.length)
     out.set(ENC_MAGIC_BYTES, 0)

@@ -29,7 +29,8 @@ declare module 'markdown-it-footnote'
 // 通用 CSS / 资源模块声明（与 vite 静态资源加载约定一致）
 declare module '*.css'
 
-// Vite 静态资源加载（?url / ?raw / ?inline 等查询后缀）声明
+// Vite 静态资源加载（?url / ?raw / ?inline / ?worker 等查询后缀）声明
 declare module '*?url'
 declare module '*?raw'
 declare module '*?inline'
+declare module '*?worker'

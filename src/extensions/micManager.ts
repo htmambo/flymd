@@ -54,7 +54,7 @@ export async function acquireMic(owner: MicOwnerId): Promise<MicLease> {
       if (_active && _active.owner === owner && _active.stream === stream) {
         _active = null
       }
-      try { stream.getTracks().forEach((t) => { try { t.stop() } catch {} }) } catch {}
+      try { stream.getTracks().forEach((t: MediaStreamTrack) => { try { t.stop() } catch {} }) } catch {}
     },
   }
   return lease

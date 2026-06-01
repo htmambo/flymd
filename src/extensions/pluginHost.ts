@@ -1286,7 +1286,10 @@ export function createPluginHost(
           try {
             if (disposed) return
             disposed = true
-            const r = unwatch()
+            // unwatch() 类型为 () => void（@tauri-apps/plugin-fs UnwatchFn），
+            // 但代码意图是支持返回 Promise 的 disposer。把结果视为 unknown 后
+            // 再做 .catch 检查，可同时兼容 void 与 Promise 两种实现。
+            const r = unwatch() as unknown
             if (r && typeof (r as any).catch === 'function') {
               ;(r as any).catch(() => {})
             }
@@ -1336,7 +1339,10 @@ export function createPluginHost(
           try {
             if (disposed) return
             disposed = true
-            const r = unwatch()
+            // unwatch() 类型为 () => void（@tauri-apps/plugin-fs UnwatchFn），
+            // 但代码意图是支持返回 Promise 的 disposer。把结果视为 unknown 后
+            // 再做 .catch 检查，可同时兼容 void 与 Promise 两种实现。
+            const r = unwatch() as unknown
             if (r && typeof (r as any).catch === 'function') {
               ;(r as any).catch(() => {})
             }

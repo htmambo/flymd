@@ -530,7 +530,7 @@ async function audioBlobToWav16kBlob(blob: Blob): Promise<{ wavBlob: Blob; durat
 
     const pcm16 = resampleTo16kInt16(mono, audioBuf.sampleRate || ASR_SAMPLE_RATE)
     const wav = pcm16ToWavBytes(pcm16, ASR_SAMPLE_RATE)
-    const wavBlob = new Blob([wav], { type: 'audio/wav' })
+    const wavBlob = new Blob([wav as BlobPart], { type: 'audio/wav' })
     return { wavBlob, durationSec }
   } finally {
     try { await (ctx as any).close?.() } catch {}
