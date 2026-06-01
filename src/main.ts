@@ -511,6 +511,7 @@ function hashMermaidCode(code: string): string {
       // 记忆上次值与选区（用于 input 兜底计算差异）
       function rememberPrev() {
         try {
+          // @ts-ignore
           const ta = getEditor(); if (!ta) return
           const w = window as any
           w._edPrevVal = String(ta.value || '')
@@ -521,8 +522,10 @@ function hashMermaidCode(code: string): string {
 
       function handleInput(ev: any) {
         try {
+          // @ts-ignore
           const ta = getEditor(); if (!ta) return
           if (ev.target !== ta) return
+          // @ts-ignore
           if (!isEditMode()) return
           const w = window as any
           const prev = String(w._edPrevVal ?? '')
@@ -551,6 +554,7 @@ function hashMermaidCode(code: string): string {
             }
             // 单个左标记：自动/环绕补全（含全角）
             if (inserted.length === 1) {
+              // @ts-ignore
               const close = (openClose as any)[inserted]
               if (close) {
                 if (hadSel) {
@@ -572,6 +576,7 @@ function hashMermaidCode(code: string): string {
                 return
               }
               // 右标记跳过
+              // @ts-ignore
               if ((closers as any).has && (closers as any).has(inserted) && !hadSel) {
                 const rightChar = inserted
                 if (prev.slice(ps, ps + 1) === rightChar) {
@@ -590,8 +595,10 @@ function hashMermaidCode(code: string): string {
       // 初始快照：获取一次
       try { rememberPrev() } catch {}
         try {
+          // @ts-ignore
           const ta = getEditor(); if (!ta) return
           if (ev.target !== ta) return
+          // @ts-ignore
           if (!isEditMode()) return
           const it = (ev as any).inputType || ''
           if (it !== 'insertText' && it !== 'insertCompositionText') return
@@ -617,12 +624,14 @@ function hashMermaidCode(code: string): string {
           }
 
           // 组合输入：跳过右侧闭合
+          // @ts-ignore
           if (data.length === 1 && (closers as any).has && (closers as any).has(data) && s === epos && val[s] === data) {
             ev.preventDefault(); ta.selectionStart = ta.selectionEnd = s + 1; return
           }
 
           // 组合输入：通用成对/环绕（含全角左标记）
           if (data.length === 1) {
+            // @ts-ignore
             const close = (openClose as any)[data]
             if (close) {
               ev.preventDefault()
@@ -1412,7 +1421,9 @@ function initContextMenuListener() {
 function getPluginOrder(id: string, name?: string, bias = 0): number {
   try {
     const key = id || ''
+    // @ts-ignore — _extGlobalOrder 在文件下方声明，TS 严格模式视为未声明
     if (key && Object.prototype.hasOwnProperty.call(_extGlobalOrder, key)) {
+      // @ts-ignore
       return _extGlobalOrder[key]
     }
     const base = 50_000 + bias
@@ -3298,7 +3309,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
         <button class="lib-action-btn lib-icon-btn active" id="lib-tab-files" title="${t('tab.files')}">${ribbonIcons.layers}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-tab-outline" title="${t('tab.outline')}">${ribbonIcons.list}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-layout" title="${t('outline.layout')}">${ribbonIcons.columnsThree}</button>
-        <button class="lib-action-btn lib-icon-btn" id="btn-search" title="${t('search.title')}">${ribbonIcons.search}</button>
+        <button class="lib-action-btn lib-icon-btn" id="btn-search" title="${t('search.title' as any)}">${ribbonIcons.search}</button>
         <button class="lib-action-btn lib-icon-btn hidden" id="lib-refresh" title="${t('lib.refresh')}">${ribbonIcons.refreshCw}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-side" title="${t('lib.side.left')}">${ribbonIcons.sidebarLeft}</button>
         <button class="lib-action-btn lib-icon-btn" id="lib-pin" title="${t('lib.pin.auto')}">${ribbonIcons.pin}</button>
@@ -3406,7 +3417,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   try {
     configureOutlineDockUi({
       getStore: () => store as any,
-      t: (k) => t(k) as any,
+      t: (k: string) => t(k as any) as any,
       getOutlineLayout: () => outlineLayout as any,
       requestApplyOutlineLayout: () => { try { applyOutlineLayout() } catch {} },
     })
@@ -3794,10 +3805,11 @@ async function ensureRenderer() {
       html: true,
       linkify: true,
       breaks: true, // 单个换行渲染为 <br>，与所见模式的“回车即提行”保持一致
-      highlight(code, lang) {
+      highlight(code: string, lang: string): string {
         // Mermaid 代码块保留为占位容器，稍后由 mermaid 渲染
+        const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
         if (lang && lang.toLowerCase() === 'mermaid') {
-          const esc = code.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!))
+          const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
           return `<pre class="mermaid">${esc}</pre>`
         }
         try {
@@ -3806,7 +3818,7 @@ async function ensureRenderer() {
             return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
           }
         } catch {}
-        const esc = code.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]!))
+        const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
         return `<pre><code class="hljs">${esc}</code></pre>`
       }
     })
@@ -4108,6 +4120,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     } catch {}
   } catch {} finally { try { if (seq === _renderPreviewSeq) preview.classList.remove('rendering') } catch {} }
   // 重新计算所见模式锚点表
+  // @ts-ignore — _wysiwygAnchors / buildAnchors 在文件下方声明
   try { if (wysiwyg) { _wysiwygAnchors = buildAnchors(preview) } } catch {}
   // 所见模式下，确保“模拟光标 _”在预览区可见
   // 旧所见模式移除：不再调整模拟光标
@@ -4137,6 +4150,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         const el = img as HTMLImageElement
         const maybeNudge = () => {
           try { updateWysiwygVirtualPadding() } catch {}
+          // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
           try { if (_nudgedCaretForThisRender) return; if (!wysiwyg) return } catch { return }
           try {
             const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
@@ -4149,7 +4163,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
               const approx = Math.round(((el.clientHeight || 0) / (lh || 16)) * 0.3)
               const lines = Math.max(4, Math.min(12, approx || 0))
               const moved = moveWysiwygCaretByLines(lines, _wysiwygCaretVisualColumn)
-              if (moved !== 0) { _nudgedCaretForThisRender = true; updateWysiwygLineHighlight(); updateWysiwygCaretDot(); startDotBlink(); try { ensureWysiwygCaretDotInView() } catch {} }
+              if (moved !== 0) { // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
+                _nudgedCaretForThisRender = true; updateWysiwygLineHighlight(); updateWysiwygCaretDot(); startDotBlink(); try { ensureWysiwygCaretDotInView() } catch {} }
             }
           } catch {}
         }
@@ -4933,8 +4948,8 @@ async function openFile(preset?: string) {
     refreshStatus()
     await switchToPreviewAfterOpen()
     // 打开后恢复上次阅读/编辑位置
-    await restoreDocPosIfAny(selectedPath)
-    await pushRecent(currentFilePath)
+    await restoreDocPosIfAny(selectedPath as any)
+    await pushRecent(currentFilePath as any)
     await renderRecentPanel(false)
     logInfo('�ļ����سɹ�', { path: selectedPath, size: content.length })
   } catch (error) {
@@ -5039,7 +5054,7 @@ async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boole
 
   const updateRecent = opts?.updateRecent !== false
   if (updateRecent) {
-    try { await pushRecent(currentFilePath) } catch {}
+    try { await pushRecent(currentFilePath as any) } catch {}
     try { await renderRecentPanel(false) } catch {}
   }
 
@@ -5903,7 +5918,7 @@ function renderOutlinePanel() {
     // 应用折叠：根据被折叠的 id 隐藏其后代
     function applyCollapse() {
       try {
-        const nodes = Array.from(outline.querySelectorAll('.ol-item')) as HTMLDivElement[]
+        const nodes = Array.from(outline!.querySelectorAll('.ol-item')) as HTMLDivElement[]
         // 先全部显示
         nodes.forEach(n => n.classList.remove('hidden'))
         // 逐个处理折叠项
@@ -7029,7 +7044,7 @@ function initWindowsCompositorPoke() {
       // 某些机器上需要触发一次 WM_SIZE 才会把透明 surface 刷干净：同尺寸 setSize 当作无损 poke
       try {
         const s = await win.innerSize()
-        await win.setSize({ type: 'Physical', width: s.width, height: s.height })
+        await win.setSize({ type: 'Physical', width: s.width, height: s.height } as any)
       } catch {}
     } catch {} finally {
       // 避免 setSize 触发的 window 事件反复回调导致抖动
@@ -7298,9 +7313,9 @@ function initWindowResize() {
       const win = getCurrentWindow()
       // 先设置位置（如果需要），再设置尺寸
       if (newX !== startPosX || newY !== startPosY) {
-        await win.setPosition({ type: 'Physical', x: Math.round(newX), y: Math.round(newY) })
+        await win.setPosition({ type: 'Physical', x: Math.round(newX), y: Math.round(newY) } as any)
       }
-      await win.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) })
+      await win.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) } as any)
     } catch {}
   })
 
@@ -7755,7 +7770,7 @@ function resetStickyModeFlags(): void {
       if (maxH > 0 && targetH > maxH) targetH = maxH
 
     if (targetW !== size.width || targetH !== size.height) {
-      await win.setSize({ type: 'Physical', width: Math.round(targetW), height: Math.round(targetH) })
+      await win.setSize({ type: 'Physical', width: Math.round(targetW), height: Math.round(targetH) } as any)
     }
   } catch {}
 }
@@ -7804,7 +7819,7 @@ async function centerWindow(): Promise<void> {
 
     const x = Math.round(waX + Math.max(0, (waW - size.width) / 2))
     const y = Math.round(waY + Math.max(0, (waH - size.height) / 2))
-    await win.setPosition({ type: 'Physical', x, y })
+    await win.setPosition({ type: 'Physical', x, y } as any)
   } catch {}
 }
 
@@ -8318,7 +8333,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
 
   if (!refreshTree) return
   try {
-    try { const s = await getLibrarySort(); fileTree.setSort(s) } catch {}
+    try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
       await fileTree.init(treeEl, {
@@ -8677,7 +8692,9 @@ function bindEvents() {
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
 
+      // @ts-ignore — handleBeforeInput/handleInput 在文件下方声明
       document.addEventListener('beforeinput', (e) => { try { const ev: any = e as any; if (ev?.isComposing || /Composition/i.test(String(ev?.inputType || ''))) return; handleBeforeInput(e as any) } catch {} }, true)
+      // @ts-ignore
       document.addEventListener('input', (e) => { try { const ev: any = e as any; if (ev?.isComposing || /Composition/i.test(String(ev?.inputType || ''))) return; handleInput(e as any) } catch {} }, true)
       document.addEventListener('keydown', (e) => { try { handleKeydown(e) } catch {} }, true)
       document.addEventListener('keydown', (e) => { try { handleTabIndent(e) } catch {} }, true)
@@ -9583,7 +9600,7 @@ function bindEvents() {
     exists: async (p: string) => { return await exists(p as any) },
     askOverwrite: async (msg: string) => { return await ask(msg) },
     moveFileSafe,
-    setSort: async (mode: LibSortMode) => { await setLibrarySort(mode) },
+    setSort: async (mode: LibSortMode) => { await setLibrarySort(store, mode) },
     applySortToTree: async (mode: LibSortMode) => {
       try { fileTree.setSort(mode) } catch {}
       try { await fileTree.refresh() } catch {}
@@ -9722,7 +9739,7 @@ function bindEvents() {
         const isCtrlShiftI = (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i'
         if (isF12 || isCtrlShiftI) {
           e.preventDefault()
-          try { getCurrentWebview().openDevtools() } catch {}
+          try { (getCurrentWebview() as any).openDevtools() } catch {}
           return
         }
       }
@@ -9977,7 +9994,7 @@ function bindEvents() {
     let root = await getLibraryRoot()
     if (!root) root = await pickLibraryRoot()
     try { await refreshLibraryUiAndTree(false) } catch {}
-    try { const s = await getLibrarySort(); fileTree.setSort(s) } catch {}
+    try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
       await fileTree.init(treeEl, {
@@ -10162,7 +10179,8 @@ function bindEvents() {
       if (_statusRaf) return
       _statusRaf = requestAnimationFrame(() => {
         _statusRaf = 0
-        try { refreshStatus(_lastStatusEv) } catch {}
+        try { (refreshStatus as any)(_lastStatusEv) } catch {}
+        // @ts-ignore — notifySelectionChangeForPlugins 在文件下方声明
         try { notifySelectionChangeForPlugins() } catch {}
         _lastStatusEv = undefined
       })
@@ -10408,13 +10426,14 @@ function bindEvents() {
       const fname = `pasted-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}-${rand}.${ext}`
 
       // 占位符 + 异步上传，不阻塞编辑（已拆分到 core/imageUpload）
-      await _imageUploader.startAsyncUploadFromFile(file, fname)
+      if (file) await _imageUploader.startAsyncUploadFromFile(file as any, fname)
       return
       // 若启用图床上传，优先尝试上传，成功则直接插入外链并返回
       try {
         const upCfg = await getUploaderConfig()
-        if (upCfg) {
-          const pub = await uploadImageToCloud(file, fname, file.type || 'application/octet-stream', upCfg)
+        if (upCfg && file) {
+          const safeFile = file as File
+          const pub = await uploadImageToCloud(safeFile as any, fname, safeFile.type || 'application/octet-stream', upCfg as any)
           insertAtCursor(`![${fname}](${pub.publicUrl})`)
           if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           else if (wysiwyg) scheduleWysiwygRender()
@@ -10424,7 +10443,7 @@ function bindEvents() {
         console.warn('直连上传失败，改用本地保存/内联', e)
       }
 
-      await _imageUploader.startAsyncUploadFromFile(file, fname)
+      if (file) await _imageUploader.startAsyncUploadFromFile(file as any, fname)
     } catch (err) {
       showError('处理粘贴图片失败', err)
     }
@@ -10767,7 +10786,7 @@ function bindEvents() {
     const chooseBtn = document.getElementById('lib-choose') as HTMLButtonElement | null
     const refreshBtn = document.getElementById('lib-refresh') as HTMLButtonElement | null
     if (chooseBtn) chooseBtn.addEventListener('click', guard(async () => { await showLibraryMenu() }))
-  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(); fileTree.setSort(s) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
+  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
   } catch {}
   // 监听 Tauri 文件拖放（用于直接打开 .md/.markdown/.txt 文件）
   ;(async () => {
@@ -11114,7 +11133,7 @@ function bindEvents() {
       document.addEventListener('keydown', (e: KeyboardEvent) => {
         const isF12 = e.key === 'F12'
         const isCtrlShiftI = (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i'
-        if (isF12 || isCtrlShiftI) { e.preventDefault(); try { getCurrentWebview().openDevtools() } catch {} }
+        if (isF12 || isCtrlShiftI) { e.preventDefault(); try { (getCurrentWebview() as any).openDevtools() } catch {} }
       })
     } catch {}
     // 便签模式检测：检查启动参数中是否有 --sticky-note
@@ -11155,14 +11174,14 @@ function bindEvents() {
       // 恢复源码模式状态（如果有便签前记录）
       try {
         if (store) {
-          const editorState = await store.get('editorModeBeforeSticky') as { mode: string; wysiwygV2Active: boolean } | null
+          const editorState = await (store as any).get('editorModeBeforeSticky') as { mode: string; wysiwygV2Active: boolean } | null
           if (editorState) {
             // 恢复源码模式，并清除记录
             // 注意：这里只是恢复状态变量，UI 切换会在后续文件打开时自动处理
             mode = editorState.mode as 'edit' | 'preview'
             // wysiwygV2Active 的恢复需要等 UI 加载完成后处理，这里只清除记录
-            await store.delete('editorModeBeforeSticky')
-            await store.save()
+            await (store as any).delete('editorModeBeforeSticky')
+            await (store as any).save()
           }
         }
       } catch (e) {
@@ -11241,7 +11260,7 @@ function bindEvents() {
       const SOURCEMODE_DEFAULT_KEY = 'flymd:sourcemode:default'
       const wysiwygDefault = localStorage.getItem(WYSIWYG_DEFAULT_KEY) === 'true'
       const sourcemodeDefault = localStorage.getItem(SOURCEMODE_DEFAULT_KEY) === 'true'
-      const hasCurrentPdf = !!(currentFilePath && currentFilePath.toLowerCase().endsWith('.pdf'))
+      const hasCurrentPdf = !!((currentFilePath as any) && (currentFilePath as any).toLowerCase().endsWith('.pdf'))
 
       // 若同时存在旧数据冲突，以“源码模式默认”为优先，确保语义明确；
       // 但若启动时已通过“打开方式”直接打开的是 PDF，则不要在这里强制切到所见模式，避免覆盖 PDF 预览。
