@@ -47,7 +47,9 @@ docs/Task/
 
 ### Active
 
-- [2026-06-02-flymd-quality-baseline.md](Active/2026-06-02-flymd-quality-baseline.md) — FlyMD 质量基线与技术债清理（P0-P3 七项）
+- [2026-06-02-flymd-quality-baseline.md](Active/2026-06-02-flymd-quality-baseline.md) — FlyMD 质量基线与技术债清理（P0-P3 七项 + A.1）
+  - **Task A ✅**（wysiwyg/v2 11 → 0；顺带修 1 处真实 bug：`docChanged → updated`）
+  - **Task A.1 ⏳**（剩余 116 处 TS 错误，5 个 Batch）
 
 ### Archive
 

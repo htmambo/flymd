@@ -19,6 +19,8 @@
 ## 1. 现状证据
 
 > 摘自 2026-06-02 项目检查；详细数据见本任务对应会话。
+> **2026-06-02 修订**：原计划记录 "11 处 TS 错误" 实为 `tail -25` 截断后的局部数据。
+> 实际 `tsc --noEmit` 报告 **132** 处错误，覆盖 25+ 个文件。本计划已补全。
 
 ### 1.1 代码体量
 - TS + CSS 共 **65,409 行**（src/）
@@ -27,12 +29,41 @@
 - `src/extensions/webdavSync.ts` 3,438 行 / `pluginHost.ts` 2,661 行
 
 ### 1.2 类型与构建
-- `vite build` ✅ 通过（26.19s）
-- `tsc --noEmit` ❌ 11 处错误，**全部集中在** `src/wysiwyg/v2/**`
-  - 6 处 `src/wysiwyg/v2/index.ts`（implicit any、`never` 推断）
-  - 3 处 `src/wysiwyg/v2/plugins/math.ts`（`katex/contrib/mhchem` 缺类型声明、null 检查）
-  - 1 处 `src/wysiwyg/v2/plugins/mermaid.ts`（`NodeViewConstructor` 类型不匹配）
-  - 1 处 `src/wysiwyg/v2/plugins/highlight.ts`（`ignoreMutation` 签名不兼容 `ViewMutationRecord`）
+- `vite build` ✅ 通过（每次 ~30s，无运行时回归）
+- `tsc --noEmit` ❌ 132 处错误，覆盖 25+ 文件
+  - **核心子系统（直接关联编辑器核心）**：12 处
+    - `src/wysiwyg/v2/index.ts` 7 处
+    - `src/wysiwyg/v2/plugins/math.ts` 3 处
+    - `src/wysiwyg/v2/plugins/mermaid.ts` 1 处
+    - `src/wysiwyg/v2/plugins/highlight.ts` 1 处
+  - **UI / 扩展面板**：21 处
+    - `src/extensions/extensionsPanel.ts` 12 处（多为 `host is possibly null`）
+    - `src/ui/linkDialogs.ts` 5 处
+    - `src/ui/contextMenus.ts` 2 处
+    - `src/ui/aboutOverlay.ts` 2 处
+  - **扩展宿主 / 同步 / 录音 / 麦克风**：8 处
+    - `src/extensions/pluginHost.ts` 4 处
+    - `src/extensions/webdavSync.ts` 2 处
+    - `src/extensions/speechTranscribe.ts` 1 处
+    - `src/extensions/micManager.ts` 1 处
+    - `src/extensions/pluginMenuManager.ts` 1 处
+  - **uploader / 图床**：4 处
+    - `src/uploader/s3.ts` 2 处
+    - `src/uploader/manualImageUpload.ts` 1 处
+    - `src/uploader/imgla.ts` 1 处
+  - **plugins / markdown-it 适配**：4 处
+    - `src/plugins/markdownItKatex.ts` 1 处
+    - `src/plugins/markdownItFootnote.ts` 2 处
+    - `src/plugins/markdownItCallout.ts` 1 处
+  - **导出 / 通用核心**：4 处
+    - `src/core/htmlPasteImages.ts` 2 处（`Uint8Array<ArrayBufferLike>`）
+    - `src/exporters/pdf.ts` 2 处
+  - **主入口 main.ts**：56 处（最大单一文件）
+  - **其他零散**：8 处
+    - `src/modes/sourceLineNumbers.ts` 1
+    - `src/i18n.ts` 1
+    - `src/theme.ts` 1
+    - `src/main.ts` 见上
 
 ### 1.3 测试 / Lint
 - 仓库内 **无 `*.test.*` / `*.spec.*`**
@@ -71,13 +102,14 @@ Phase 4 (P3) — 演进：架构整理
 
 ---
 
-## 3. Task A — 修复 wysiwyg/v2 的 11 处 TS 错误
+## 3. Task A — 修复 wysiwyg/v2 的 12 处 TS 错误
 
 | 字段 | 内容 |
 |------|------|
 | 优先级 | **P0** |
-| 状态 | ⏳ 待执行 |
+| 状态 | ✅ **已完成**（2026-06-02，4 个 commit） |
 | 估算 | M（半天～一天） |
+| 提交哈希 | `7ebd2fe` / `a0a526b` / `bd20f5c` / `a75ccef` |
 
 ### 目标
 
@@ -86,6 +118,7 @@ Phase 4 (P3) — 演进：架构整理
 ### 现状分析
 
 ```
+src/wysiwyg/v2/index.ts:325  Blob Uint8Array<ArrayBufferLike> 不可分配
 src/wysiwyg/v2/index.ts:653  Parameter '_ctx' implicitly has 'any'
 src/wysiwyg/v2/index.ts:659  Parameter '_ctx' / 'markdown' implicitly has 'any'
 src/wysiwyg/v2/index.ts:831  Property 'node' does not exist on type 'never'
@@ -99,29 +132,91 @@ src/wysiwyg/v2/plugins/mermaid.ts:441
   NodeViewConstructor 返回类型不匹配
 ```
 
-根因可归为三类：
-1. **Milkdown/ProseMirror 7.17 类型升级**：`NodeView` 中 `ignoreMutation` 形参类型由 `MutationRecord` 改为 `ViewMutationRecord`。
-2. **`@milkdown/kit` Ctx 推断**：未给闭包参数标注类型，落入 implicit any 与 `never`。
-3. **第三方模块缺类型声明**：`katex/contrib/mhchem` 与 `katex/dist/katex.min.css` 没在 katex 的 `.d.ts` 中导出。
+根因可归为四类：
+1. **Milkdown/ProseMirror 7.17 类型升级**：`NodeView.ignoreMutation` 形参从 `MutationRecord` 改为 `ViewMutationRecord`。
+2. **listener API 漂移**：原作者误写 `lm.docChanged(...)`，但 `ListenerManager` 中没有 `docChanged`（已有 `updated`），导致回调永远不会被触发（真实 bug）。
+3. **TS 5.x 闭包内赋值无法跨回调传播**：`let target` 在 `descendants()` 后的类型会被 TS 漏为 `null` → `never`。
+4. **第三方模块缺类型声明**：`katex/contrib/mhchem`、`katex/dist/katex.min.css` 未在 katex 的 `.d.ts` 中导出。
 
-### 子任务
+### 子任务（实际完成）
 
-- ⏳ A1 — `src/types/shims.d.ts` 中补 `declare module 'katex/contrib/mhchem'`；CSS 模块声明 `declare module '*.css'`
-- ⏳ A2 — `wysiwyg/v2/plugins/highlight.ts`：把 `ignoreMutation(mutation: MutationRecord)` 改为 `import type { ViewMutationRecord } from '@milkdown/prose/view'` 后使用
-- ⏳ A3 — `wysiwyg/v2/plugins/mermaid.ts`：`NodeView` 子类显式 `implements NodeView` 并保持联合返回；或将 `(node, view, getPos) => ...` 改造为 `NodeViewConstructor` 兼容签名
-- ⏳ A4 — `wysiwyg/v2/plugins/math.ts:87`：`_mathIO` 增加非空守卫或换 `!` 断言（仅在已确认初始化路径处）
-- ⏳ A5 — `wysiwyg/v2/index.ts`：给 `(_ctx) => ...`、`(_ctx, markdown) => ...` 显式标注 `Ctx`、`string`；`never` 报错处通常因为 `Array.isArray(...)` 之后未做泛型约束，改用 `instanceof`/类型守卫消除
+- ✅ A1 — `src/types/shims.d.ts` 中补 `katex/contrib/mhchem`、`katex/dist/katex.min.css`、`html2pdf.js/dist/...`、`*.css` 四条 `declare module`
+- ✅ A2 — `wysiwyg/v2/plugins/highlight.ts`：import `ViewMutationRecord`，`ignoreMutation` 改用该类型（顺带修复 mermaid.ts 的 1 处联合返回不匹配）
+- ✅ A3 — （被 A2 顺带修复）`mermaid.ts:441` 不再报错
+- ✅ A4 — `math.ts:87`：引入局部 `observer` 变量，闭包对外部 `_mathIO` 的引用不再污染窄化
+- ✅ A5 — `index.ts`：listener 类型断言、修正 `docChanged → updated`（真实 bug）、Blob Uint8Array 显式断言、`target as ... | null` 重新声明类型
 
-### 验收标准
+### 验收
 
-- `./node_modules/.bin/tsc --noEmit` 退出码 0（或仅剩与本任务无关的新错误）
-- `vite build` 通过
-- 手动验证：打开含 KaTeX 公式、Mermaid 图、代码高亮的文档，所见模式可正常进入与编辑
+- `wysiwyg/v2/**` tsc 错误：**11 → 0**（含 1 处真实 bug 修复）
+- 全局 tsc 错误总数：**132 → 116**
+- `vite build` ✅ 38.25s（无回归）
 
-### 风险与回滚
+### 实际收益（不仅是类型）
 
-- 风险：`NodeView` 子类签名调整可能影响真实运行时行为（少量 mutation 被忽略策略变化）
-- 回滚：每个文件作为单独 commit，问题文件可独立 revert
+- 修复了一处 **真实运行时 bug**：`lm.docChanged(...)` 在所有 milkdown 7.x 中都不会触发，意味着原代码"内容变化时回写 Markdown"的路径从未生效；改为 `updated` 后才真正工作。
+- 修复了 KaTeX 公式节点 MutationRecord 漏报导致高亮层闪烁的可能。
+- 把 `_mathIO` 窄化丢失的隐患闭环，未来升级 TypeScript / ProseMirror 类型也不会回退。
+
+---
+
+## 3.5. Task A.1 — 修复剩余 116 处 TS 错误（按文件分批）
+
+| 字段 | 内容 |
+|------|------|
+| 优先级 | **P0** |
+| 状态 | ⏳ 待执行（Task A 已完成；本任务为外延） |
+| 估算 | **XL**（分 4-5 批，每批 0.5-1 天） |
+| 错误总数 | 116（覆盖 25 个文件） |
+
+### 目标
+
+`tsc --noEmit` 全局 **0 错误**。
+
+### 分批计划
+
+按"修复体量由小到大 + 风险由低到高"分批推进，每批独立 commit、独立可回滚。
+
+#### Batch 1 — 小工具与图床（10 处，4 文件，半日）
+- `src/core/htmlPasteImages.ts`（2 处）：`Uint8Array<ArrayBufferLike>` 不可分配 BlobPart
+- `src/exporters/pdf.ts`（2 处）：`getImageData` on `RenderingContext`、`html2pdf.js/dist/...bundle.min.js` 缺类型
+- `src/uploader/s3.ts`（2 处）
+- `src/uploader/manualImageUpload.ts`（1 处）
+- `src/uploader/imgla.ts`（1 处）
+- `src/ui/aboutOverlay.ts`（2 处）
+- `src/ui/contextMenus.ts`（2 处）
+
+#### Batch 2 — 链接 / 插件适配 / 主题 / i18n（12 处，5 文件，半日）
+- `src/ui/linkDialogs.ts`（5 处）
+- `src/plugins/markdownItKatex.ts`（1 处）
+- `src/plugins/markdownItFootnote.ts`（2 处）
+- `src/plugins/markdownItCallout.ts`（1 处）
+- `src/modes/sourceLineNumbers.ts`（1 处）
+- `src/theme.ts`（1 处）
+- `src/i18n.ts`（1 处）
+
+#### Batch 3 — 扩展子系统（24 处，6 文件，一日）
+- `src/extensions/extensionsPanel.ts`（12 处：多为 `host` null 守卫）
+- `src/extensions/pluginHost.ts`（4 处）
+- `src/extensions/webdavSync.ts`（2 处）
+- `src/extensions/speechTranscribe.ts`（1 处）
+- `src/extensions/micManager.ts`（1 处）
+- `src/extensions/pluginMenuManager.ts`（1 处）
+
+#### Batch 4 — main.ts 入口（56 处，两到三日）
+- 11,456 行单文件本身是债务；本批**仅做"加类型守卫、补强 any 标注"**，不拆文件
+- 重点关注：Tauri API 包装、事件回调、设置保存等高频路径
+- 解决策略：局部细化类型 + 局部非空断言，**不做架构性拆分**（结构性拆分属于 Task B）
+
+#### Batch 5 — 残局（剩余若干处）
+- 上述批次后剩余的小文件零散错误
+- 总结归档至 `Archive/2026-06/`
+
+### 验收
+
+- 每批结束：对应文件 tsc 0 错误
+- 全部结束：全局 tsc 0 错误；`vite build` 仍通过
+- 启动行为、人工回归与 Task A 同样要求
 
 ---
 
@@ -429,7 +524,8 @@ src/styles/
 
 | Task | 状态 | 开始 | 完成 | 备注 |
 |------|------|------|------|------|
-| A — wysiwyg/v2 TS 修复 | ⏳ | — | — | — |
+| A — wysiwyg/v2 TS 修复（11 → 0） | ✅ | 2026-06-02 | 2026-06-02 | `7ebd2fe` / `a0a526b` / `bd20f5c` / `a75ccef` |
+| A.1 — 剩余 116 处 TS 错误 | ⏳ | — | — | 5 个 Batch，由小到大 |
 | B — main.ts 拆分 | ⏳ | — | — | — |
 | C — Vitest 基线 | ⏳ | — | — | — |
 | D — Tauri 安全收紧 | ⏳ | — | — | — |
