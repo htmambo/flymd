@@ -333,7 +333,11 @@ function hookEditorTextMutations(editor: HTMLTextAreaElement, onTextChanged: () 
     const originalSetRangeText = editor.setRangeText.bind(editor)
     ;(editor as any).setRangeText = (...args: any[]) => {
       const prev = String(editor.value || '')
-      const result = originalSetRangeText(...args)
+      // setRangeText(text, start?, end?, mode?)；这里作为通用代理把 args 透传给
+      // 原方法，TS 5.4+ 收紧"任意数组 spread 给 rest"规则，用断言表达意图
+      // setRangeText 形参固定为 (text, start, end, mode?)；作为通用代理透传 args
+      // 用 Parameters 推导原方法形参，避免 TS 5.4+ "任意数组 spread 给 rest" 报错
+      const result = originalSetRangeText(...(args as Parameters<typeof editor.setRangeText>))
       if (String(editor.value || '') !== prev) onTextChanged()
       return result
     }

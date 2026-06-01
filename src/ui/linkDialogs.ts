@@ -35,9 +35,12 @@ export async function openRenameDialog(stem: string, ext: string): Promise<strin
         onCancel()
       }
       function cleanup() {
-        overlay.classList.add('hidden')
+        // overlay / form 在 if (!overlay || !form || ...) 之后理论上非空，
+        // 但 cleanup/onSubmit/onCancel 是 inner closure，TS 5.x 不会跨闭包传播
+        // 窄化结果。这里用非空断言表达不变式。
+        overlay!.classList.add('hidden')
         try {
-          form.removeEventListener('submit', onSubmit)
+          form!.removeEventListener('submit', onSubmit)
           btnCancel?.removeEventListener('click', onCancel)
           btnClose?.removeEventListener('click', onCancel)
           document.removeEventListener('keydown', onKeyDown, true)
@@ -94,10 +97,10 @@ export async function openLinkDialog(
 
     function onSubmit(e: Event) {
       e.preventDefault()
-      const label = (inputText.value || '').trim() || '链接文本'
-      const url = (inputUrl.value || '').trim()
+      const label = (inputText!.value || '').trim() || '链接文本'
+      const url = (inputUrl!.value || '').trim()
       if (!url) {
-        inputUrl.focus()
+        inputUrl!.focus()
         return
       }
       linkDialogResolver && linkDialogResolver({ label, url })

@@ -9,7 +9,7 @@ const LS_KEY = 'flymd.locale'
 
 function detectSystemLocale(): Locale {
   try {
-    const lang = (navigator.language || navigator['userLanguage'] || 'en').toLowerCase()
+    const lang = (navigator.language || (navigator as any)['userLanguage'] || 'en').toLowerCase()
     if (lang.startsWith('zh')) return 'zh'
   } catch {}
   return 'en'

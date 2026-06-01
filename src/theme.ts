@@ -879,6 +879,11 @@ function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
   if (gridToggle) gridToggle.checked = !!prefs.gridBackground
 }
 
+// 模块级引用：让 initThemeUI 的面板 toggle 也能调用 ensureThemePanelReady
+// 内部定义的 revertAllPreviews。原代码是 ReferenceError 后被 try/catch 静默吞掉
+// 的真实 bug。这里在 ensureThemePanelReady 中赋值，initThemeUI 通过可选链调用。
+let _themeRevertAllPreviews: (() => void) | null = null
+
 function ensureThemePanelReady(): HTMLDivElement | null {
   try {
     if (_themePanelReady) return document.getElementById('theme-panel') as HTMLDivElement | null
@@ -1336,6 +1341,8 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         }
       } catch {}
     }
+    // 把 revertAllPreviews 暴露到模块级，让 initThemeUI 面板 toggle 时也能调用
+    _themeRevertAllPreviews = revertAllPreviews
     // 事件委托：在 swatch 上方时应用预览色
     panel.addEventListener('mouseover', (ev) => {
       const t = ev.target as HTMLElement
@@ -1894,7 +1901,10 @@ export function initThemeUI(): void {
         if (!panel) return
         const wasHidden = panel.classList.contains('hidden')
         panel.classList.toggle('hidden')
-        if (!wasHidden && panel.classList.contains('hidden')) revertAllPreviews()
+        // 原代码此处直接调用 ensureThemePanelReady 内部定义的 revertAllPreviews，
+        // 但作用域不重叠，是 ReferenceError，被 try/catch 静默吞掉。
+        // 现在改为调用模块级 _themeRevertAllPreviews（ensureThemePanelReady 已暴露）
+        if (!wasHidden && panel.classList.contains('hidden')) _themeRevertAllPreviews?.()
       } catch {}
     })
   } catch {}
