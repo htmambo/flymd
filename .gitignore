@@ -26,6 +26,7 @@ src-tauri/gen/
 *.AppImage
 *.pkg.tar.zst
 pkg/
+target/
 
 # OS / Editor
 .DS_Store
