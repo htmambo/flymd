@@ -36,6 +36,8 @@ export interface OpenFileWatcherIntegrationDeps {
   // ---- UI 回调(由 main.ts 装配) ----
   /** 自动重载完成后的 toast */
   notifyAutoReloaded: (filePath: string) => void
+  /** 干净标签检测到外部修改,但偏好要求"不自动重载" — 仅通知,不重载 */
+  notifyExternalChangedNoReload: (filePath: string) => void
   /** 删除/不可访问的提示 */
   notifyMissing: (filePath: string) => void
   /** 脏标签弹三选一模态 */
@@ -114,11 +116,11 @@ export function attachExternalChangeWatcher(
       if (deps.autoReloadCleanEnabled()) {
         void doAutoReload(filePath)
       } else {
-        // 不自动重载:仅提示;刷新 snapshot 已由 watcher 内部完成
+        // 不自动重载:仅提示用户磁盘已变,需要手动决定;刷新 snapshot 已由 watcher 内部完成
         try {
-          deps.notifyAutoReloaded(filePath)
+          deps.notifyExternalChangedNoReload(filePath)
         } catch (e) {
-          logWarn('[openFileWatcherIntegration] notifyAutoReloaded throw', String(e))
+          logWarn('[openFileWatcherIntegration] notifyExternalChangedNoReload throw', String(e))
         }
       }
       return

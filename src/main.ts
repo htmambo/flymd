@@ -24,7 +24,7 @@ import { setWysiwygPreload } from './wysiwyg/v2/silentTransition'
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
 import { showThreeButtonDialog, showFileWatchConflictDialog, showFileWatchPrefsDialog, type FileWatchPrefs } from './dialog'
 import { createOpenFileWatcher } from './core/openFileWatcher'
-import { attachExternalChangeWatcher, type ConflictChoice } from './core/openFileWatcherIntegration'
+import { attachExternalChangeWatcher } from './core/openFileWatcherIntegration'
 import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 import { open as openFileHandle, BaseDirectory } from '@tauri-apps/plugin-fs'
@@ -11519,36 +11519,57 @@ try {
 let extWatcherInstance: ReturnType<typeof createOpenFileWatcher> | null = null
 let extWatcherIntegration: ReturnType<typeof attachExternalChangeWatcher> | null = null
 
-/** 文件监听偏好(从 store 读,带默认值兜底) */
+/** 文件监听偏好默认值(首次安装 / store 缺失 / load 失败时兜底) */
 const DEFAULT_FILE_WATCH_PREFS: FileWatchPrefs = {
   enabled: true,
   autoReloadClean: true,
   debugLog: false,
 }
 
-/** 同步读取(每次 handleExternalChange 入口会调) */
-function getFileWatchPrefs(): FileWatchPrefs {
-  if (!store) return { ...DEFAULT_FILE_WATCH_PREFS }
+/**
+ * 偏好内存 cache。
+ * Tauri Store v2 的 `get<T>()` 是 async,但 watcher 集成层在
+ * handleExternalChange 入口需要**同步**读取偏好,故采用 cache 模式:
+ *  - 启动时(loadFileWatchPrefsFromStore)一次性从 store 加载到 cache
+ *  - 后续 getFileWatchPrefs 同步读 cache
+ *  - setFileWatchPrefs 同步更新 cache + 异步落盘
+ * 这样保证"watcher 已挂载后,所有读路径都用最新值"。
+ */
+let fileWatchPrefsCache: FileWatchPrefs = { ...DEFAULT_FILE_WATCH_PREFS }
+
+/** 从 store 加载偏好到 cache(仅在 init 阶段调一次) */
+async function loadFileWatchPrefsFromStore(): Promise<void> {
+  if (!store) return
   try {
-    const raw = store.get('externalFileWatch' as any) as Partial<FileWatchPrefs> | undefined
-    return {
+    const raw = await store.get('externalFileWatch' as any) as Partial<FileWatchPrefs> | undefined
+    fileWatchPrefsCache = {
       enabled: raw?.enabled ?? DEFAULT_FILE_WATCH_PREFS.enabled,
       autoReloadClean: raw?.autoReloadClean ?? DEFAULT_FILE_WATCH_PREFS.autoReloadClean,
       debugLog: raw?.debugLog ?? DEFAULT_FILE_WATCH_PREFS.debugLog,
     }
-  } catch {
-    return { ...DEFAULT_FILE_WATCH_PREFS }
+  } catch (e) {
+    console.warn('[fileWatchPrefs] load failed, using defaults', e)
+    fileWatchPrefsCache = { ...DEFAULT_FILE_WATCH_PREFS }
   }
 }
 
-/** 写回 store(用于偏好模态保存) */
-async function setFileWatchPrefs(p: FileWatchPrefs): Promise<void> {
-  if (!store) return
+/** 同步读(每次 handleExternalChange 入口会调) */
+function getFileWatchPrefs(): FileWatchPrefs {
+  return { ...fileWatchPrefsCache }
+}
+
+/** 写回:同步更新 cache + 异步落盘 store */
+async function setFileWatchPrefs(p: FileWatchPrefs): Promise<boolean> {
+  // 先同步更新 cache,保证事件路径立即生效
+  fileWatchPrefsCache = { ...p }
+  if (!store) return true
   try {
     await store.set('externalFileWatch' as any, p)
     await store.save()
+    return true
   } catch (e) {
     console.error('[fileWatchPrefs] save failed', e)
+    return false
   }
 }
 
@@ -11559,7 +11580,11 @@ async function openFileWatchPrefsDialog(): Promise<void> {
   const before = getFileWatchPrefs()
   const result = await showFileWatchPrefsDialog(before)
   if (!result) return
-  await setFileWatchPrefs(result)
+  const ok = await setFileWatchPrefs(result)
+  if (!ok) {
+    try { NotificationManager.show('plugin-error', t('filewatch.prefs.saveFailed' as any) || '偏好保存失败,请重试', 3000) } catch {}
+    return
+  }
   // 总开关变化:立即让 watcher 释放/重建句柄(#7 PR-1.1 已支持)
   if (result.enabled !== before.enabled && extWatcherIntegration) {
     extWatcherIntegration.setEnabled(result.enabled)
@@ -11679,6 +11704,9 @@ function initExternalChangeWatcher(): void {
     notifyAutoReloaded: () => {
       try { NotificationManager.show('plugin-success', t('filewatch.autoReloaded'), 2200) } catch {}
     },
+    notifyExternalChangedNoReload: () => {
+      try { NotificationManager.show('plugin-success', t('filewatch.externalChangedNoReload'), 2500) } catch {}
+    },
     notifyMissing: () => {
       try { NotificationManager.show('plugin-error', t('filewatch.missing'), 3000) } catch {}
     },
@@ -11695,6 +11723,11 @@ function initExternalChangeWatcher(): void {
   // 暴露给 tabs/integration.ts 等其他模块
   try { (window as any).extWatcherIntegration = extWatcherIntegration } catch {}
   try { (window as any).flymdOpenFileWatchPrefs = openFileWatchPrefsDialog } catch {}
+  // 关键:从 store 加载偏好到 cache,保证后续同步读路径拿到最新值
+  //   (Tauri Store v2 的 get 是 async,必须先 await 再让 watcher 处理事件)
+  void loadFileWatchPrefsFromStore().catch((e) => {
+    console.warn('[extWatcher] load prefs failed', e)
+  })
 }
 
 try { initExternalChangeWatcher() } catch (e) { console.error('[extWatcher] init failed', e) }

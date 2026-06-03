@@ -126,6 +126,7 @@ const dict = {
     'autosave.enabled': '自动保存已开启',
 
     'filewatch.autoReloaded': '文件已在外部更新,已自动重新加载',
+    'filewatch.externalChangedNoReload': '文件已在外部修改(当前偏好不自动重载)',
     'filewatch.missing': '文件已被删除或无法访问,标签已转草稿',
     'filewatch.kept': '已保留本地编辑',
     'filewatch.reloadedAfterConflict': '已重新加载外部版本',
@@ -145,6 +146,7 @@ const dict = {
     'filewatch.prefs.debugLog.hint': '在控制台输出 watcher / integration 的详细日志',
     'filewatch.prefs.btn.save': '保存',
     'filewatch.prefs.btn.close': '关闭',
+    'filewatch.prefs.saveFailed': '偏好保存失败,请重试',
 
     'mode.edit': '源码',
     'mode.read': '阅读',
@@ -663,6 +665,7 @@ const dict = {
     'autosave.enabled': 'Autosave enabled',
 
     'filewatch.autoReloaded': 'External change detected, reloaded automatically',
+    'filewatch.externalChangedNoReload': 'File changed externally (auto-reload disabled in preferences)',
     'filewatch.missing': 'File was deleted or became inaccessible, tab detached',
     'filewatch.kept': 'Local edits kept',
     'filewatch.reloadedAfterConflict': 'Reloaded external version',
@@ -682,6 +685,7 @@ const dict = {
     'filewatch.prefs.debugLog.hint': 'Print verbose watcher / integration logs to the console.',
     'filewatch.prefs.btn.save': 'Save',
     'filewatch.prefs.btn.close': 'Close',
+    'filewatch.prefs.saveFailed': 'Failed to save preferences, please retry',
 
     'mode.edit': 'Edit',
     'mode.read': 'Preview',
