@@ -138,6 +138,8 @@ export function showFileWatchDiffDialog(
   local: string,
 ): Promise<FileWatchDiffResult> {
   return new Promise((resolve) => {
+    // 防御性 try/catch:任何 throw 都会被捕获并打印到 console,避免弹窗静默失败
+    try {
     injectStyles()
     injectFileWatchDiffStyles()
 
@@ -610,6 +612,12 @@ export function showFileWatchDiffDialog(
     setTimeout(() => {
       try { rightTextarea.focus({ preventScroll: true }) } catch { try { cancelBtn.focus() } catch {} }
     }, 50)
+    } catch (err) {
+      // 任何 throw 都被兜底:打印到 console,确保弹窗至少能 resolve 而不卡住
+      try { console.error('[showFileWatchDiffDialog] FATAL', err) } catch {}
+      try { (window as any).flymdLastDiffError = String(err) } catch {}
+      try { resolve({ choice: 'cancel' }) } catch {}
+    }
   })
 }
 

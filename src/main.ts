@@ -11805,6 +11805,13 @@ function initExternalChangeWatcher(): void {
   // 暴露给 tabs/integration.ts 等其他模块
   try { (window as any).extWatcherIntegration = extWatcherIntegration } catch {}
   try { (window as any).flymdOpenFileWatchPrefs = openFileWatchPrefsDialog } catch {}
+  // 调试用:在 DevTools Console 调 flymdOpenDiffTest('external text', 'local text') 手动打开 diff 视图
+  // 用于排查"弹窗不显示"等问题,任何 throw 都会被 dialog 内部的 try/catch 捕获并写入 flymdLastDiffError
+  try {
+    ;(window as any).flymdOpenDiffTest = (external: string, local: string) => {
+      return showFileWatchDiffDialog('debug.md', external, local)
+    }
+  } catch {}
   // 关键:从 store 加载偏好到 cache,保证后续同步读路径拿到最新值
   //   (Tauri Store v2 的 get 是 async,必须先 await 再让 watcher 处理事件)
   void loadFileWatchPrefsFromStore().catch((e) => {
