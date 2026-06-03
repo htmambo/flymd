@@ -22,7 +22,7 @@ import { setWysiwygPreload } from './wysiwyg/v2/silentTransition'
 // Tauri 插件（v2）
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
-import { showThreeButtonDialog, showFileWatchConflictDialog, showFileWatchPrefsDialog, type FileWatchPrefs } from './dialog'
+import { showThreeButtonDialog, showFileWatchConflictDialog, showFileWatchPrefsDialog, showFileWatchDiffDialog, type FileWatchPrefs } from './dialog'
 import { createOpenFileWatcher } from './core/openFileWatcher'
 import { attachExternalChangeWatcher } from './core/openFileWatcherIntegration'
 import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
@@ -11582,7 +11582,7 @@ async function openFileWatchPrefsDialog(): Promise<void> {
   if (!result) return
   const ok = await setFileWatchPrefs(result)
   if (!ok) {
-    try { NotificationManager.show('plugin-error', t('filewatch.prefs.saveFailed' as any) || '偏好保存失败,请重试', 3000) } catch {}
+    try { NotificationManager.show('plugin-error', t('filewatch.prefs.saveFailed') || '偏好保存失败,请重试', 3000) } catch {}
     return
   }
   // 总开关变化:立即让 watcher 释放/重建句柄(#7 PR-1.1 已支持)
@@ -11594,17 +11594,27 @@ async function openFileWatchPrefsDialog(): Promise<void> {
 }
 
 /**
- * 从磁盘重新载入当前文件到 editor,保留光标/滚动位置。
- * 用于外部变更自动重载与冲突弹窗后的"重新加载"。
+ * 把外部内容(已读到的 content)写回 editor 并完成所有副作用。
+ *
+ * 用于:
+ *  - reloadCurrentFileFromDisk:读盘成功后调本函数
+ *  - applyMergedContent(diff 视图产出的合并结果):跳过读盘,直接写回
  *
  * 关键时序(避免 renderPreview 被并发打断):
  *   1) ed.value = content 同步覆盖
- *   2) 派发 input 事件(让 wysiwyg / 撤销栈同步)
+ *   2) 不派发 input 事件(避免触发 setupDirtySync 把 dirty 设回 true)
  *   3) restore scroll/selection
- *   4) refreshTitle/refreshStatus
- *   5) await renderPreview()(与任意并发 render 比较 _renderPreviewSeq,最新一次必须赢)
+ *   4) 设 __flymdExternalReloadInProgress = true(让 wysiwyg onChange 进入"程序性更新"模式)
+ *   5) 根据模式重渲染(wysiwyg / preview / edit)
+ *   6) await 两帧(等 wysiwyg 同步 + 异步 onChange 全部进守卫窗口)
+ *   7) **守卫仍开启时** dirty = false + refreshTitle/refreshStatus(防 wysiwyg 异步 onChange 覆盖)
+ *   8) 清守卫
+ *   9) 派发 flymd-file-reloaded
+ *
+ * 注:不读盘版本(merge 场景)不需要 markSelfWrite — 合并结果未写盘,后续由用户主动 saveFile()
+ *   走 beginSelfWrite/finishSelfWrite 抑制窗口。reload 路径由 watcher 内部按"非用户主动写"处理。
  */
-async function reloadCurrentFileFromDisk(): Promise<void> {
+async function applyExternalContentToEditor(content: string): Promise<void> {
   if (!currentFilePath) return
   const ed = document.getElementById('editor') as HTMLTextAreaElement | null
   if (!ed) return
@@ -11612,75 +11622,104 @@ async function reloadCurrentFileFromDisk(): Promise<void> {
   const prevEnd = ed.selectionEnd
   const prevScroll = ed.scrollTop
   const logFile = (msg: string, extra?: any) => {
-    try { logDebug(`[reloadCurrentFile] ${msg}`, { path: currentFilePath, ...(extra || {}) }) } catch {}
+    try { logDebug(`[applyExternalContent] ${msg}`, { path: currentFilePath, ...(extra || {}) }) } catch {}
   }
-  logFile('start', { mode, wysiwyg })
-
-  let content: string
-  try {
-    content = await readTextFileAnySafe(currentFilePath as any)
-  } catch (e: any) {
-    const msg = (e && (e.message || (e?.toString?.()))) ? String(e.message || e.toString()) : ''
-    const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
-    if (isForbidden && typeof invoke === 'function') {
-      try {
-        content = await invoke<string>('read_text_file_any', { path: currentFilePath })
-      } catch (e2) {
-        // fallback 也失败:弹错误 toast + 详细日志后抛出
-        try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed' as any) || '重新加载失败', 3000) } catch {}
-        logFile('read fallback failed', { err: String(e2) })
-        throw e2
-      }
-    } else {
-      try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed' as any) || '重新加载失败', 3000) } catch {}
-      logFile('read failed', { err: msg })
-      throw e
-    }
-  }
-  logFile('read ok', { length: content.length })
+  logFile('start', { mode, wysiwyg, length: content.length })
 
   ed.value = content
-  // 不派发 input 事件。main.ts:10188 监听 input 无任何守卫直接设 dirty=true,
-  // pauseDirtySync 只能屏蔽 setupDirtySync/integration.ts:854,屏蔽不了它。
+  // 不派发 input 事件。main.ts 顶部 editor 'input' 监听无任何守卫直接设 dirty=true,
+  // pauseDirtySync 只能屏蔽 setupDirtySync/integration.ts,屏蔽不了它。
   // preview 同步走 renderPreview,wysiwyg 同步走 scheduleWysiwygRender,均不依赖 input 事件。
   // 恢复光标/滚动(防止被 input handler 覆盖)
   try { ed.selectionStart = prevStart; ed.selectionEnd = prevEnd; ed.scrollTop = prevScroll } catch {}
-  dirty = false
-  try { refreshTitle() } catch (e) { logFile('refreshTitle failed', { err: String(e) }) }
-  try { refreshStatus() } catch (e) { logFile('refreshStatus failed', { err: String(e) }) }
+  // dirty = false / refreshTitle / refreshStatus 不在这里设 — 下移到 finally 内、
+  // 守卫仍开启的窗口,避免 wysiwyg Milkdown 异步 onChange 在 await 两帧后到达把 dirty=false 覆盖回 true
 
-  // 通知 wysiwyg onChange 回调(2750)进入"程序性更新"模式:期间跳过设 dirty,
+  // 通知 wysiwyg onChange 回调进入"程序性更新"模式:期间跳过设 dirty,
   // 避免 scheduleWysiwygRender 触发的 Milkdown onChange 把我们刚设的 dirty=false 覆盖
   try { (window as any).__flymdExternalReloadInProgress = true } catch {}
-
-  // 强制重渲染(适配 preview / edit / wysiwyg 三种模式)
   try {
+    // 强制重渲染(适配 preview / edit / wysiwyg 三种模式)
     if (wysiwyg) {
-      // 关键:同步更新 currentFrontMatter,否则 onChange(2750)会用旧 front matter 拼回 textarea,
+      // 关键:同步更新 currentFrontMatter,否则 wysiwyg onChange 会用旧 front matter 拼回 textarea,
       // 静默丢失外部对 YAML 头部的修改
       try {
         const fmSplit = splitYamlFrontMatter(content)
         currentFrontMatter = fmSplit.frontMatter
       } catch (e) { logFile('splitYamlFrontMatter failed', { err: String(e) }) }
-      // 所见模式:走 scheduleWysiwygRender(requestAnimationFrame 异步),需等一帧
       try { scheduleWysiwygRender() } catch (e) { logFile('scheduleWysiwygRender failed', { err: String(e) }) }
+      // 等两帧:Milkdown onChange 可能晚于 scheduleWysiwygRender 调度,两帧后大概率已落地
       await new Promise((r) => requestAnimationFrame(() => r(null)))
       await new Promise((r) => requestAnimationFrame(() => r(null)))
     } else if (mode === 'preview') {
-      // preview 模式:必须重渲染
       try { await renderPreview() } catch (e) { logFile('renderPreview failed (preview mode)', { err: String(e) }) }
     }
     // edit 模式:textarea 可见,ed.value 已同步,无需重渲染
   } catch (e) {
     logFile('post-render error', { err: String(e) })
+  } finally {
+    // 在守卫仍开启的窗口内设 dirty:此时任何后续触发的 wysiwyg onChange 都会被守卫挡掉,
+    // 不会把 dirty=false 覆盖回 true。即使上面渲染抛了异常,守卫也必须复位(否则全局卡死)。
+    try { dirty = false } catch {}
+    try { refreshTitle() } catch (e) { logFile('refreshTitle failed (post-render)', { err: String(e) }) }
+    try { refreshStatus() } catch (e) { logFile('refreshStatus failed (post-render)', { err: String(e) }) }
+    try { (window as any).__flymdExternalReloadInProgress = false } catch {}
   }
   logFile('done')
-  // 解除 wysiwyg onChange 守卫(在 await 两帧后)
-  try { (window as any).__flymdExternalReloadInProgress = false } catch {}
   try { refreshTitle() } catch {}  // 再次刷新一次,确保 dirty=false 反映到标题
   // 通知 tab 系统:reloaded 后需要把 tab.content 同步到 ed.value、tab.dirty=false
-  // (markCurrentTabSaved 内部从 hooks.getEditorContent() 读新内容 + dirty=false)
   try { window.dispatchEvent(new CustomEvent('flymd-file-reloaded')) } catch {}
+}
+
+/**
+ * 读盘 + 降级到 read_text_file_any 的统一函数(供 reload / readExternalForDiff 共用)。
+ *
+ * 行为:
+ *  - 正常路径:readTextFileAnySafe 成功 → 返回内容
+ *  - 命中 EACCES/EPERM/forbidden path:尝试 invoke('read_text_file_any') 再读一次
+ *  - 仍失败:抛错(让 caller 自己处理 toast / 降级)
+ *
+ * 错误信息识别复用 main.ts 其它路径的同一套正则(保持一致)。
+ */
+async function readTextFileWithFallback(path: string): Promise<string> {
+  try {
+    return await readTextFileAnySafe(path as any)
+  } catch (e: any) {
+    const msg = (e && (e.message || (e?.toString?.()))) ? String(e.message || e.toString()) : ''
+    const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+    if (isForbidden && typeof invoke === 'function') {
+      return await invoke<string>('read_text_file_any', { path })
+    }
+    throw e
+  }
+}
+
+/**
+ * 从磁盘重新载入当前文件到 editor,保留光标/滚动位置。
+ * 用于外部变更自动重载与冲突弹窗后的"重新加载"。
+ *
+ * 读盘 + fallback 后,把内容委托给 applyExternalContentToEditor 完成所有副作用。
+ */
+async function reloadCurrentFileFromDisk(): Promise<void> {
+  if (!currentFilePath) return
+  const ed = document.getElementById('editor') as HTMLTextAreaElement | null
+  if (!ed) return
+  const logFile = (msg: string, extra?: any) => {
+    try { logDebug(`[reloadCurrentFile] ${msg}`, { path: currentFilePath, ...(extra || {}) }) } catch {}
+  }
+  logFile('start')
+
+  let content: string
+  try {
+    content = await readTextFileWithFallback(currentFilePath)
+  } catch (e: any) {
+    try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed') || '重新加载失败', 3000) } catch {}
+    logFile('read failed', { err: String(e) })
+    throw e
+  }
+  logFile('read ok', { length: content.length })
+
+  await applyExternalContentToEditor(content)
 }
 
 function initExternalChangeWatcher(): void {
@@ -11701,6 +11740,26 @@ function initExternalChangeWatcher(): void {
     getCurrentFilePath: () => currentFilePath,
     isSkippablePath: (p: string) => /\.(pdf)$/i.test(String(p || '')),
     reloadCurrentFile: () => reloadCurrentFileFromDisk(),
+    applyMergedContent: async (content: string) => {
+      // 用户在 diff 视图产出的合并结果:写回 editor,不要 markSelfWrite。
+      // 合并路径不写盘,若 markSelfWrite 会把盘上"旧外部"读成 snapshot,
+      // 等用户 Ctrl+S 写盘后 watch 事件命中 → 重弹冲突 → 死循环。
+      // 真正的"自写入抑制"由 saveFile() 的 beginSelfWrite/finishSelfWrite 窗口保障。
+      await applyExternalContentToEditor(content)
+    },
+    readExternalForDiff: async (filePath: string) => {
+      // 走和 reloadCurrentFileFromDisk 一样的 fallback 链;失败返回 null 让 dialog 走降级提示
+      try {
+        return await readTextFileWithFallback(filePath)
+      } catch (e) {
+        try { logDebug('[readExternalForDiff] failed', { path: filePath, err: String(e) }) } catch {}
+        return null
+      }
+    },
+    getLocalContent: () => {
+      const ed = document.getElementById('editor') as HTMLTextAreaElement | null
+      return ed ? ed.value : ''
+    },
     notifyAutoReloaded: () => {
       try { NotificationManager.show('plugin-success', t('filewatch.autoReloaded'), 2200) } catch {}
     },
@@ -11711,11 +11770,18 @@ function initExternalChangeWatcher(): void {
       try { NotificationManager.show('plugin-error', t('filewatch.missing'), 3000) } catch {}
     },
     askConflictChoice: (p: string) => showFileWatchConflictDialog(p),
+    askDiffView: (_p: string, external: string, local: string) => showFileWatchDiffDialog(_p, external, local),
     notifyKept: () => {
       try { NotificationManager.show('plugin-success', t('filewatch.kept'), 1800) } catch {}
     },
     notifyReloadedAfterConflict: () => {
       try { NotificationManager.show('plugin-success', t('filewatch.reloadedAfterConflict'), 2200) } catch {}
+    },
+    notifyMerged: () => {
+      try { NotificationManager.show('plugin-success', t('filewatch.merged') || '已应用合并结果', 2200) } catch {}
+    },
+    notifyDiffReadFailed: () => {
+      try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed') || '读取外部文件失败', 3000) } catch {}
     },
     enabled: () => getFileWatchPrefs().enabled,
     autoReloadCleanEnabled: () => getFileWatchPrefs().autoReloadClean,

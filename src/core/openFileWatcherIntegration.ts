@@ -13,10 +13,11 @@ import { dispatchPathDeleted } from './pathEvents'
 import { logDebug, logWarn } from './logger'
 import { t } from '../i18n'
 import type { OpenFileWatcher, WatchToken } from './openFileWatcher'
-import type { FileWatchConflictChoice } from '../dialog'
+import type { FileWatchConflictChoice, FileWatchDiffResult } from '../dialog'
 
 /** 对话框返回值(由 dialog.ts 装配);此处 re-export 以便 main.ts 仍可从本模块 import */
 export type ConflictChoice = FileWatchConflictChoice
+export type DiffViewResult = FileWatchDiffResult
 export type RevalidateResult = 'unchanged' | 'changed' | 'missing'
 
 export interface OpenFileWatcherIntegrationDeps {
@@ -32,6 +33,12 @@ export interface OpenFileWatcherIntegrationDeps {
   // ---- 操作 ----
   /** 实际从磁盘重读 + 写回 editor.value + 恢复光标/滚动(由 main.ts 提供) */
   reloadCurrentFile: () => Promise<void>
+  /** 把合并结果(diff 视图产出的最终文本)写回 editor;不读盘 */
+  applyMergedContent: (content: string) => Promise<void>
+  /** diff 视图需要的"读外部最新内容";失败返回 null(让上层降级为 cancel 行为) */
+  readExternalForDiff: (filePath: string) => Promise<string | null>
+  /** 同步读取当前 editor 完整文本(diff 视图用) */
+  getLocalContent: () => string
 
   // ---- UI 回调(由 main.ts 装配) ----
   /** 自动重载完成后的 toast */
@@ -40,11 +47,16 @@ export interface OpenFileWatcherIntegrationDeps {
   notifyExternalChangedNoReload: (filePath: string) => void
   /** 删除/不可访问的提示 */
   notifyMissing: (filePath: string) => void
-  /** 脏标签弹三选一模态 */
+  /** 脏标签弹三选一(实为四选一)模态 */
   askConflictChoice: (filePath: string) => Promise<ConflictChoice>
-  /** keep / reload 后的成功提示 */
+  /** diff 视图模态(读盘失败时调用方负责降级) */
+  askDiffView: (filePath: string, external: string, local: string) => Promise<DiffViewResult>
+  /** keep / reload / merged 后的成功提示 */
   notifyKept: (filePath: string) => void
   notifyReloadedAfterConflict: (filePath: string) => void
+  notifyMerged: (filePath: string) => void
+  /** diff 入口读盘失败的错误提示 */
+  notifyDiffReadFailed: (filePath: string) => void
 
   // ---- 偏好 ----
   /** 总开关:关闭后整个策略层不响应事件 */
@@ -172,6 +184,53 @@ export function attachExternalChangeWatcher(
       // 下次再检测到 mtime 不变时会被丢弃(false positive 防护)
       try { deps.notifyKept(filePath) } catch (e) {
         logWarn('[openFileWatcherIntegration] notifyKept throw', String(e))
+      }
+      return
+    }
+
+    if (choice === 'diff') {
+      // 进入"文本对比"视图:读盘最新内容 → 弹 diff 模态 → 应用合并结果
+      let external: string | null = null
+      try {
+        external = await deps.readExternalForDiff(filePath)
+      } catch (e) {
+        logWarn('[openFileWatcherIntegration] readExternalForDiff throw', String(e))
+        external = null
+      }
+      if (external == null) {
+        // 读盘失败:降级为 cancel,提示错误
+        try { deps.notifyDiffReadFailed(filePath) } catch (e) {
+          logWarn('[openFileWatcherIntegration] notifyDiffReadFailed throw', String(e))
+        }
+        return
+      }
+      const local = (() => {
+        try { return deps.getLocalContent() } catch (e) {
+          logWarn('[openFileWatcherIntegration] getLocalContent throw', String(e))
+          return ''
+        }
+      })()
+      let result: DiffViewResult = { choice: 'cancel' }
+      try {
+        result = await deps.askDiffView(filePath, external, local)
+      } catch (e) {
+        logWarn('[openFileWatcherIntegration] askDiffView throw', String(e))
+        result = { choice: 'cancel' }
+      }
+      if (result.choice === 'applyMerged' && typeof result.mergedContent === 'string') {
+        try {
+          await deps.applyMergedContent(result.mergedContent)
+          try { deps.notifyMerged(filePath) } catch (e) {
+            logWarn('[openFileWatcherIntegration] notifyMerged throw', String(e))
+          }
+        } catch (e) {
+          logWarn('[openFileWatcherIntegration] applyMergedContent failed', {
+            filePath,
+            err: String(e),
+          })
+        }
+      } else {
+        logDebug('[openFileWatcherIntegration] diff view cancelled', { filePath })
       }
       return
     }

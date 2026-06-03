@@ -4,13 +4,18 @@
  */
 
 import { t } from './i18n'
+import { buildHunks, copyHunkToRight, copyHunkToLeft, nextHunkId, countHunks } from './core/diffMerge'
+import { logDebug } from './core/logger'
 
 // ============================================================
 // 文件外部更改监听 — 冲突确认模态(由 main.ts 装配 extWatcher 时调用)
 // ============================================================
 
 /** 文件监听冲突模态的返回值 */
-export type FileWatchConflictChoice = 'reload' | 'keep' | 'cancel'
+export type FileWatchConflictChoice = 'reload' | 'keep' | 'cancel' | 'diff'
+
+/** diff 视图模态返回值 */
+export type FileWatchDiffResult = { choice: 'applyMerged' | 'cancel'; mergedContent?: string }
 
 /** 转义 HTML 特殊字符(避免文件名注入)。在多处对话框中复用。 */
 export function escapeHtml(s: string): string {
@@ -36,7 +41,7 @@ function fileWatchBasename(p: string): string {
 /**
  * 模态:文件外部变更冲突(脏标签场景)
  *
- * 按钮顺序:取消(neutral,默认焦点) / 保留本地(primary) / 重新加载(danger)
+ * 按钮顺序:取消(neutral,默认焦点) / 保留本地(primary) / 重新加载(danger) / 文本对比(accent)
  * - ESC 视为取消
  * - 遮罩点击视为取消
  * - 焦点默认落在"取消",防误操作
@@ -46,13 +51,14 @@ export function showFileWatchConflictDialog(filePath: string): Promise<FileWatch
     injectStyles()
 
     const name = fileWatchBasename(filePath)
-    const title = t('filewatch.conflict.title' as any) || '文件已在外部修改'
-    const body = (t('filewatch.conflict.body' as any) || '{name} 已被其它程序修改,且当前文档存在未保存改动。请选择处理方式:')
+    const title = t('filewatch.conflict.title') || '文件已在外部修改'
+    const body = (t('filewatch.conflict.body') || '{name} 已被其它程序修改,且当前文档存在未保存改动。请选择处理方式:')
       .replace('{name}', name)
     const buttons = {
-      reload: t('filewatch.conflict.btn.reload' as any) || '重新加载(放弃本地)',
-      keep: t('filewatch.conflict.btn.keep' as any) || '保留本地(下次保存覆盖)',
-      cancel: t('filewatch.conflict.btn.cancel' as any) || '取消',
+      reload: t('filewatch.conflict.btn.reload') || '重新加载(放弃本地)',
+      keep: t('filewatch.conflict.btn.keep') || '保留本地(下次保存覆盖)',
+      cancel: t('filewatch.conflict.btn.cancel') || '取消',
+      diff: t('filewatch.conflict.btn.diff') || '文本对比',
     }
 
     const overlay = document.createElement('div')
@@ -94,6 +100,7 @@ export function showFileWatchConflictDialog(filePath: string): Promise<FileWatch
     btnRow.appendChild(cancelBtn)
     btnRow.appendChild(makeBtn('custom-dialog-button primary', buttons.keep, 'keep'))
     btnRow.appendChild(makeBtn('custom-dialog-button danger', buttons.reload, 'reload'))
+    btnRow.appendChild(makeBtn('custom-dialog-button accent', buttons.diff, 'diff'))
 
     box.appendChild(titleEl)
     box.appendChild(msgEl)
@@ -106,6 +113,560 @@ export function showFileWatchConflictDialog(filePath: string): Promise<FileWatch
     setTimeout(() => cancelBtn.focus(), 50)
   })
 }
+
+
+// ============================================================
+// 文件外部更改监听 — 文本对比 / 合并模态
+// ============================================================
+
+/**
+ * 模态:文件外部变更"文本对比"
+ *
+ * 用法:用户在冲突模态点击"文本对比"后,由 main.ts 装配 askDiffView 调用本函数。
+ *
+ * 设计:
+ * - 三列布局:左侧 = 外部(只读 pre,行级高亮),中间 = 操作栏(每个 hunk 的 ←/→ 按钮),右侧 = 本地(可编辑 textarea)
+ * - 行级 diff 由 core/diffMerge.ts 计算;大文件自动降级为单 hunk 整体替换并显示提示
+ * - 快捷键:n 下一处 / p 上一处 / Ctrl+Enter 应用 / Esc 取消
+ * - 默认焦点落在"右侧编辑区",鼓励用户直接修改合并内容
+ * - 关闭(取消 / Esc / 遮罩):resolve({ choice: 'cancel' })
+ * - 应用:resolve({ choice: 'applyMerged', mergedContent: textarea.value })
+ */
+export function showFileWatchDiffDialog(
+  filePath: string,
+  external: string,
+  local: string,
+): Promise<FileWatchDiffResult> {
+  return new Promise((resolve) => {
+    injectStyles()
+    injectFileWatchDiffStyles()
+
+    const name = fileWatchBasename(filePath)
+    const title = t('filewatch.diff.title', { name })
+    const hintText = t('filewatch.diff.hint') || '右侧可直接编辑。点击 ←/→ 单段复制,n/p 跳到下一处/上一处,Ctrl+Enter 应用。'
+    const colExternalLabel = t('filewatch.diff.col.external') || '外部(磁盘)'
+    const colLocalLabel = t('filewatch.diff.col.local') || '本地(可编辑)'
+    const btnLabels = {
+      prev: t('filewatch.diff.btn.prev') || '上一处',
+      next: t('filewatch.diff.btn.next') || '下一处',
+      apply: t('filewatch.diff.btn.apply') || '应用结果',
+      cancel: t('filewatch.diff.btn.cancel') || '取消',
+      copyToRight: t('filewatch.diff.btn.copyToRight') || '从外部复制到本地',
+      copyToLeft: t('filewatch.diff.btn.copyToLeft') || '从本地复制到外部',
+    }
+    const emptyText = t('filewatch.diff.empty') || '没有差异'
+    const largeFileText = t('filewatch.diff.largeFile') || '文件较大,行级 diff 暂不可用,请在右侧直接编辑后点击"应用结果"'
+
+    // 可变状态:左侧文本随"从右复制到左"操作变化(仅视觉用,不影响最终结果)
+    let leftText = String(external ?? '')
+    let rightText = String(local ?? '')
+    let view = buildHunks(leftText, rightText)
+    let currentHunk = -1
+    // 大文件降级检测:由 buildHunks 标记,意味着 copyHunkToXxx 不能用(会重复拼接)
+    const isLargeFileFallback = view.isLargeFileFallback === true
+
+    // ---- DOM 构造 ----
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay filewatch-diff-overlay'
+    const box = document.createElement('div')
+    box.className = 'filewatch-diff-box'
+
+    // header
+    const header = document.createElement('div')
+    header.className = 'filewatch-diff-header'
+    const titleEl = document.createElement('div')
+    titleEl.className = 'filewatch-diff-title'
+    titleEl.textContent = title
+    const hintEl = document.createElement('div')
+    hintEl.className = 'filewatch-diff-hint'
+    hintEl.textContent = isLargeFileFallback ? largeFileText : hintText
+    header.appendChild(titleEl)
+    header.appendChild(hintEl)
+
+    // body 三列
+    const body = document.createElement('div')
+    body.className = 'filewatch-diff-body'
+
+    // 左列
+    const leftCol = document.createElement('div')
+    leftCol.className = 'filewatch-diff-col'
+    const leftColHeader = document.createElement('div')
+    leftColHeader.className = 'filewatch-diff-col-header'
+    leftColHeader.textContent = colExternalLabel
+    const leftPane = document.createElement('div')
+    leftPane.className = 'filewatch-diff-pane filewatch-diff-pane-left'
+    leftCol.appendChild(leftColHeader)
+    leftCol.appendChild(leftPane)
+
+    // 中列 gutter
+    const gutter = document.createElement('div')
+    gutter.className = 'filewatch-diff-col filewatch-diff-gutter-col'
+    const gutterHeader = document.createElement('div')
+    gutterHeader.className = 'filewatch-diff-col-header'
+    gutterHeader.textContent = ''
+    const gutterPane = document.createElement('div')
+    gutterPane.className = 'filewatch-diff-pane filewatch-diff-gutter'
+    gutter.appendChild(gutterHeader)
+    gutter.appendChild(gutterPane)
+
+    // 右列(textarea)
+    const rightCol = document.createElement('div')
+    rightCol.className = 'filewatch-diff-col'
+    const rightColHeader = document.createElement('div')
+    rightColHeader.className = 'filewatch-diff-col-header'
+    rightColHeader.textContent = colLocalLabel
+    const rightPane = document.createElement('div')
+    rightPane.className = 'filewatch-diff-pane filewatch-diff-pane-right'
+    // 内层:高亮层(只读 pre,展示 right 当前 diff 行)+ textarea(可编辑覆盖,但目前以纯 textarea 表达)
+    const rightTextarea = document.createElement('textarea')
+    rightTextarea.value = rightText
+    rightTextarea.spellcheck = false
+    rightTextarea.wrap = 'off'
+    rightPane.appendChild(rightTextarea)
+    rightCol.appendChild(rightColHeader)
+    rightCol.appendChild(rightPane)
+
+    body.appendChild(leftCol)
+    body.appendChild(gutter)
+    body.appendChild(rightCol)
+
+    // footer
+    const footer = document.createElement('div')
+    footer.className = 'filewatch-diff-footer'
+    const prevBtn = document.createElement('button')
+    prevBtn.className = 'custom-dialog-button'
+    prevBtn.textContent = btnLabels.prev
+    const nextBtn = document.createElement('button')
+    nextBtn.className = 'custom-dialog-button'
+    nextBtn.textContent = btnLabels.next
+    const counter = document.createElement('div')
+    counter.className = 'filewatch-diff-counter'
+    const spacer = document.createElement('div')
+    spacer.className = 'spacer'
+    const cancelBtn = document.createElement('button')
+    cancelBtn.className = 'custom-dialog-button'
+    cancelBtn.textContent = btnLabels.cancel
+    const applyBtn = document.createElement('button')
+    applyBtn.className = 'custom-dialog-button primary'
+    applyBtn.textContent = btnLabels.apply
+    footer.appendChild(prevBtn)
+    footer.appendChild(nextBtn)
+    footer.appendChild(counter)
+    footer.appendChild(spacer)
+    footer.appendChild(cancelBtn)
+    footer.appendChild(applyBtn)
+
+    box.appendChild(header)
+    box.appendChild(body)
+    box.appendChild(footer)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    // ---- 渲染:每次重算后调一次 ----
+    function renderLeftPane(): void {
+      // 重建左 pre 内容:按行号顺序输出 leftText 全部行,但给 hunk 内的 del/change 行加高亮 class
+      const lines = leftText.split('\n')
+      const lineKindByLeftLineNum = new Map<number, 'del' | 'chg' | 'add'>()
+      const hunkIdByLeftLineNum = new Map<number, number>()
+      for (const h of view.hunks) {
+        for (const r of h.rows) {
+          if (r.kind === 'del') {
+            lineKindByLeftLineNum.set(r.leftLine, 'del')
+            hunkIdByLeftLineNum.set(r.leftLine, h.id)
+          } else if (r.kind === 'change') {
+            lineKindByLeftLineNum.set(r.leftLine, 'chg')
+            hunkIdByLeftLineNum.set(r.leftLine, h.id)
+          }
+          // add 行在左侧不存在,跳过
+        }
+      }
+      // 清空并渲染
+      leftPane.innerHTML = ''
+      const frag = document.createDocumentFragment()
+      for (let i = 0; i < lines.length; i++) {
+        const lineNum = i + 1
+        const text = lines[i]
+        const kind = lineKindByLeftLineNum.get(lineNum)
+        const hunkId = hunkIdByLeftLineNum.get(lineNum)
+        const row = document.createElement('div')
+        row.className = 'filewatch-diff-line' + (kind ? ` ${kind}` : '')
+        if (hunkId != null && hunkId === currentHunk) row.classList.add('active')
+        if (hunkId != null) row.dataset.hunkId = String(hunkId)
+        const numEl = document.createElement('span')
+        numEl.className = 'filewatch-diff-line-num'
+        numEl.textContent = String(lineNum)
+        const txtEl = document.createElement('span')
+        txtEl.className = 'filewatch-diff-line-text'
+        txtEl.textContent = text
+        row.appendChild(numEl)
+        row.appendChild(txtEl)
+        frag.appendChild(row)
+      }
+      leftPane.appendChild(frag)
+    }
+
+    function renderGutter(): void {
+      gutterPane.innerHTML = ''
+      const frag = document.createDocumentFragment()
+      if (view.hunks.length === 0) {
+        const empty = document.createElement('div')
+        empty.className = 'filewatch-diff-hunk-spacer'
+        empty.textContent = emptyText
+        empty.style.padding = '8px'
+        empty.style.opacity = '0.6'
+        empty.style.fontSize = '12px'
+        frag.appendChild(empty)
+      } else {
+        for (const h of view.hunks) {
+          const block = document.createElement('div')
+          block.className = 'filewatch-diff-hunk-block' + (h.id === currentHunk ? ' active' : '')
+          block.dataset.hunkId = String(h.id)
+          const label = document.createElement('div')
+          label.className = 'filewatch-diff-hunk-label'
+          label.textContent = `#${h.id + 1}`
+          const rightBtn = document.createElement('button')
+          rightBtn.type = 'button'
+          rightBtn.className = 'filewatch-diff-hunk-btn'
+          rightBtn.textContent = '→'
+          rightBtn.title = btnLabels.copyToRight
+          rightBtn.addEventListener('click', () => {
+            applyHunkLeftToRight(h.id)
+          })
+          const leftBtn = document.createElement('button')
+          leftBtn.type = 'button'
+          leftBtn.className = 'filewatch-diff-hunk-btn'
+          leftBtn.textContent = '←'
+          leftBtn.title = btnLabels.copyToLeft
+          leftBtn.addEventListener('click', () => {
+            applyHunkRightToLeft(h.id)
+          })
+          // 大文件降级模式禁用 hunk 复制按钮(避免内容重复拼接;copyHunkToXxx 在 fallback 下不安全)
+          if (isLargeFileFallback) {
+            const fallbackTip = '大文件模式不支持分 hunk 复制'
+            rightBtn.disabled = true
+            rightBtn.title = fallbackTip
+            leftBtn.disabled = true
+            leftBtn.title = fallbackTip
+          }
+          block.appendChild(label)
+          block.appendChild(rightBtn)
+          block.appendChild(leftBtn)
+          frag.appendChild(block)
+        }
+      }
+      gutterPane.appendChild(frag)
+    }
+
+    function renderCounter(): void {
+      const total = countHunks(view.hunks)
+      if (total === 0) {
+        counter.textContent = emptyText
+        return
+      }
+      const idx = currentHunk < 0 ? 0 : currentHunk + 1
+      counter.textContent = `${idx}/${total}`
+    }
+
+    function rebuildAfterEdit(opts?: { preserveCurrent?: boolean }): void {
+      // 在右侧 textarea 被编辑 / 复制后,重算 diff
+      rightText = rightTextarea.value
+      view = buildHunks(leftText, rightText)
+      if (!opts?.preserveCurrent || currentHunk >= view.hunks.length) {
+        currentHunk = view.hunks.length > 0 ? Math.min(Math.max(currentHunk, 0), view.hunks.length - 1) : -1
+      }
+      renderLeftPane()
+      renderGutter()
+      renderCounter()
+    }
+
+    // ---- 操作:hunk 复制 ----
+    function applyHunkLeftToRight(hunkId: number): void {
+      const h = view.hunks.find((x) => x.id === hunkId)
+      if (!h) return
+      const newRight = copyHunkToRight(h, rightText)
+      rightTextarea.value = newRight
+      currentHunk = hunkId
+      rebuildAfterEdit({ preserveCurrent: true })
+      // 重新定位到下一处(若有)
+      jumpTo(1)
+    }
+    function applyHunkRightToLeft(hunkId: number): void {
+      const h = view.hunks.find((x) => x.id === hunkId)
+      if (!h) return
+      leftText = copyHunkToLeft(h, leftText)
+      // 左侧文本变了 → 重算 view(用最新 leftText + 当前 rightText)
+      view = buildHunks(leftText, rightText)
+      if (currentHunk >= view.hunks.length) currentHunk = view.hunks.length - 1
+      renderLeftPane()
+      renderGutter()
+      renderCounter()
+      jumpTo(1)
+    }
+
+    // ---- 跳转 ----
+    function jumpTo(dir: 1 | -1): void {
+      const total = countHunks(view.hunks)
+      if (total === 0) return
+      currentHunk = nextHunkId(view.hunks, currentHunk, dir, total)
+      renderLeftPane()
+      renderGutter()
+      renderCounter()
+      // scrollIntoView:左 pane 找 active 行,右 textarea 不滚(textarea 滚到行太复杂)
+      try {
+        const activeEl = leftPane.querySelector('.filewatch-diff-line.active') as HTMLElement | null
+        if (activeEl) activeEl.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      } catch {}
+      try {
+        const activeGutter = gutterPane.querySelector('.filewatch-diff-hunk-block.active') as HTMLElement | null
+        if (activeGutter) activeGutter.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      } catch {}
+    }
+
+    // ---- 关闭 ----
+    let closed = false
+    function close(result: FileWatchDiffResult): void {
+      if (closed) return
+      closed = true
+      document.removeEventListener('keydown', handleKeyDown)
+      try { rightTextarea.removeEventListener('input', onTextareaInput) } catch {}
+      try { overlay.remove() } catch { /* 已被父级清理 */ }
+      logDebug('[showFileWatchDiffDialog] closed', { choice: result.choice })
+      resolve(result)
+    }
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        close({ choice: 'cancel' })
+        return
+      }
+      // textarea 内的按键:Ctrl+Enter 仍生效,但 n/p 不拦截
+      const inTextarea = e.target === rightTextarea
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault()
+        close({ choice: 'applyMerged', mergedContent: rightTextarea.value })
+        return
+      }
+      if (inTextarea) return
+      if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault()
+        jumpTo(1)
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault()
+        jumpTo(-1)
+      }
+    }
+    function onTextareaInput(): void {
+      rebuildAfterEdit({ preserveCurrent: true })
+    }
+    cancelBtn.addEventListener('click', () => close({ choice: 'cancel' }))
+    applyBtn.addEventListener('click', () => close({ choice: 'applyMerged', mergedContent: rightTextarea.value }))
+    prevBtn.addEventListener('click', () => jumpTo(-1))
+    nextBtn.addEventListener('click', () => jumpTo(1))
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close({ choice: 'cancel' }) })
+    document.addEventListener('keydown', handleKeyDown)
+    rightTextarea.addEventListener('input', onTextareaInput)
+
+    // 首次渲染 + 默认焦点
+    renderLeftPane()
+    renderGutter()
+    renderCounter()
+    // 默认焦点在右侧 textarea(鼓励用户直接编辑),失败时回退到 cancelBtn 防误触
+    setTimeout(() => {
+      try { rightTextarea.focus() } catch { try { cancelBtn.focus() } catch {} }
+    }, 50)
+  })
+}
+
+/** filewatch.diff.* 模态的局部样式;injectStyles 之外另注入一次 */
+function injectFileWatchDiffStyles(): void {
+  const styleId = 'filewatch-diff-dialog-styles'
+  if (document.getElementById(styleId)) return
+  const style = document.createElement('style')
+  style.id = styleId
+  style.textContent = filewatchDiffStyles
+  document.head.appendChild(style)
+}
+
+const filewatchDiffStyles = `
+.filewatch-diff-overlay {
+  /* 共享 custom-dialog-overlay 的定位/背景 */
+}
+.filewatch-diff-box {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: min(1100px, 96vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  font: 13px/1.5 -apple-system, "Segoe UI", sans-serif;
+  animation: dialogSlideIn 0.2s ease;
+}
+.filewatch-diff-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.filewatch-diff-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.filewatch-diff-hint {
+  font-size: 12px;
+  opacity: 0.7;
+  color: var(--fg);
+}
+.filewatch-diff-body {
+  flex: 1;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 90px 1fr;
+  gap: 1px;
+  background: var(--border);
+  min-height: 320px;
+}
+.filewatch-diff-col {
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.filewatch-diff-col-header {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(127, 127, 127, 0.06);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+}
+.filewatch-diff-pane {
+  flex: 1;
+  overflow: auto;
+  font: 12px/1.5 ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+  padding: 4px 0;
+  background: var(--bg);
+  color: var(--fg);
+}
+.filewatch-diff-pane-right {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.filewatch-diff-line {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  padding: 0 6px;
+}
+.filewatch-diff-line-num {
+  color: var(--fg);
+  opacity: 0.4;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+}
+.filewatch-diff-line-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg);
+}
+.filewatch-diff-line.del {
+  background: rgba(220, 38, 38, 0.10);
+}
+.filewatch-diff-line.add {
+  background: rgba(34, 197, 94, 0.10);
+}
+.filewatch-diff-line.chg {
+  background: rgba(234, 179, 8, 0.14);
+}
+.filewatch-diff-line.active {
+  outline: 2px solid #2563eb;
+  outline-offset: -2px;
+}
+.filewatch-diff-pane-right textarea {
+  flex: 1;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  font: 12px/1.5 ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--fg);
+  white-space: pre;
+  overflow: auto;
+}
+.filewatch-diff-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 2px;
+  gap: 6px;
+  background: rgba(127, 127, 127, 0.04);
+}
+.filewatch-diff-hunk-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+.filewatch-diff-hunk-block.active {
+  border-color: #2563eb;
+  background: rgba(37, 99, 235, 0.08);
+}
+.filewatch-diff-hunk-label {
+  font-size: 11px;
+  opacity: 0.7;
+  text-align: center;
+}
+.filewatch-diff-hunk-btn {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--fg);
+  border-radius: 4px;
+  transition: all 0.12s ease;
+}
+.filewatch-diff-hunk-btn:hover {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+.filewatch-diff-hunk-spacer {
+  flex: 1;
+}
+.filewatch-diff-footer {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.filewatch-diff-footer .spacer {
+  flex: 1;
+}
+.filewatch-diff-counter {
+  font-size: 12px;
+  opacity: 0.7;
+  color: var(--fg);
+  margin-left: 8px;
+}
+.filewatch-diff-footer .custom-dialog-button {
+  min-width: 80px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+`
 
 
 // 对话框返回值类型
@@ -257,6 +818,17 @@ const dialogStyles = `
 .custom-dialog-button.danger:hover {
   background: #b91c1c;
   border-color: #b91c1c;
+}
+
+.custom-dialog-button.accent {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.custom-dialog-button.accent:hover {
+  background: #2563eb;
+  border-color: #2563eb;
 }
 
 .custom-dialog-button:focus {
@@ -855,10 +1427,10 @@ export function showFileWatchPrefsDialog(initial: FileWatchPrefs): Promise<FileW
     // 标题 + 简介
     const titleEl = document.createElement('div')
     titleEl.className = 'custom-dialog-title'
-    titleEl.textContent = t('filewatch.prefs.title' as any) || '文件监听设置'
+    titleEl.textContent = t('filewatch.prefs.title') || '文件监听设置'
     const msgEl = document.createElement('div')
     msgEl.className = 'custom-dialog-message'
-    msgEl.textContent = t('filewatch.prefs.message' as any)
+    msgEl.textContent = t('filewatch.prefs.message')
       || '配置外部文件修改后的提示、重载与调试行为。'
 
     // 三行 switch
@@ -866,19 +1438,19 @@ export function showFileWatchPrefsDialog(initial: FileWatchPrefs): Promise<FileW
     list.className = 'fwprefs-list'
     const enabledEl = makeSwitchRow(list, {
       id: 'fwprefs-enabled',
-      label: t('filewatch.prefs.enabled' as any) || '启用外部修改监听',
-      hint: t('filewatch.prefs.enabled.hint' as any) || '关闭后,外部修改不会触发任何提示或自动重载',
+      label: t('filewatch.prefs.enabled') || '启用外部修改监听',
+      hint: t('filewatch.prefs.enabled.hint') || '关闭后,外部修改不会触发任何提示或自动重载',
     })
     const autoReloadEl = makeSwitchRow(list, {
       id: 'fwprefs-autoReloadClean',
-      label: t('filewatch.prefs.autoReloadClean' as any) || '干净标签自动重载',
-      hint: t('filewatch.prefs.autoReloadClean.hint' as any)
+      label: t('filewatch.prefs.autoReloadClean') || '干净标签自动重载',
+      hint: t('filewatch.prefs.autoReloadClean.hint')
         || '当前标签未修改时,自动用磁盘内容覆盖;脏标签仍会弹模态',
     })
     const debugEl = makeSwitchRow(list, {
       id: 'fwprefs-debugLog',
-      label: t('filewatch.prefs.debugLog' as any) || '调试日志',
-      hint: t('filewatch.prefs.debugLog.hint' as any)
+      label: t('filewatch.prefs.debugLog') || '调试日志',
+      hint: t('filewatch.prefs.debugLog.hint')
         || '在控制台输出 watcher / integration 的详细日志',
     })
 
@@ -892,11 +1464,11 @@ export function showFileWatchPrefsDialog(initial: FileWatchPrefs): Promise<FileW
     const closeBtn = document.createElement('button')
     closeBtn.type = 'button'
     closeBtn.className = 'custom-dialog-button'
-    closeBtn.textContent = t('filewatch.prefs.btn.close' as any) || '关闭'
+    closeBtn.textContent = t('filewatch.prefs.btn.close') || '关闭'
     const saveBtn = document.createElement('button')
     saveBtn.type = 'button'
     saveBtn.className = 'custom-dialog-button primary'
-    saveBtn.textContent = t('filewatch.prefs.btn.save' as any) || '保存'
+    saveBtn.textContent = t('filewatch.prefs.btn.save') || '保存'
     btnRow.appendChild(closeBtn)
     btnRow.appendChild(saveBtn)
 
