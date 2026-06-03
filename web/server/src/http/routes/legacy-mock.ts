@@ -50,22 +50,85 @@ const HOMEPAGE_HTML = `<!doctype html>
   .tagline { font-size: 20px; color: var(--muted); margin: 12px 0 0; }
   .lede { font-size: 17px; max-width: 640px; margin: 24px auto 0; color: var(--fg); opacity: 0.85; }
   .cta { margin-top: 32px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-  .btn { display: inline-block; padding: 12px 24px; border-radius: 8px; font-weight: 600; text-decoration: none; transition: transform 0.1s ease; cursor: pointer; border: 0; font-size: 15px; }
-  .btn:hover { transform: translateY(-1px); }
+  .btn { display: inline-block; padding: 12px 24px; border-radius: 8px; font-weight: 600; text-decoration: none; transition: transform 0.12s ease, box-shadow 0.12s ease; cursor: pointer; border: 0; font-size: 15px; }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(37, 99, 235, 0.18); }
   .btn-primary { background: var(--accent); color: white; }
   .btn-secondary { background: var(--card); color: var(--fg); border: 1px solid var(--border); }
+  h2.section { font-size: 22px; margin: 56px 0 16px; text-align: center; }
   .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 48px 0; }
-  .feature { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; }
+  .usecases { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  code { background: var(--card); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .footer { text-align: center; margin-top: 64px; color: var(--muted); font-size: 13px; }
+  .footer a { color: var(--accent); text-decoration: none; }
+
+  /* ============================================================
+   * 卡片 hover 效果(参考 sync_server .hover-card):
+   *   - 基础:hover translateY + border accent + box-shadow
+   *   - glow 变体:鼠标位置 radial-gradient 跟随高光(::before + CSS 变量)
+   * ============================================================ */
+  .hover-card {
+    position: relative;
+    cursor: pointer;
+    transition:
+      transform 220ms ease,
+      border-color 220ms ease,
+      box-shadow 220ms ease,
+      background-color 220ms ease;
+    will-change: transform;
+  }
+  .hover-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    box-shadow:
+      0 12px 32px rgba(37, 99, 235, 0.10),
+      0 0 0 1px rgba(37, 99, 235, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    .hover-card:hover {
+      box-shadow:
+        0 16px 40px rgba(0, 0, 0, 0.55),
+        0 0 0 1px rgba(96, 165, 250, 0.25);
+    }
+  }
+  .hover-card-glow {
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .hover-card-glow::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 300ms ease;
+    background: radial-gradient(
+      420px circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%),
+      rgba(37, 99, 235, 0.16),
+      transparent 55%
+    );
+  }
+  .hover-card-glow:hover::before { opacity: 1; }
+  .hover-card-glow > * { position: relative; z-index: 1; }
+
+  /* 应用到特性卡和人群卡 */
+  .feature {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+  }
   .feature h3 { margin: 0 0 8px; font-size: 16px; font-weight: 700; }
   .feature p { margin: 0; color: var(--muted); font-size: 14px; }
   .feature .icon { font-size: 22px; margin-bottom: 6px; display: block; }
-  h2.section { font-size: 22px; margin: 56px 0 16px; text-align: center; }
-  .usecases { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-  .usecase { background: var(--card); border-left: 3px solid var(--accent); border-radius: 6px; padding: 12px 16px; font-size: 14px; }
+  .usecase {
+    background: var(--card);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 14px;
+  }
   .usecase b { display: block; margin-bottom: 4px; }
-  .footer { text-align: center; margin-top: 64px; color: var(--muted); font-size: 13px; }
-  .footer a { color: var(--accent); text-decoration: none; }
-  code { background: var(--card); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -82,32 +145,32 @@ const HOMEPAGE_HTML = `<!doctype html>
 
   <h2 class="section" id="features">核心特性</h2>
   <div class="features">
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">⚡</span>
       <h3>极速启动</h3>
       <p>基于 Tauri 构建,体积小,启动快,毫秒级打开大文件。</p>
     </div>
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">📝</span>
       <h3>边写边看</h3>
       <p>源码 / 预览 / WYSIWYG 三模式自由切换,所见即所得。</p>
     </div>
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">🔌</span>
       <h3>插件生态</h3>
       <p>RAG 检索、AI 助手、图床、PDF 处理… 按需安装,无限扩展。</p>
     </div>
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">☁️</span>
       <h3>云同步</h3>
       <p>多端无缝同步,文件级冲突检测与合并,告别丢稿烦恼。</p>
     </div>
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">🎨</span>
       <h3>主题与外观</h3>
       <p>暗色 / 亮色自由切换,代码高亮、字体、行距皆可定制。</p>
     </div>
-    <div class="feature">
+    <div class="feature hover-card hover-card-glow">
       <span class="icon">🔒</span>
       <h3>本地优先</h3>
       <p>文件存于本地,数据主权归你。可选加密同步,隐私无忧。</p>
@@ -116,10 +179,10 @@ const HOMEPAGE_HTML = `<!doctype html>
 
   <h2 class="section">适用人群</h2>
   <div class="usecases">
-    <div class="usecase"><b>✍️ 写作者</b>专注写作,沉浸编辑,所见即所得。</div>
-    <div class="usecase"><b>👨‍💻 开发者</b>写技术文档、博客、笔记,代码高亮 + AI 助手。</div>
-    <div class="usecase"><b>🎓 学生 / 研究者</b>记笔记、写论文,多端同步随时查阅。</div>
-    <div class="usecase"><b>📚 团队 / 企业</b>私有部署、定制插件、本地优先协作。</div>
+    <div class="usecase hover-card"><b>✍️ 写作者</b>专注写作,沉浸编辑,所见即所得。</div>
+    <div class="usecase hover-card"><b>👨‍💻 开发者</b>写技术文档、博客、笔记,代码高亮 + AI 助手。</div>
+    <div class="usecase hover-card"><b>🎓 学生 / 研究者</b>记笔记、写论文,多端同步随时查阅。</div>
+    <div class="usecase hover-card"><b>📚 团队 / 企业</b>私有部署、定制插件、本地优先协作。</div>
   </div>
 
   <h2 class="section">现在就试试</h2>
@@ -140,6 +203,21 @@ const HOMEPAGE_HTML = `<!doctype html>
     <p style="margin-top:8px;font-size:12px">本地 mock + 登录/设置服务 · 由 web/server/ Fastify 提供</p>
   </div>
 </div>
+<script>
+  // 鼠标位置光晕跟随:为 .hover-card-glow 元素设置 --spotlight-x/y CSS 变量
+  // 复用 web-client style.css 的同款实现,这里用 vanilla JS 等价版
+  document.addEventListener('mousemove', (e) => {
+    const target = e.target;
+    if (!target || !target.closest) return;
+    const card = target.closest('.hover-card-glow');
+    if (!card) return;
+    const rect = card.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    card.style.setProperty('--spotlight-x', x.toFixed(1) + '%');
+    card.style.setProperty('--spotlight-y', y.toFixed(1) + '%');
+  }, { passive: true });
+</script>
 </body>
 </html>`;
 
