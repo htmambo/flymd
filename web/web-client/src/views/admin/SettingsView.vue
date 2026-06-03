@@ -169,10 +169,10 @@ onMounted(loadAll)
     <div v-if="errorMsg" class="error-banner">{{ errorMsg }}</div>
 
     <section v-if="overview" class="stats">
-      <div class="stat-card hover-card"><div class="stat-num">{{ overview.totalUsers }}</div><div class="muted">总用户</div></div>
-      <div class="stat-card hover-card"><div class="stat-num">{{ overview.activeUsers }}</div><div class="muted">活跃</div></div>
-      <div class="stat-card hover-card"><div class="stat-num">{{ overview.disabledUsers }}</div><div class="muted">已禁用</div></div>
-      <div class="stat-card hover-card"><div class="stat-num">{{ overview.totalSettings }}</div><div class="muted">设置项</div></div>
+      <div class="stat-card hover-card hover-card-glow"><div class="stat-num">{{ overview.totalUsers }}</div><div class="muted">总用户</div></div>
+      <div class="stat-card hover-card hover-card-glow"><div class="stat-num">{{ overview.activeUsers }}</div><div class="muted">活跃</div></div>
+      <div class="stat-card hover-card hover-card-glow"><div class="stat-num">{{ overview.disabledUsers }}</div><div class="muted">已禁用</div></div>
+      <div class="stat-card hover-card hover-card-glow"><div class="stat-num">{{ overview.totalSettings }}</div><div class="muted">设置项</div></div>
     </section>
 
     <div class="tabs">
@@ -188,7 +188,7 @@ onMounted(loadAll)
       </button>
     </div>
 
-    <section class="content-section hover-card">
+    <section class="content-section hover-card hover-card-glow">
       <div class="section-header">
         <h2>{{ categoryLabels[activeCategory].title }}</h2>
         <p class="muted">{{ categoryLabels[activeCategory].desc }}</p>

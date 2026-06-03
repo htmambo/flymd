@@ -28,7 +28,7 @@ async function handleLogout() {
           v-for="item in navItems"
           :key="item.name"
           :to="{ name: item.name }"
-          class="nav-item"
+          class="nav-item hover-card hover-card-glow"
           active-class="active"
         >
           <span class="nav-icon">{{ item.icon }}</span>
@@ -36,7 +36,7 @@ async function handleLogout() {
         </router-link>
       </nav>
       <div class="sidebar-footer">
-        <div class="user-card hover-card">
+        <div class="user-card hover-card hover-card-glow">
           <div class="user-name">{{ auth.user?.nickname || auth.user?.email }}</div>
           <div class="user-role muted small">
             {{ auth.user?.email }}

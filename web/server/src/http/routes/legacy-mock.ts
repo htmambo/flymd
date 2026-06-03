@@ -179,10 +179,10 @@ const HOMEPAGE_HTML = `<!doctype html>
 
   <h2 class="section">适用人群</h2>
   <div class="usecases">
-    <div class="usecase hover-card"><b>✍️ 写作者</b>专注写作,沉浸编辑,所见即所得。</div>
-    <div class="usecase hover-card"><b>👨‍💻 开发者</b>写技术文档、博客、笔记,代码高亮 + AI 助手。</div>
-    <div class="usecase hover-card"><b>🎓 学生 / 研究者</b>记笔记、写论文,多端同步随时查阅。</div>
-    <div class="usecase hover-card"><b>📚 团队 / 企业</b>私有部署、定制插件、本地优先协作。</div>
+    <div class="usecase hover-card hover-card-glow"><b>✍️ 写作者</b>专注写作,沉浸编辑,所见即所得。</div>
+    <div class="usecase hover-card hover-card-glow"><b>👨‍💻 开发者</b>写技术文档、博客、笔记,代码高亮 + AI 助手。</div>
+    <div class="usecase hover-card hover-card-glow"><b>🎓 学生 / 研究者</b>记笔记、写论文,多端同步随时查阅。</div>
+    <div class="usecase hover-card hover-card-glow"><b>📚 团队 / 企业</b>私有部署、定制插件、本地优先协作。</div>
   </div>
 
   <h2 class="section">现在就试试</h2>
