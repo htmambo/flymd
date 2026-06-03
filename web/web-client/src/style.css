@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #ffffff;
+  --fg: #1f2937;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --card: #f9fafb;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --danger: #dc2626;
+  --success: #16a34a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1020;
+    --fg: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #1f2937;
+    --card: #111827;
+  }
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+button, .btn {
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  transition: all 0.12s ease;
+}
+button:hover, .btn:hover { background: var(--border); }
+.btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-danger { background: var(--danger); color: white; border-color: var(--danger); }
+.btn-ghost { background: transparent; border-color: transparent; }
+
+input, textarea, select {
+  font: inherit;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+}
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--fg);
+}
+.muted { color: var(--muted); }
+.error { color: var(--danger); font-size: 13px; }
+.success { color: var(--success); font-size: 13px; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+/* ============================================================
+ * 卡片 hover 效果(参考 sync_server 的 .hover-card 风格)
+ *
+ * 用法:在 <div class="card hover-card"> 加上 hover-card 类即可。
+ *
+ * 设计要点:
+ *  - transition 200ms:transform / border / box-shadow 同步
+ *  - hover:translateY(-2px) 微浮起
+ *  - hover:border-color 改 accent(视觉聚焦)
+ *  - hover:box-shadow 加深 + accent 光晕
+ *  - glow 变体:加 ::before 伪元素做 radial-gradient 跟随鼠标的高光
+ * ============================================================ */
+.hover-card {
+  position: relative;
+  cursor: pointer;
+  transition:
+    transform 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    background-color 200ms ease;
+  will-change: transform;
+}
+.hover-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(37, 99, 235, 0.12);
+}
+@media (prefers-color-scheme: dark) {
+  .hover-card:hover {
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(96, 165, 250, 0.2);
+  }
+}
+
+/* glow 变体:鼠标位置径向高光(由 .hover-card-glow 容器上的 mousemove 驱动) */
+.hover-card-glow {
+  overflow: hidden;
+  isolation: isolate;
+}
+.hover-card-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 280ms ease;
+  background: radial-gradient(
+    360px circle at var(--spotlight-x, 50%) var(--spotlight-y, 50%),
+    rgba(37, 99, 235, 0.12),
+    transparent 60%
+  );
+}
+.hover-card-glow:hover::before { opacity: 1; }
+.hover-card-glow > * { position: relative; z-index: 1; }
+
+/* danger 变体:hover 边框变红 */
+.hover-card-danger:hover {
+  border-color: var(--danger);
+  box-shadow:
+    0 8px 24px rgba(220, 38, 38, 0.12),
+    0 0 0 1px rgba(220, 38, 38, 0.15);
+}
+
+/* 表格行 hover */
+.hover-row {
+  transition: background-color 160ms ease;
+}
+.hover-row:hover {
+  background: var(--card);
+}

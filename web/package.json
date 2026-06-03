@@ -1,0 +1,22 @@
+{
+  "name": "flymd-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web-client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web-client\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web-client",
+    "build": "npm run build -w web-client && npm run build -w server",
+    "start": "npm run start -w server",
+    "check": "npm run check -w server && npm run build -w web-client",
+    "reset-password": "npm run reset-password -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
