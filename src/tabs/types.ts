@@ -25,7 +25,7 @@ export interface TabDocument {
 // 标签管理器事件
 export type TabEvent =
   | { type: 'tab-created'; tab: TabDocument }
-  | { type: 'tab-closed'; tabId: string }
+  | { type: 'tab-closed'; tabId: string; filePath?: string | null }
   | { type: 'tab-switched'; fromTabId: string | null; toTabId: string }
   | { type: 'tab-updated'; tab: TabDocument }
   | { type: 'tabs-reordered'; tabs: TabDocument[] }

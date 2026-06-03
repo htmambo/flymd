@@ -5304,6 +5304,8 @@ async function saveFile() {
     }
 
     logInfo('保存文件', { path: currentFilePath })
+    // 自循环抑制窗口提前到 write 之前(避免 watch 事件在 write 期间先到被误识别为外部变更)
+    try { extWatcherIntegration?.beginSelfWriteCurrent() } catch (e) { console.warn('[extWatcher] beginSelfWrite failed', e) }
     try {
       await writeTextFileAnySafe(currentFilePath, editor.value)
     } catch (e: any) {
@@ -5316,7 +5318,7 @@ async function saveFile() {
       }
     }
     // 写入完成,标记为"自写入"以避免 2s 内的 modify 事件被当作外部变更
-    try { extWatcherIntegration?.markSelfWriteCurrent() } catch (e) { console.warn('[extWatcher] markSelfWrite failed', e) }
+    try { extWatcherIntegration?.finishSelfWriteCurrent() } catch (e) { console.warn('[extWatcher] finishSelfWrite failed', e) }
     dirty = false
     refreshTitle()
     // 通知标签系统文件已保存
@@ -5507,20 +5509,23 @@ async function saveAs() {
           if (ext === 'docx') {
             const { exportDocx } = await import('./exporters/docx');
             const bytes = await exportDocx(el as any, {});
+            try { extWatcherIntegration?.beginSelfWriteCurrent(target) } catch {}
             await writeFile(target as any, bytes as any);
           } else {
             const { exportWps } = await import('./exporters/wps');
             const bytes = await exportWps(html as any, {});
+            try { extWatcherIntegration?.beginSelfWriteCurrent(target) } catch {}
             await writeFile(target as any, bytes as any);
           }
         }
+        const oldPath = currentFilePath;
         currentFilePath = target;
         dirty = false;
         refreshTitle();
-        // 切到新路径:老路径 unregister,新路径 register
-        try { extWatcherIntegration?.unregisterFor(target) } catch {}  // 防重复注册
+        // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register
+        try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
         try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs export) failed', e) }
-        try { extWatcherIntegration?.markSelfWriteCurrent() } catch {}
+        try { extWatcherIntegration?.finishSelfWriteCurrent() } catch {}
         await pushRecent(currentFilePath);
         await renderRecentPanel(false);
         logInfo('文件导出成功', { path: target, ext });
@@ -5533,6 +5538,7 @@ async function saveAs() {
       }
     }
     try {
+      try { extWatcherIntegration?.beginSelfWriteCurrent(target) } catch {}
       await writeTextFileAnySafe(target, editor.value)
     } catch (e: any) {
       const msg = (e && (e.message || (e.toString?.()))) ? String(e.message || e.toString()) : ''
@@ -5543,11 +5549,12 @@ async function saveAs() {
         throw e
       }
     }
+    const oldPath = currentFilePath
     currentFilePath = target
     dirty = false
     refreshTitle()
-    // 切到新路径:老路径 unregister,新路径 register + markSelfWrite(防尾随事件)
-    try { extWatcherIntegration?.unregisterFor(target) } catch {}
+    // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register + markSelfWrite
+    try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
     try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
     try { extWatcherIntegration?.markSelfWriteCurrent() } catch {}
     await pushRecent(currentFilePath)
@@ -11570,6 +11577,12 @@ async function reloadCurrentFileFromDisk(): Promise<void> {
   // 强制重渲染(适配 preview / edit / wysiwyg 三种模式)
   try {
     if (wysiwyg) {
+      // 关键:同步更新 currentFrontMatter,否则 onChange(2750)会用旧 front matter 拼回 textarea,
+      // 静默丢失外部对 YAML 头部的修改
+      try {
+        const fmSplit = splitYamlFrontMatter(content)
+        currentFrontMatter = fmSplit.frontMatter
+      } catch (e) { logFile('splitYamlFrontMatter failed', { err: String(e) }) }
       // 所见模式:走 scheduleWysiwygRender(requestAnimationFrame 异步),需等一帧
       try { scheduleWysiwygRender() } catch (e) { logFile('scheduleWysiwygRender failed', { err: String(e) }) }
       await new Promise((r) => requestAnimationFrame(() => r(null)))
@@ -11586,6 +11599,9 @@ async function reloadCurrentFileFromDisk(): Promise<void> {
   // 解除 wysiwyg onChange 守卫(在 await 两帧后)
   try { (window as any).__flymdExternalReloadInProgress = false } catch {}
   try { refreshTitle() } catch {}  // 再次刷新一次,确保 dirty=false 反映到标题
+  // 通知 tab 系统:reloaded 后需要把 tab.content 同步到 ed.value、tab.dirty=false
+  // (markCurrentTabSaved 内部从 hooks.getEditorContent() 读新内容 + dirty=false)
+  try { window.dispatchEvent(new CustomEvent('flymd-file-reloaded')) } catch {}
 }
 
 /**

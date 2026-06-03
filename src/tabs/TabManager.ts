@@ -418,7 +418,9 @@ export class TabManager {
       this.tabs.splice(tabIndex, 1)
     }
 
-    this.emit({ type: 'tab-closed', tabId })
+    // 在 emit 之前抓 filePath,因为 emit 后监听端可能已查不到(closeTab 后该 tab 已被移除)
+    const closedFilePath = tab?.filePath ?? null
+    this.emit({ type: 'tab-closed', tabId, filePath: closedFilePath })
     return true
   }
 

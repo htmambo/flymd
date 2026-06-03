@@ -64,6 +64,8 @@ export interface OpenFileWatcher {
   unregister(token: WatchToken): void
   unregisterByPath(filePath: string): void
   markSelfWrite(filePath: string): void
+  beginSelfWrite(filePath: string): void
+  finishSelfWrite(filePath: string): void
   revalidate(filePath: string): Promise<RevalidateResult>
   setEnabled(on: boolean): void
   dispose(): void
@@ -89,6 +91,8 @@ type Entry = {
   unwatch: (() => void) | null
   /** 用于 revalidate 期间防止 self-write 反向重入 */
   inFlight: boolean
+  /** 异步 watch 句柄 race 防护:unregister/dispose 时设 true,resolve 后检查 */
+  cancelled: boolean
 }
 
 function defaultNow(): number {
@@ -175,13 +179,18 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
    */
   function startWatch(entry: Entry): void {
     if (disposed || entry.unwatch) return
+    // 每次 startWatch 重置 cancelled(新启动);后续 await 期间 unregister 会再次设 true
+    entry.cancelled = false
     void (async () => {
+      let unwatch: (() => void) | null = null
       try {
-        const unwatch = await watchImpl(
+        unwatch = await watchImpl(
           entry.parentDir,                 // 充当 libraryRoot 占位
           [entry.originalPath],            // 监听单一文件
           (ev) => {
             try {
+              // race 检查:若期间被取消,忽略后续事件
+              if (entry.cancelled) return
               handleEvent(entry, ev)
             } catch (e) {
               logger.warn('[openFileWatcher] event handler error', e)
@@ -189,6 +198,14 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
           },
           { recursive: false, immediate: false, delayMs: 200 },
         )
+        // resolve 后再次 race 检查
+        if (entry.cancelled) {
+          // 已被 unregister/dispose:立即释放,避免孤儿监听
+          try { unwatch() } catch (e) {
+            logger.warn('[openFileWatcher] race-released unwatch failed', { err: String(e) })
+          }
+          return
+        }
         entry.unwatch = unwatch
         logger.debug('[openFileWatcher] watch started', { filePath: entry.filePath })
       } catch (e) {
@@ -293,6 +310,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
       onChange,
       unwatch: null,
       inFlight: false,
+      cancelled: false,
     }
     entriesByPath.set(norm, entry)
     entriesByToken.set(entry.token, entry)
@@ -318,6 +336,8 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
   function unregister(token: WatchToken): void {
     const e = entriesByToken.get(token)
     if (!e) return
+    // 标记取消(防止 startWatch resolve 后留下孤儿监听)
+    e.cancelled = true
     if (e.unwatch) {
       try { e.unwatch() } catch {}
     }
@@ -330,6 +350,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     const norm = normalizePath(String(filePath || ''))
     const e = entriesByPath.get(norm)
     if (!e) return
+    e.cancelled = true
     if (e.unwatch) {
       try { e.unwatch() } catch {}
     }
@@ -356,6 +377,38 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     })()
   }
 
+  /**
+   * 自写入开始:在 write 之前调用,设抑制窗口。不刷新 snapshot(此时磁盘还没新数据)。
+   * 用于 race 防护:防止 watch 事件在 write 期间先到,被误识别为外部变更。
+   */
+  function beginSelfWrite(filePath: string): void {
+    const norm = normalizePath(String(filePath || ''))
+    const e = entriesByPath.get(norm)
+    if (!e) return
+    e.suppressUntil = now() + SUPPRESS_WINDOW_MS
+    logger.debug('[openFileWatcher] beginSelfWrite', { filePath: e.originalPath })
+  }
+
+  /**
+   * 自写入完成:在 write 之后调用,刷新 snapshot 到最新。
+   * 配套 beginSelfWrite 使用。
+   */
+  function finishSelfWrite(filePath: string): void {
+    const norm = normalizePath(String(filePath || ''))
+    const e = entriesByPath.get(norm)
+    if (!e) return
+    void (async () => {
+      const s = await statImpl(e.originalPath)
+      if (entriesByPath.has(norm)) {
+        e.snapshot = s
+        logger.debug('[openFileWatcher] finishSelfWrite,刷新 snapshot', {
+          filePath: e.originalPath,
+          mtimeMs: s?.mtimeMs,
+        })
+      }
+    })()
+  }
+
   async function revalidate(filePath: string): Promise<RevalidateResult> {
     const norm = normalizePath(String(filePath || ''))
     const e = entriesByPath.get(norm)
@@ -370,14 +423,34 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
   }
 
   function setEnabled(on: boolean): void {
-    enabled = !!on
-    logger.debug('[openFileWatcher] setEnabled', { enabled: enabled })
+    const next = !!on
+    if (next === enabled) return
+    enabled = next
+    logger.debug('[openFileWatcher] setEnabled', { enabled })
+    if (!enabled) {
+      // 关闭:释放所有已激活的 watch 句柄(set cancelled 防 race)
+      for (const e of entriesByToken.values()) {
+        e.cancelled = true
+        if (e.unwatch) {
+          try { e.unwatch() } catch {}
+          e.unwatch = null
+        }
+      }
+    } else {
+      // 重新开启:对所有已存在 entry 重新启动 watch
+      for (const e of entriesByToken.values()) {
+        if (e.unwatch) continue
+        startWatch(e)
+      }
+    }
   }
 
   function dispose(): void {
     if (disposed) return
     disposed = true
     for (const e of entriesByToken.values()) {
+      // 标记取消(防止 startWatch resolve 后留下孤儿监听)
+      e.cancelled = true
       if (e.unwatch) {
         try { e.unwatch() } catch {}
       }
@@ -391,6 +464,8 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     unregister,
     unregisterByPath,
     markSelfWrite,
+    beginSelfWrite,
+    finishSelfWrite,
     revalidate,
     setEnabled,
     dispose,

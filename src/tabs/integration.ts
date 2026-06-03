@@ -380,10 +380,17 @@ export async function initTabSystem(): Promise<void> {
     } else if (event.type === 'tab-closed') {
       undoManager.removeTab(event.tabId)
       // 关闭标签时解除该标签对应文件的监听
+      // 优先用 event.filePath(TabManager.closeTab 在 emit 前已抓取),避免监听端再查已移除的 tab
       try {
-        const closed = tabManager.getTabs().find((t: any) => t.id === (event as any).tabId)
-        if (closed?.filePath) {
-          (window as any).extWatcherIntegration?.unregisterFor?.(closed.filePath)
+        const closedPath = (event as any).filePath
+        if (closedPath) {
+          (window as any).extWatcherIntegration?.unregisterFor?.(closedPath)
+        } else {
+          // 兜底:旧代码路径(理论上不应触发)
+          const closed = tabManager.getTabs().find((t: any) => t.id === (event as any).tabId)
+          if (closed?.filePath) {
+            (window as any).extWatcherIntegration?.unregisterFor?.(closed.filePath)
+          }
         }
       } catch {}
     }
@@ -400,6 +407,12 @@ export async function initTabSystem(): Promise<void> {
   ;(window as any).flymdCountDirtyTabs = countDirtyTabs
   ;(window as any).flymdSaveAllDirtyTabs = saveAllDirtyTabs
   ;(window as any).flymdSaveTabSession = saveTabSession
+  // 外部变更 reload 后:同步当前 tab 的 content + dirty=false
+  window.addEventListener('flymd-file-reloaded', () => {
+    try {
+      tabManager.markCurrentTabSaved()
+    } catch (e) { console.warn('[tabs] markCurrentTabSaved after reload failed', e) }
+  })
   // 暴露给 main.ts:reloadCurrentFileFromDisk 复用此机制屏蔽 dirty 同步
   ;(window as any).flymdPauseDirtySync = pauseDirtySyncFor
 

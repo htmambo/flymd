@@ -54,8 +54,12 @@ export interface OpenFileWatcherIntegration {
   registerFor(filePath: string): void
   /** close / saveAs / newFile 时调用 */
   unregisterFor(filePath: string): void
-  /** saveFile / saveAs 写入完成后调用 */
+  /** saveFile / saveAs 写入完成后调用(向后兼容) */
   markSelfWriteCurrent(): void
+  /** 自写入开始 — write 之前调用,设抑制窗口(无 stat,用于 race 防护)。可选 path 用于 saveAs 切路径场景 */
+  beginSelfWriteCurrent(path?: string | null): void
+  /** 自写入完成 — write 之后调用,刷新 snapshot */
+  finishSelfWriteCurrent(): void
   /** 切回标签时 stat 复检(命中后自动跑策略) */
   revalidateCurrent(): Promise<RevalidateResult>
   /** 偏好切换 */
@@ -218,6 +222,22 @@ export function attachExternalChangeWatcher(
     }
   }
 
+  function beginSelfWriteCurrent(path?: string | null): void {
+    const fp = (path != null && path !== '') ? path : deps.getCurrentFilePath()
+    if (!fp) return
+    try { deps.watcher.beginSelfWrite(fp) } catch (e) {
+      logWarn('[openFileWatcherIntegration] beginSelfWrite failed', { filePath: fp, err: String(e) })
+    }
+  }
+
+  function finishSelfWriteCurrent(): void {
+    const fp = deps.getCurrentFilePath()
+    if (!fp) return
+    try { deps.watcher.finishSelfWrite(fp) } catch (e) {
+      logWarn('[openFileWatcherIntegration] finishSelfWrite failed', { filePath: fp, err: String(e) })
+    }
+  }
+
   async function revalidateCurrent(): Promise<RevalidateResult> {
     const fp = deps.getCurrentFilePath()
     if (!fp) return 'unchanged'
@@ -252,6 +272,8 @@ export function attachExternalChangeWatcher(
     registerFor,
     unregisterFor,
     markSelfWriteCurrent,
+    beginSelfWriteCurrent,
+    finishSelfWriteCurrent,
     revalidateCurrent,
     setEnabled,
     dispose,
