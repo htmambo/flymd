@@ -10,7 +10,7 @@
  *  D. AI 小说引擎(/xiaoshuo/*)
  *  E. PDF 服务(/pdf/*)
  */
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { sendError, sendOk } from "../../utils/http.js";
 import {
   routeChat, routeChatStream, routeCompletion, routeEmbedding,
@@ -18,6 +18,7 @@ import {
 } from "../../services/ai/router.js";
 import { mockChat, mockChatStream, mockCompletion, mockEmbedding } from "../../services/ai/mock.js";
 import type { RouterContext, ChatRequest, ProviderConfig } from "../../services/ai/types.js";
+import { getRateLimiter } from "../../services/ai/ratelimit.js";
 
 // ============================================================
 // 1×1 透明 PNG + 占位 ICO
@@ -396,8 +397,10 @@ function streamOpenAI(reply: any, iter: AsyncIterable<any>) {
 }
 
 function registerAiRoutes(app: FastifyInstance) {
+  const limit = aiRateLimit();
+
   // ---- /ai/ai_proxy.php(legacy 分发)----
-  app.post("/ai/ai_proxy.php", async (request, reply) => {
+  app.post("/ai/ai_proxy.php", { preHandler: limit }, async (request, reply) => {
     const body = (request.body || {}) as Record<string, unknown>;
     if (Array.isArray(body.messages)) {
       // 当作 chat
@@ -415,7 +418,7 @@ function registerAiRoutes(app: FastifyInstance) {
   });
 
   // ---- /v1/chat/completions(OpenAI 兼容)----
-  app.post("/ai/ai_proxy.php/v1/chat/completions", async (request, reply) => {
+  app.post("/ai/ai_proxy.php/v1/chat/completions", { preHandler: limit }, async (request, reply) => {
     const req = (request.body || {}) as any;
     if (!req.model || !Array.isArray(req.messages)) {
       return sendErr(reply, 400, "bad_request", "缺少 model 或 messages 字段");
@@ -435,7 +438,7 @@ function registerAiRoutes(app: FastifyInstance) {
   });
 
   // ---- /v1/completions(legacy text completion)----
-  app.post("/ai/ai_proxy.php/v1/completions", async (request, reply) => {
+  app.post("/ai/ai_proxy.php/v1/completions", { preHandler: limit }, async (request, reply) => {
     const req = (request.body || {}) as any;
     if (!req.model || req.prompt === undefined) {
       return sendErr(reply, 400, "bad_request", "缺少 model 或 prompt 字段");
@@ -449,7 +452,7 @@ function registerAiRoutes(app: FastifyInstance) {
   });
 
   // ---- /v1/embeddings ----
-  app.post("/ai/ai_proxy.php/v1/embeddings", async (request, reply) => {
+  app.post("/ai/ai_proxy.php/v1/embeddings", { preHandler: limit }, async (request, reply) => {
     const req = (request.body || {}) as any;
     if (!req.model || req.input === undefined) {
       return sendErr(reply, 400, "bad_request", "缺少 model 或 input 字段");
@@ -526,7 +529,7 @@ function registerXiaoshuoRoutes(app: FastifyInstance) {
     return sendOk(reply, 200, { ok: true, balance_min: u.balance_min });
   });
 
-  app.post("/xiaoshuo/ai/proxy", async (request, reply) => {
+  app.post("/xiaoshuo/ai/proxy", { preHandler: aiRateLimit() }, async (request, reply) => {
     const body = (request.body || {}) as Record<string, unknown>;
     if (body.stream === true) {
       const iter = await routeChatStream(body as any, getConfigs(app), buildCtx(false));
@@ -580,6 +583,34 @@ function getBearer(request: any): string | null {
   const h = String(request.headers.authorization || "");
   const m = /^Bearer\s+(.+)$/i.exec(h);
   return m ? m[1].trim() : null;
+}
+
+// ============================================================
+// 限流(per-IP,针对 AI 端点)
+// ============================================================
+
+function clientIp(request: FastifyRequest): string {
+  const xff = String(request.headers["x-forwarded-for"] || "");
+  if (xff) return xff.split(",")[0].trim();
+  return (request.ip || request.socket?.remoteAddress || "anon").toString();
+}
+
+/** AI 端点限流 preHandler:每 IP 100 req/min,超限返 429 */
+function aiRateLimit() {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const ip = clientIp(request);
+    const r = getRateLimiter().hit(`ai:${ip}`);
+    reply.header("X-RateLimit-Remaining", String(r.remaining));
+    reply.header("X-RateLimit-Reset-Ms", String(r.resetMs));
+    if (!r.allowed) {
+      return reply.code(429).send({
+        error: {
+          type: "rate_limit",
+          message: `请求过于频繁,${Math.ceil(r.resetMs / 1000)}s 后重试`,
+        },
+      });
+    }
+  };
 }
 
 function findLegacyByToken(token: string | null): (LegacyUser & { username: string }) | null {

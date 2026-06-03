@@ -11,10 +11,15 @@ import { env } from "../config/env.js";
 import { DatabaseClient } from "../db/database.js";
 import { AuthService } from "../services/auth.js";
 import { SettingsService } from "../services/settings.js";
+import { UsageService } from "../services/ai/usage.js";
+import { CacheService } from "../services/ai/cache.js";
+import { NotifyService } from "../services/notify/index.js";
+import { setRouterDeps, setNotifyService } from "../services/ai/router.js";
 import { authPlugin } from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes, registerSettingsUserRoutes } from "./routes/settings.js";
 import { registerAiAdminRoutes } from "./routes/ai-admin.js";
+import { registerNotifyAdminRoutes } from "./routes/notify-admin.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerLegacyMockRoutes } from "./routes/legacy-mock.js";
 
@@ -23,6 +28,9 @@ declare module "fastify" {
     database: DatabaseClient;
     authService: AuthService;
     settingsService: SettingsService;
+    usageService: UsageService;
+    cacheService: CacheService;
+    notifyService: NotifyService;
   }
 }
 
@@ -62,9 +70,33 @@ export async function createApp(): Promise<FastifyInstance> {
   const database = new DatabaseClient();
   const authService = new AuthService(database);
   const settingsService = new SettingsService(database);
+  const usageService = new UsageService(database);
+  const cacheService = new CacheService(database);
+  const notifyService = new NotifyService(database, settingsService);
+  // 注入 router 依赖(usage + cache + notify),让 router 在每次 chat 时自动记录 + 命中缓存 + 错误告警
+  setRouterDeps({ usage: usageService, cache: cacheService });
+  setNotifyService(notifyService);
   app.decorate("database", database);
   app.decorate("authService", authService);
   app.decorate("settingsService", settingsService);
+  app.decorate("usageService", usageService);
+  app.decorate("cacheService", cacheService);
+  app.decorate("notifyService", notifyService);
+
+  // 启动时清理过期 cache(可忽略失败)
+  try {
+    const purged = cacheService.purgeExpired();
+    app.log.info(`AI 缓存启动清理: ${purged} 条过期记录`);
+  } catch (e) {
+    app.log.warn({ err: e }, "AI 缓存启动清理失败");
+  }
+  // 启动时清理超量告警历史
+  try {
+    const pruned = database.pruneAlerts(1000);
+    if (pruned > 0) app.log.info(`告警历史清理: 删除 ${pruned} 条`);
+  } catch (e) {
+    app.log.warn({ err: e }, "告警历史清理失败");
+  }
 
   // Auth 插件(全局 preHandler 注入 authUser)
   await app.register(authPlugin);
@@ -76,6 +108,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(registerSettingsUserRoutes);
   await app.register(registerLegacyMockRoutes);
   await app.register(registerAiAdminRoutes);
+  await app.register(registerNotifyAdminRoutes);
 
   // 静态资源 + Vite dev middleware
   if (env.enableVite && env.nodeEnv === "development") {

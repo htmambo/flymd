@@ -38,12 +38,15 @@ describe("inferProviderByModel", () => {
 describe("loadProviderConfigs", () => {
   it("从 settings key/value 数组解析 provider configs", () => {
     const settings = [
+      { key: "ai.providers.openai.protocol", value: "openai" },
       { key: "ai.providers.openai.apiKey", value: "sk-xxx" },
       { key: "ai.providers.openai.baseUrl", value: "https://api.openai.com" },
       { key: "ai.providers.openai.enabled", value: true },
+      { key: "ai.providers.ollama.protocol", value: "ollama" },
       { key: "ai.providers.ollama.baseUrl", value: "http://localhost:11434" },
       { key: "ai.providers.ollama.enabled", value: true },
       // 禁用的应被排除
+      { key: "ai.providers.generic-openai.protocol", value: "generic-openai" },
       { key: "ai.providers.generic-openai.apiKey", value: "abc" },
       { key: "ai.providers.generic-openai.enabled", value: false },
       // 未知 provider 应被忽略
@@ -59,6 +62,7 @@ describe("loadProviderConfigs", () => {
   });
   it("Ollama 允许无 apiKey", () => {
     const settings = [
+      { key: "ai.providers.ollama.protocol", value: "ollama" },
       { key: "ai.providers.ollama.baseUrl", value: "http://localhost:11434" },
       { key: "ai.providers.ollama.enabled", value: true },
     ];

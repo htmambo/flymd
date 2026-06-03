@@ -163,4 +163,35 @@ export async function registerAiAdminRoutes(app: FastifyInstance) {
       return sendError(reply, 500, e?.message || "保存失败");
     }
   });
+
+  // 用量聚合(Iter 3)
+  app.get("/api/v1/admin/ai/usage", { preHandler: requireAdmin }, async (request, reply) => {
+    try {
+      const q = (request.query || {}) as { since?: string; window?: string };
+      // 支持两种语义:
+      //   - since=ms 时间戳(默认 0,全量)
+      //   - window=1h|24h|7d|30d(便捷写法)
+      let sinceMs = Number.parseInt(String(q.since || "0"), 10);
+      if (!Number.isFinite(sinceMs) || sinceMs < 0) sinceMs = 0;
+      const w = String(q.window || "").toLowerCase();
+      if (w === "1h") sinceMs = Date.now() - 60 * 60 * 1000;
+      else if (w === "24h") sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+      else if (w === "7d") sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      else if (w === "30d") sinceMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const summary = app.database.aiUsageSummary(sinceMs);
+      return sendOk(reply, 200, {
+        sinceMs,
+        window: w || "all",
+        ...summary,
+        errorRate: summary.totalCalls > 0
+          ? Math.round((summary.errorCount * 10000) / summary.totalCalls) / 100
+          : 0,
+        cacheHitRate: summary.totalCalls > 0
+          ? Math.round((summary.cacheHits * 10000) / summary.totalCalls) / 100
+          : 0,
+      });
+    } catch (e: any) {
+      return sendError(reply, 500, e?.message || "查询失败");
+    }
+  });
 }
