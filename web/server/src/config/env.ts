@@ -38,6 +38,8 @@ export const env = {
   webDistPath: strEnv("WEB_DIST_PATH", path.join(ROOT_DIR, "web-client", "dist")),
   /** 是否在 dev 模式跑(Vite dev middleware) */
   enableVite: strEnv("ENABLE_VITE", "true") === "true",
+  /** Vite config 路径(dev middleware 加载以获取 alias) */
+  webViteConfigPath: strEnv("WEB_VITE_CONFIG_PATH", path.join(ROOT_DIR, "web-client", "vite.config.mts")),
   /** CORS 允许来源(* 表示全开) */
   corsOrigin: strEnv("CORS_ORIGIN", "*"),
   /** 静态资源 token 签名密钥(生产可改) */

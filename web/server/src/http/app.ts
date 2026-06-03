@@ -98,9 +98,22 @@ export async function createApp(): Promise<FastifyInstance> {
 
 async function registerViteWebMiddleware(app: FastifyInstance) {
   const { createServer } = await import("vite");
+  // 手动配置 alias(与 web-client/vite.config.mts 保持一致)。
+  // 用 configFile: env.webViteConfigPath 不能工作,因为:
+  //   - vite.config.ts 会在 ESM 项目里被 esbuild 编译成 .js + 用 exports.X 格式
+  //     (在 "type":"module" 包下报 exports is not defined)
+  //   - vite.config.mts 在 Vite 7 dev esbuild 加载时报 Could not resolve
+  // 解决方案:直接硬编码 alias 同步 web-client 配置
+  const webRoot = env.webDistPath.replace(/\/dist$/, "");
+  const srcDir = (await import("node:url")).fileURLToPath(
+    new URL("./src/", (await import("node:url")).pathToFileURL(webRoot + "/")),
+  );
   const vite = await createServer({
-    root: env.webDistPath.replace(/\/dist$/, ""),
+    root: webRoot,
     configFile: false,
+    resolve: {
+      alias: { "@": srcDir },
+    },
     server: { middlewareMode: true },
     appType: "spa",
   });
