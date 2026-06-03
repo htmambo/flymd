@@ -153,6 +153,8 @@ export function showFileWatchDiffDialog(
       cancel: t('filewatch.diff.btn.cancel') || '取消',
       copyToRight: t('filewatch.diff.btn.copyToRight') || '从外部复制到本地',
       copyToLeft: t('filewatch.diff.btn.copyToLeft') || '从本地复制到外部',
+      locate: t('filewatch.diff.btn.locate') || '定位到该差异',
+      ignoreWhitespace: t('filewatch.diff.ignoreWhitespace') || '忽略空白字符(空格 / 制表符)',
     }
     const emptyText = t('filewatch.diff.empty') || '没有差异'
     const largeFileText = t('filewatch.diff.largeFile') || '文件较大,行级 diff 暂不可用,请在右侧直接编辑后点击"应用结果"'
@@ -160,7 +162,9 @@ export function showFileWatchDiffDialog(
     // 可变状态:左侧文本随"从右复制到左"操作变化(仅视觉用,不影响最终结果)
     let leftText = String(external ?? '')
     let rightText = String(local ?? '')
-    let view = buildHunks(leftText, rightText)
+    // 用户可切换"忽略空白" → 重建 view(影响 buildHunks diff)
+    let ignoreWhitespace = false
+    let view = buildHunks(leftText, rightText, { ignoreWhitespace })
     let currentHunk = -1
     // 大文件降级检测:由 buildHunks 标记,意味着 copyHunkToXxx 不能用(会重复拼接)
     const isLargeFileFallback = view.isLargeFileFallback === true
@@ -182,6 +186,28 @@ export function showFileWatchDiffDialog(
     hintEl.textContent = isLargeFileFallback ? largeFileText : hintText
     header.appendChild(titleEl)
     header.appendChild(hintEl)
+    // 改进 4:选项行(忽略空白复选框)。仅在非大文件降级时显示
+    if (!isLargeFileFallback) {
+      const optionsRow = document.createElement('div')
+      optionsRow.className = 'filewatch-diff-options'
+      const ignoreWsLabel = document.createElement('label')
+      ignoreWsLabel.className = 'filewatch-diff-option-label'
+      const ignoreWsCheckbox = document.createElement('input')
+      ignoreWsCheckbox.type = 'checkbox'
+      ignoreWsCheckbox.checked = ignoreWhitespace
+      ignoreWsCheckbox.addEventListener('change', () => {
+        ignoreWhitespace = ignoreWsCheckbox.checked
+        rebuildAfterEdit({ preserveCurrent: false, ignoreWhitespace })
+        // 切完 ignoreWhitespace 默认跳到第一处,免得停在某行
+        if (view.hunks.length > 0) locateHunk(0)
+      })
+      const ignoreWsSpan = document.createElement('span')
+      ignoreWsSpan.textContent = btnLabels.ignoreWhitespace
+      ignoreWsLabel.appendChild(ignoreWsCheckbox)
+      ignoreWsLabel.appendChild(ignoreWsSpan)
+      optionsRow.appendChild(ignoreWsLabel)
+      header.appendChild(optionsRow)
+    }
 
     // body 三列
     const body = document.createElement('div')
@@ -324,14 +350,29 @@ export function showFileWatchDiffDialog(
         // 这里简化为:对每个 hunk 来说,它的行数 = hunk.rows.length
         // 顶部偏移 = 之前所有 hunk 的行数之和 × lineHeight + 顶部 padding(4px) + 行内 padding
         const topPad = 4  // .filewatch-diff-pane padding: 4px 0
-        let accumRows = 0
+        // 定位算法(改进 2 修复):之前用 accumRows += h.rows.length 错位 — 忽略了 hunk 之间的 equal 行。
+        // 正确:用 hunk 第一个 del/change 行的 leftLine 作为起始 leftLine,左栏实际占用行数 = del+change 行数(连续)。
+        // 起始 top = (minLeftLine - 1) * lineHeight + topPad,height = leftRowCount * lineHeight。
         for (const h of view.hunks) {
+          const leftRows = h.rows.filter((r) => r.kind === 'del' || r.kind === 'change')
+          if (leftRows.length === 0) continue  // 纯 add hunk 在左栏不可见,跳过 gutter
+          const minLeftLine = leftRows[0].leftLine
+          const leftRowCount = leftRows.length
           const block = document.createElement('div')
           block.className = 'filewatch-diff-hunk-block' + (h.id === currentHunk ? ' active' : '')
           block.dataset.hunkId = String(h.id)
-          // 绝对定位:精确对齐 hunk 起始行在 leftPane 中的位置
-          block.style.top = `${topPad + accumRows * lineHeight}px`
-          block.style.height = `${h.rows.length * lineHeight}px`
+          // 绝对定位:精确对齐 hunk 在左栏中的实际差异行
+          block.style.top = `${topPad + (minLeftLine - 1) * lineHeight}px`
+          block.style.height = `${leftRowCount * lineHeight}px`
+          // 定位按钮(改进 3):跳到该 hunk(滚动左 pane + 设右 textarea caret)
+          const locateBtn = document.createElement('button')
+          locateBtn.type = 'button'
+          locateBtn.className = 'filewatch-diff-hunk-btn filewatch-diff-hunk-btn-locate'
+          locateBtn.textContent = '⊙'
+          locateBtn.title = btnLabels.locate
+          locateBtn.addEventListener('click', () => {
+            locateHunk(h.id)
+          })
           // → 按钮(从左复制到右)
           const rightBtn = document.createElement('button')
           rightBtn.type = 'button'
@@ -350,18 +391,21 @@ export function showFileWatchDiffDialog(
           leftBtn.addEventListener('click', () => {
             applyHunkRightToLeft(h.id)
           })
-          // 大文件降级模式禁用 hunk 复制按钮(避免内容重复拼接;copyHunkToXxx 在 fallback 下不安全)
+          // 大文件降级模式禁用所有按钮(避免内容重复拼接;copyHunkToXxx 在 fallback 下不安全)
+          // 定位按钮在降级模式下也禁用(无法定位到具体差异)
           if (isLargeFileFallback) {
-            const fallbackTip = '大文件模式不支持分 hunk 复制'
+            const fallbackTip = '大文件模式不支持分 hunk 操作'
+            locateBtn.disabled = true
+            locateBtn.title = fallbackTip
             rightBtn.disabled = true
             rightBtn.title = fallbackTip
             leftBtn.disabled = true
             leftBtn.title = fallbackTip
           }
+          block.appendChild(locateBtn)
           block.appendChild(leftBtn)
           block.appendChild(rightBtn)
           frag.appendChild(block)
-          accumRows += h.rows.length
         }
       }
       gutterPane.appendChild(frag)
@@ -377,10 +421,11 @@ export function showFileWatchDiffDialog(
       counter.textContent = `${idx}/${total}`
     }
 
-    function rebuildAfterEdit(opts?: { preserveCurrent?: boolean }): void {
-      // 在右侧 textarea 被编辑 / 复制后,重算 diff
+    function rebuildAfterEdit(opts?: { preserveCurrent?: boolean; ignoreWhitespace?: boolean }): void {
+      // 在右侧 textarea 被编辑 / 复制 / 切 ignoreWhitespace 后,重算 diff
+      const ig = opts?.ignoreWhitespace ?? ignoreWhitespace
       rightText = rightTextarea.value
-      view = buildHunks(leftText, rightText)
+      view = buildHunks(leftText, rightText, { ignoreWhitespace: ig })
       if (!opts?.preserveCurrent || currentHunk >= view.hunks.length) {
         currentHunk = view.hunks.length > 0 ? Math.min(Math.max(currentHunk, 0), view.hunks.length - 1) : -1
       }
@@ -420,12 +465,45 @@ export function showFileWatchDiffDialog(
       // 重新定位到下一处(若有)
       jumpTo(1)
     }
+    /**
+     * 定位(改进 3):跳到指定 hunk — 同步滚动到该 hunk 的左栏行 + 设右 textarea caret 到对应行。
+     * 同步滚动会自动联动 gutter / 右 textarea(同一 scroll 比例)。
+     */
+    function locateHunk(hunkId: number): void {
+      const h = view.hunks.find((x) => x.id === hunkId)
+      if (!h) return
+      currentHunk = hunkId
+      // 1) 左 pane 滚到该 hunk 对应行(用 data-hunk-id 找,加 active 样式)
+      const targetRow = leftPane.querySelector(
+        `.filewatch-diff-line[data-hunk-id="${hunkId}"]`,
+      ) as HTMLElement | null
+      if (targetRow) {
+        try { targetRow.scrollIntoView({ block: 'center', behavior: 'smooth' }) } catch {}
+      }
+      // 2) 右 textarea caret 设到该 hunk 在右侧的对应行(由 rightRangeOf 推 line offset)
+      const rr = rightRangeOf(h)
+      if (rr) {
+        const rightLines = rightText.split('\n')
+        let caretOffset = 0
+        for (let i = 0; i < rr.start - 1 && i < rightLines.length; i++) {
+          caretOffset += rightLines[i].length + 1  // +1 for '\n'
+        }
+        try {
+          rightTextarea.focus({ preventScroll: true })
+          rightTextarea.setSelectionRange(caretOffset, caretOffset)
+        } catch {}
+      }
+      // 3) 重新渲染高亮(加 active class)
+      renderLeftPane()
+      renderGutter()
+      renderCounter()
+    }
     function applyHunkRightToLeft(hunkId: number): void {
       const h = view.hunks.find((x) => x.id === hunkId)
       if (!h) return
       leftText = copyHunkToLeft(h, leftText)
-      // 左侧文本变了 → 重算 view(用最新 leftText + 当前 rightText)
-      view = buildHunks(leftText, rightText)
+      // 左侧文本变了 → 重算 view(用最新 leftText + 当前 rightText,沿用 ignoreWhitespace 偏好)
+      view = buildHunks(leftText, rightText, { ignoreWhitespace })
       if (currentHunk >= view.hunks.length) currentHunk = view.hunks.length - 1
       renderLeftPane()
       renderGutter()
@@ -524,9 +602,13 @@ export function showFileWatchDiffDialog(
     renderLeftPane()
     renderGutter()
     renderCounter()
+    // 改进 1:不跳文件头也不跳文件尾,默认定位到第一处 hunk
+    if (view.hunks.length > 0) {
+      locateHunk(0)
+    }
     // 默认焦点在右侧 textarea(鼓励用户直接编辑),失败时回退到 cancelBtn 防误触
     setTimeout(() => {
-      try { rightTextarea.focus() } catch { try { cancelBtn.focus() } catch {} }
+      try { rightTextarea.focus({ preventScroll: true }) } catch { try { cancelBtn.focus() } catch {} }
     }, 50)
   })
 }
@@ -574,6 +656,24 @@ const filewatchDiffStyles = `
   font-size: 12px;
   opacity: 0.7;
   color: var(--fg);
+}
+.filewatch-diff-options {
+  display: flex;
+  gap: 16px;
+  padding: 6px 0 0 0;
+  font-size: 12px;
+}
+.filewatch-diff-option-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--fg);
+}
+.filewatch-diff-option-label input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
 }
 .filewatch-diff-body {
   flex: 1;
@@ -702,6 +802,17 @@ const filewatchDiffStyles = `
   background: #2563eb;
   color: white;
   border-color: #2563eb;
+}
+.filewatch-diff-hunk-btn-locate {
+  /* 定位按钮:用对比色与复制按钮区分 */
+  font-weight: 700;
+  min-width: 28px;
+  padding: 2px 6px;
+}
+.filewatch-diff-hunk-btn-locate:hover {
+  background: #059669;
+  color: white;
+  border-color: #059669;
 }
 .filewatch-diff-hunk-spacer {
   flex: 1;

@@ -64,9 +64,16 @@ function splitLines(value: string): string[] {
  * @param external 左侧 / 外部(磁盘)文本
  * @param local 右侧 / 本地(可编辑)文本
  */
-export function buildHunks(external: string, local: string): MergeView {
+/** buildHunks 可选参数 */
+export type BuildHunksOptions = {
+  /** true = 忽略空格 / 制表符 / 行尾空白差异(仅比较有效字符) */
+  ignoreWhitespace?: boolean
+}
+
+export function buildHunks(external: string, local: string, options: BuildHunksOptions = {}): MergeView {
   const leftText = String(external ?? '')
   const rightText = String(local ?? '')
+  const ignoreWhitespace = options.ignoreWhitespace === true
 
   // 大文件降级:不做行级 diff,直接返回一个 change 整体 hunk
   const leftLines = leftText.split('\n')
@@ -89,7 +96,7 @@ export function buildHunks(external: string, local: string): MergeView {
 
   const changes = diffLines(leftText, rightText, {
     newlineIsToken: false,
-    ignoreWhitespace: false,
+    ignoreWhitespace,
   })
 
   // 把 jsdiff 段流转换为线性 DiffRow 流,行号严格按 equal/del/change 推左,equal/add/change 推右

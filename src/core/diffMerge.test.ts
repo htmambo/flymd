@@ -207,6 +207,43 @@ describe('buildHunks: 大文件降级', () => {
 })
 
 // ============================================================
+// buildHunks — ignoreWhitespace 选项
+// ============================================================
+
+describe('buildHunks: ignoreWhitespace 选项', () => {
+  it('默认(不传 options)→ ignoreWhitespace = false,空白差异仍被识别', () => {
+    // 左右仅差几个空格 — 默认应识别为 change
+    const left = 'a\n  b\nc'
+    const right = 'a\nb\nc'
+    const view = buildHunks(left, right)
+    expect(view.hunks.length).toBeGreaterThan(0)
+  })
+
+  it('ignoreWhitespace = true → 仅空白差异不再产生 hunk', () => {
+    const left = 'a\n  b\nc'
+    const right = 'a\nb\nc'
+    const view = buildHunks(left, right, { ignoreWhitespace: true })
+    // 忽略空白后,两边实际内容相同 → 无 hunk
+    expect(view.hunks).toHaveLength(0)
+  })
+
+  it('ignoreWhitespace = true 但有非空白差异 → 仍产生 hunk', () => {
+    const left = 'a\n  b\nc'
+    const right = 'a\nX\nc'  // 不仅空白不同,字符也变
+    const view = buildHunks(left, right, { ignoreWhitespace: true })
+    expect(view.hunks).toHaveLength(1)
+    expect(view.hunks[0].rows[0].kind).toBe('change')
+  })
+
+  it('options.ignoreWhitespace = false 显式传入 → 与默认一致', () => {
+    const left = 'a\n  b\nc'
+    const right = 'a\nb\nc'
+    const view = buildHunks(left, right, { ignoreWhitespace: false })
+    expect(view.hunks.length).toBeGreaterThan(0)
+  })
+})
+
+// ============================================================
 // hunkToRightText / hunkToLeftText
 // ============================================================
 
