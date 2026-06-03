@@ -249,7 +249,7 @@ function leftRangeOf(hunk: Hunk): LineRange | null {
   return { start, endExclusive: end }
 }
 
-function rightRangeOf(hunk: Hunk): LineRange | null {
+export function rightRangeOf(hunk: Hunk): LineRange | null {
   let start = Infinity
   let end = 0
   for (const r of hunk.rows) {

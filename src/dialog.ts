@@ -4,7 +4,7 @@
  */
 
 import { t } from './i18n'
-import { buildHunks, copyHunkToRight, copyHunkToLeft, nextHunkId, countHunks } from './core/diffMerge'
+import { buildHunks, copyHunkToRight, copyHunkToLeft, nextHunkId, countHunks, rightRangeOf } from './core/diffMerge'
 import { logDebug } from './core/logger'
 
 // ============================================================
@@ -317,13 +317,22 @@ export function showFileWatchDiffDialog(
         empty.style.fontSize = '12px'
         frag.appendChild(empty)
       } else {
+        // 行高:用 12px/1.5 字体(与 .filewatch-diff-pane 一致);通过首行实测 + fallback
+        const sampleRow = leftPane.querySelector('.filewatch-diff-line') as HTMLElement | null
+        const lineHeight = sampleRow ? Math.max(1, sampleRow.getBoundingClientRect().height) : 18
+        // 计算每个 hunk 在左 pane 中的累计行数(按 hunk.rows.length 累加,各 hunk 之间是 equal 行)
+        // 这里简化为:对每个 hunk 来说,它的行数 = hunk.rows.length
+        // 顶部偏移 = 之前所有 hunk 的行数之和 × lineHeight + 顶部 padding(4px) + 行内 padding
+        const topPad = 4  // .filewatch-diff-pane padding: 4px 0
+        let accumRows = 0
         for (const h of view.hunks) {
           const block = document.createElement('div')
           block.className = 'filewatch-diff-hunk-block' + (h.id === currentHunk ? ' active' : '')
           block.dataset.hunkId = String(h.id)
-          const label = document.createElement('div')
-          label.className = 'filewatch-diff-hunk-label'
-          label.textContent = `#${h.id + 1}`
+          // 绝对定位:精确对齐 hunk 起始行在 leftPane 中的位置
+          block.style.top = `${topPad + accumRows * lineHeight}px`
+          block.style.height = `${h.rows.length * lineHeight}px`
+          // → 按钮(从左复制到右)
           const rightBtn = document.createElement('button')
           rightBtn.type = 'button'
           rightBtn.className = 'filewatch-diff-hunk-btn'
@@ -332,6 +341,7 @@ export function showFileWatchDiffDialog(
           rightBtn.addEventListener('click', () => {
             applyHunkLeftToRight(h.id)
           })
+          // ← 按钮(从右复制到左)
           const leftBtn = document.createElement('button')
           leftBtn.type = 'button'
           leftBtn.className = 'filewatch-diff-hunk-btn'
@@ -348,10 +358,10 @@ export function showFileWatchDiffDialog(
             leftBtn.disabled = true
             leftBtn.title = fallbackTip
           }
-          block.appendChild(label)
-          block.appendChild(rightBtn)
           block.appendChild(leftBtn)
+          block.appendChild(rightBtn)
           frag.appendChild(block)
+          accumRows += h.rows.length
         }
       }
       gutterPane.appendChild(frag)
@@ -384,7 +394,27 @@ export function showFileWatchDiffDialog(
       const h = view.hunks.find((x) => x.id === hunkId)
       if (!h) return
       const newRight = copyHunkToRight(h, rightText)
+      // 关键:ta.value = newRight 会把 selection/cursor/scroll 跳到末尾 → save/restore
+      // 1) 先按"被改的 hunk 在右侧的 rightLine 起点"估算目标光标位置
+      const rr = rightRangeOf(h)
+      const beforeStart = rightTextarea.selectionStart
+      const beforeEnd = rightTextarea.selectionEnd
+      const beforeScroll = rightTextarea.scrollTop
+      // 累计 hunk 第一个右侧行(rr.start)之前的所有 rightLines 行长度 + 换行
+      const rightLinesOld = rightText.split('\n')
+      let caretOffset = 0
+      if (rr) {
+        for (let i = 0; i < rr.start - 1 && i < rightLinesOld.length; i++) {
+          caretOffset += rightLinesOld[i].length + 1  // +1 for '\n'
+        }
+      }
       rightTextarea.value = newRight
+      // 恢复 selection:clamp 到新文本范围
+      const newLen = newRight.length
+      const newStart = Math.min(caretOffset || beforeStart, newLen)
+      const newEnd = Math.min(caretOffset || beforeEnd, newLen)
+      try { rightTextarea.selectionStart = newStart; rightTextarea.selectionEnd = newEnd } catch {}
+      try { rightTextarea.scrollTop = beforeScroll } catch {}
       currentHunk = hunkId
       rebuildAfterEdit({ preserveCurrent: true })
       // 重新定位到下一处(若有)
@@ -466,6 +496,30 @@ export function showFileWatchDiffDialog(
     document.addEventListener('keydown', handleKeyDown)
     rightTextarea.addEventListener('input', onTextareaInput)
 
+    // ---- 同步滚动(左 pane / gutter pane / 右 textarea 三者按比例联动) ----
+    let isSyncingScroll = false
+    const syncTargets: [HTMLElement, HTMLElement, HTMLElement] = [leftPane, gutterPane, rightTextarea]
+    function syncScrollFrom(src: HTMLElement): void {
+      if (isSyncingScroll) return
+      const maxSrc = src.scrollHeight - src.clientHeight
+      if (maxSrc <= 0) return
+      const ratio = Math.min(1, Math.max(0, src.scrollTop / maxSrc))
+      isSyncingScroll = true
+      try {
+        for (const t of syncTargets) {
+          if (t === src) continue
+          const maxT = t.scrollHeight - t.clientHeight
+          if (maxT > 0) t.scrollTop = Math.round(ratio * maxT)
+        }
+      } finally {
+        // 用 setTimeout(0) 跳出当前 scroll 事件循环后再放锁,避免三向回环
+        setTimeout(() => { isSyncingScroll = false }, 0)
+      }
+    }
+    leftPane.addEventListener('scroll', () => syncScrollFrom(leftPane), { passive: true })
+    gutterPane.addEventListener('scroll', () => syncScrollFrom(gutterPane), { passive: true })
+    rightTextarea.addEventListener('scroll', () => syncScrollFrom(rightTextarea), { passive: true })
+
     // 首次渲染 + 默认焦点
     renderLeftPane()
     renderGutter()
@@ -525,7 +579,7 @@ const filewatchDiffStyles = `
   flex: 1;
   overflow: hidden;
   display: grid;
-  grid-template-columns: 1fr 90px 1fr;
+  grid-template-columns: 1fr 120px 1fr;
   gap: 1px;
   background: var(--border);
   min-height: 320px;
@@ -602,20 +656,27 @@ const filewatchDiffStyles = `
   overflow: auto;
 }
 .filewatch-diff-gutter {
-  display: flex;
-  flex-direction: column;
+  /* 作为 hunk 按钮的 absolute 定位容器;高度与左 pane 内容同步 */
+  position: relative;
   padding: 4px 2px;
-  gap: 6px;
   background: rgba(127, 127, 127, 0.04);
+  min-height: 100%;
 }
 .filewatch-diff-hunk-block {
+  /* absolute 定位:top/height 由 JS 按 hunk 行数算,精确对齐左 pane 对应行 */
+  position: absolute;
+  left: 4px;
+  right: 4px;
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-  padding: 4px 4px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 4px;
   border: 1px solid transparent;
   border-radius: 4px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .filewatch-diff-hunk-block.active {
   border-color: #2563eb;
