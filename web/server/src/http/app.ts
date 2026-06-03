@@ -14,6 +14,7 @@ import { SettingsService } from "../services/settings.js";
 import { authPlugin } from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes, registerSettingsUserRoutes } from "./routes/settings.js";
+import { registerAiAdminRoutes } from "./routes/ai-admin.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerLegacyMockRoutes } from "./routes/legacy-mock.js";
 
@@ -74,6 +75,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(registerAdminRoutes);
   await app.register(registerSettingsUserRoutes);
   await app.register(registerLegacyMockRoutes);
+  await app.register(registerAiAdminRoutes);
 
   // 静态资源 + Vite dev middleware
   if (env.enableVite && env.nodeEnv === "development") {

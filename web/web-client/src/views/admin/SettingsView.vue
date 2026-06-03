@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useAuthStore } from "@/stores/auth";
 import { api, ApiError } from "@/services/api";
-import type { PublicUser, Setting, SettingCategory } from "@/types/api";
+import type { AIProviderConfig, PublicUser, Setting, SettingCategory } from "@/types/api";
 
 const auth = useAuthStore();
 const token = computed(() => auth.token || "");
@@ -30,6 +30,93 @@ const categoryLabels: Record<SettingCategory, { title: string; icon: string; des
 };
 
 const filtered = computed(() => settings.value.filter((s) => s.category === activeCategory.value));
+const showOnlyAi = computed(() => activeCategory.value === 'ai');
+
+// AI Providers(独立管理)
+const aiProviders = ref<AIProviderConfig[]>([]);
+const newAiProviderId = ref('');
+const newAiProviderProtocol = ref<'openai' | 'anthropic' | 'ollama' | 'generic-openai'>('generic-openai');
+const newAiProviderName = ref('');
+const newAiProviderBaseUrl = ref('');
+const newAiProviderApiKey = ref('');
+const newAiProviderModel = ref('');
+const newAiProviderEnabled = ref(true);
+const aiTestResult = ref<{ id: string; ok: boolean; reply?: string; error?: string } | null>(null);
+const aiPriority = ref<string[]>([]);
+const newAiProviderError = ref<string | null>(null);
+const savingAiProvider = ref(false);
+
+async function loadAiProviders() {
+  if (!token.value) return
+  try {
+    aiProviders.value = await api.adminAiProviders(token.value)
+    aiPriority.value = await api.adminGetAiPriority(token.value)
+  } catch (e) { /* 静默 */ }
+}
+
+async function saveAiProvider() {
+  if (!newAiProviderId.value.trim()) {
+    newAiProviderError.value = 'ID 不能为空(字母数字 _)'
+    return
+  }
+  savingAiProvider.value = true
+  newAiProviderError.value = null
+  try {
+    const id = newAiProviderId.value.trim()
+    const body: any = {
+      protocol: newAiProviderProtocol.value,
+      name: newAiProviderName.value || id,
+      enabled: newAiProviderEnabled.value,
+    }
+    if (newAiProviderBaseUrl.value) body.baseUrl = newAiProviderBaseUrl.value
+    if (newAiProviderApiKey.value) body.apiKey = newAiProviderApiKey.value
+    if (newAiProviderModel.value) body.defaultModel = newAiProviderModel.value
+    await api.adminUpsertAiProvider(token.value, id, body)
+    newAiProviderId.value = ''
+    newAiProviderName.value = ''
+    newAiProviderBaseUrl.value = ''
+    newAiProviderApiKey.value = ''
+    newAiProviderModel.value = ''
+    newAiProviderEnabled.value = true
+    newAiProviderProtocol.value = 'generic-openai'
+    await loadAiProviders()
+  } catch (e: any) {
+    newAiProviderError.value = e?.message || '保存失败'
+  } finally {
+    savingAiProvider.value = false
+  }
+}
+
+async function deleteAiProvider(id: string) {
+  if (!confirm('确认删除 provider "' + id + '" ?')) return
+  try {
+    await api.adminDeleteAiProvider(token.value, id)
+    await loadAiProviders()
+  } catch (e) { /* 静默 */ }
+}
+
+async function testAiProvider(id: string) {
+  aiTestResult.value = null
+  try {
+    const r = await api.adminTestAiProvider(token.value, id)
+    aiTestResult.value = { id, ok: r.ok, reply: r.reply, error: r.error }
+  } catch (e: any) {
+    aiTestResult.value = { id, ok: false, error: e?.message || '测试失败' }
+  }
+}
+
+async function movePriority(id: string, dir: -1 | 1) {
+  const i = aiPriority.value.indexOf(id)
+  if (i < 0) return
+  const j = i + dir
+  if (j < 0 || j >= aiPriority.value.length) return
+  const arr: string[] = [...aiPriority.value]
+  const tmp = arr[i] as string; arr[i] = arr[j] as string; arr[j] = tmp
+  aiPriority.value = arr
+  try {
+    await api.adminSetAiPriority(token.value, arr)
+  } catch (e) { /* 静默 */ }
+}
 const isAdmin = computed(() => auth.isAdmin);
 
 async function loadAll() {
@@ -151,7 +238,7 @@ async function toggleUserStatus(u: PublicUser) {
   }
 }
 
-onMounted(loadAll)
+onMounted(() => { loadAll(); loadAiProviders() })
 </script>
 
 <template>
@@ -187,6 +274,96 @@ onMounted(loadAll)
         <span class="tab-count">{{ settings.filter((s) => s.category === key).length }}</span>
       </button>
     </div>
+
+    <section v-if="showOnlyAi && isAdmin" class="ai-providers-section content-section hover-card hover-card-glow">
+      <div class="section-header">
+        <h2>AI Providers</h2>
+        <p class="muted">配置 OpenAI / Anthropic / Ollama / 任意 OpenAI 兼容端点。客户端按模型名自动路由。</p>
+      </div>
+
+      <div v-if="aiProviders.length === 0" class="empty muted">
+        还没有 AI provider,使用下方表单添加。
+      </div>
+
+      <div v-else class="ai-providers-list">
+        <div v-for="(p, i) in aiProviders" :key="(p as AIProviderConfig).id" class="ai-provider-card hover-card hover-card-glow">
+          <div class="ai-provider-row">
+            <div class="ai-provider-info">
+              <div class="ai-provider-name">
+                <span class="badge protocol-{{ (p as AIProviderConfig).protocol }}">{{ (p as AIProviderConfig).protocol }}</span>
+                <strong>{{ p.name }}</strong>
+                <code class="muted small">{{ (p as AIProviderConfig).id }}</code>
+                <span v-if="i === 0 && aiPriority.includes((p as AIProviderConfig).id)" class="badge primary">默认</span>
+                <span v-else-if="!p.enabled" class="badge danger">已禁用</span>
+              </div>
+              <div class="ai-provider-detail muted small">
+                <span v-if="p.baseUrl">URL: {{ p.baseUrl }}</span>
+                <span v-if="p.defaultModel">模型: {{ p.defaultModel }}</span>
+                <span>Key: <code>{{ p.apiKey || '(未设)' }}</code></span>
+              </div>
+              <div v-if="aiTestResult?.id === (p as AIProviderConfig).id" :class="['ai-test-result', aiTestResult.ok ? 'ok' : 'fail']">
+                <span v-if="aiTestResult.ok">✅ {{ aiTestResult.reply }}</span>
+                <span v-else>❌ {{ aiTestResult.error }}</span>
+              </div>
+            </div>
+            <div class="ai-provider-actions">
+              <button v-if="isAdmin" class="btn-ghost" @click="movePriority((p as AIProviderConfig).id, -1)" :disabled="aiPriority.indexOf((p as AIProviderConfig).id) <= 0" title="上移">↑</button>
+              <button v-if="isAdmin" class="btn-ghost" @click="movePriority((p as AIProviderConfig).id, 1)" :disabled="aiPriority.indexOf((p as AIProviderConfig).id) === aiPriority.length - 1 || aiPriority.indexOf((p as AIProviderConfig).id) < 0" title="下移">↓</button>
+              <button v-if="isAdmin" class="btn-ghost" @click="testAiProvider((p as AIProviderConfig).id)">测试</button>
+              <button v-if="isAdmin" class="btn-ghost danger" @click="deleteAiProvider((p as AIProviderConfig).id)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="isAdmin" class="ai-provider-form card hover-card hover-card-glow">
+        <h3 class="form-title">+ 新增 / 编辑 Provider</h3>
+        <div class="form-grid">
+          <div>
+            <label>ID *</label>
+            <input v-model="newAiProviderId" placeholder="openai-main / anthropic-backup / oneapi-internal" />
+          </div>
+          <div>
+            <label>显示名</label>
+            <input v-model="newAiProviderName" placeholder="主 OpenAI" />
+          </div>
+          <div>
+            <label>协议 *</label>
+            <select v-model="newAiProviderProtocol">
+              <option value="openai">OpenAI 原生(api.openai.com)</option>
+              <option value="anthropic">Anthropic(api.anthropic.com)</option>
+              <option value="ollama">Ollama 本地(localhost:11434)</option>
+              <option value="generic-openai">通用 OpenAI 兼容(自填 baseUrl)</option>
+            </select>
+          </div>
+          <div>
+            <label>Base URL</label>
+            <input v-model="newAiProviderBaseUrl" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div>
+            <label>API Token / Key</label>
+            <input v-model="newAiProviderApiKey" type="password" placeholder="sk-..." />
+          </div>
+          <div>
+            <label>默认模型</label>
+            <input v-model="newAiProviderModel" placeholder="gpt-4o-mini / claude-3-5-haiku" />
+          </div>
+          <div class="checkbox-row">
+            <label class="checkbox-label">
+              <input v-model="newAiProviderEnabled" type="checkbox" />
+              启用
+            </label>
+          </div>
+        </div>
+        <div v-if="newAiProviderError" class="error">{{ newAiProviderError }}</div>
+        <button class="btn btn-primary" :disabled="savingAiProvider" @click="saveAiProvider">
+          {{ savingAiProvider ? "保存中…" : "保存 Provider" }}
+        </button>
+        <p class="muted small form-hint">
+          ID 是设置表 key 的一部分(ai.providers.&lt;id&gt;.*),用同一 ID 保存会覆盖,改名 = 删旧建新。priority 数组在保存后会自动追加。
+        </p>
+      </div>
+    </section>
 
     <section class="content-section hover-card hover-card-glow">
       <div class="section-header">

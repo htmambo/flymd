@@ -3,6 +3,8 @@
  */
 import type {
   AdminOverview,
+  AIProviderConfig,
+  AIProtocol,
   ApiResponse,
   AuthPayload,
   PublicUser,
@@ -169,6 +171,50 @@ export const api = {
     return request<Setting>(
       `/api/v1/admin/settings/${encodeURIComponent(key)}${qs ? "?" + qs : ""}`,
       { token },
+    );
+  },
+
+  // === AI Provider 管理 ===
+  adminAiProviders(token: string) {
+    return request<AIProviderConfig[]>("/api/v1/admin/ai/providers", { token });
+  },
+  adminUpsertAiProvider(
+    token: string,
+    id: string,
+    body: {
+      protocol: AIProtocol;
+      name?: string;
+      apiKey?: string;
+      baseUrl?: string;
+      defaultModel?: string;
+      enabled?: boolean;
+    },
+  ) {
+    return request<AIProviderConfig>(`/api/v1/admin/ai/providers/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      token,
+      body: jsonBody(body),
+    });
+  },
+  adminDeleteAiProvider(token: string, id: string) {
+    return request<{ success: boolean }>(
+      `/api/v1/admin/ai/providers/${encodeURIComponent(id)}`,
+      { method: "DELETE", token },
+    );
+  },
+  adminTestAiProvider(token: string, id: string) {
+    return request<{ ok: boolean; reply?: string; error?: string }>(
+      `/api/v1/admin/ai/providers/${encodeURIComponent(id)}/test`,
+      { method: "POST", token },
+    );
+  },
+  adminGetAiPriority(token: string) {
+    return request<string[]>("/api/v1/admin/ai/priority", { token });
+  },
+  adminSetAiPriority(token: string, priority: string[]) {
+    return request<{ success: boolean; priority: string[] }>(
+      "/api/v1/admin/ai/priority",
+      { method: "PUT", token, body: jsonBody({ priority }) },
     );
   },
 };

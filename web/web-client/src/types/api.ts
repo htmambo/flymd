@@ -45,10 +45,10 @@ export type SettingGroup = {
   items: Setting[];
 };
 
-export type AIProvider = "openai" | "anthropic" | "google" | "ollama" | "custom";
+export type AIProviderName = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 export type AIConfigValue = {
-  provider: AIProvider;
+  provider: AIProviderName;
   baseUrl?: string;
   apiKey?: string;
   defaultModel?: string;
@@ -71,4 +71,17 @@ export type ApiResponse<T> = {
 
 export type ApiErrorBody = {
   error: { message: string };
+};
+
+export type AIProtocol = "openai" | "anthropic" | "ollama" | "generic-openai";
+
+export type AIProviderConfig = {
+  id: string;
+  name: string;
+  protocol: AIProtocol;
+  apiKey: string;       // 已是脱敏的(末 4 位)
+  apiKeySet: boolean;
+  baseUrl?: string;
+  defaultModel?: string;
+  enabled: boolean;
 };

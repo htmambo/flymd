@@ -10,8 +10,14 @@
  *  D. AI 小说引擎(/xiaoshuo/*)
  *  E. PDF 服务(/pdf/*)
  */
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { sendError, sendOk } from "../../utils/http.js";
+import {
+  routeChat, routeChatStream, routeCompletion, routeEmbedding,
+  loadProviderConfigs,
+} from "../../services/ai/router.js";
+import { mockChat, mockChatStream, mockCompletion, mockEmbedding } from "../../services/ai/mock.js";
+import type { RouterContext, ChatRequest, ProviderConfig } from "../../services/ai/types.js";
 
 // ============================================================
 // 1×1 透明 PNG + 占位 ICO
@@ -354,66 +360,110 @@ function registerAsrRoutes(app: FastifyInstance) {
 // C. AI 代理(OpenAI 兼容)
 // ============================================================
 
+// ---- helper: 提取到模块顶层,xiaoshuo 路由也复用 ----
+function buildCtx(mock: boolean): RouterContext {
+  return { userId: null, requestId: "ai_" + Math.random().toString(36).slice(2, 10), mock };
+}
+function getConfigs(app: any): ProviderConfig[] {
+  try { return loadProviderConfigs(app.settingsService.list({ unmask: true })) } catch { return [] }
+}
+function sendErr(reply: FastifyReply, status: number, type: string, message: string) {
+  reply.code(status).send({ error: { type, message } });
+}
+// OpenAI SSE 流式响应 → Fastify reply.raw
+function streamOpenAI(reply: any, iter: AsyncIterable<any>) {
+  reply.raw.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+  (async () => {
+    try {
+      for await (const chunk of iter) {
+        reply.raw.write("data: " + JSON.stringify(chunk) + "\n\n");
+      }
+      reply.raw.write("data: [DONE]\n\n");
+      reply.raw.end();
+    } catch (e: any) {
+      try {
+        reply.raw.write("data: " + JSON.stringify({ error: { type: e?.type || "internal", message: e?.message || String(e) } }) + "\n\n");
+        reply.raw.end();
+      } catch {}
+    }
+  })();
+  return reply;
+}
+
 function registerAiRoutes(app: FastifyInstance) {
+  // ---- /ai/ai_proxy.php(legacy 分发)----
   app.post("/ai/ai_proxy.php", async (request, reply) => {
     const body = (request.body || {}) as Record<string, unknown>;
     if (Array.isArray(body.messages)) {
-      return streamChatCompletion(reply, body);
+      // 当作 chat
+      const req = body as any;
+      if (req.stream === true) {
+        const iter = await routeChatStream(req, getConfigs(app), buildCtx(false));
+        return streamOpenAI(reply, iter);
+      }
+      const resp = await routeChat(req, getConfigs(app), buildCtx(false));
+      return sendOk(reply, 200, resp);
     }
-    return sendOk(reply, 200, {
-      id: "cmpl-" + Math.random().toString(36).slice(2, 10),
-      object: "text_completion",
-      created: Math.floor(Date.now() / 1000),
-      model: (body.model as string) || "flymd-mock-1",
-      choices: [{ text: "[mock] " + String(body.prompt || ""), index: 0, finish_reason: "stop" }],
-    });
+    // 当作 completion
+    const resp = await routeCompletion({ model: String(body.model || "flymd-mock-1"), prompt: String(body.prompt || "") } as any, getConfigs(app), buildCtx(false));
+    return sendOk(reply, 200, resp);
   });
 
+  // ---- /v1/chat/completions(OpenAI 兼容)----
   app.post("/ai/ai_proxy.php/v1/chat/completions", async (request, reply) => {
-    const body = (request.body || {}) as Record<string, unknown>;
-    if (body.stream === true) return streamChatCompletion(reply, body);
-    const messages = (body.messages as Array<{ role: string; content: string }>) || [];
-    const last = [...messages].reverse().find((m) => m?.role === "user");
-    return sendOk(reply, 200, {
-      id: "chatcmpl-" + Math.random().toString(36).slice(2, 10),
-      object: "chat.completion",
-      created: Math.floor(Date.now() / 1000),
-      model: (body.model as string) || "flymd-mock-1",
-      choices: [
-        {
-          index: 0,
-          message: { role: "assistant", content: `[mock] 收到:"${last?.content?.slice(0, 200) || ""}"` },
-          finish_reason: "stop",
-        },
-      ],
-    });
+    const req = (request.body || {}) as any;
+    if (!req.model || !Array.isArray(req.messages)) {
+      return sendErr(reply, 400, "bad_request", "缺少 model 或 messages 字段");
+    }
+    try {
+      if (req.stream === true) {
+        const iter = await routeChatStream(req, getConfigs(app), buildCtx(false));
+        return streamOpenAI(reply, iter);
+      }
+      const resp = await routeChat(req, getConfigs(app), buildCtx(false));
+      return sendOk(reply, 200, resp);
+    } catch (e: any) {
+      const status = e?.status || 500;
+      const type = e?.type || "internal";
+      return sendErr(reply, status, type, e?.message || String(e));
+    }
   });
 
+  // ---- /v1/completions(legacy text completion)----
   app.post("/ai/ai_proxy.php/v1/completions", async (request, reply) => {
-    const body = (request.body || {}) as Record<string, unknown>;
-    return sendOk(reply, 200, {
-      id: "cmpl-" + Math.random().toString(36).slice(2, 10),
-      object: "text_completion",
-      created: Math.floor(Date.now() / 1000),
-      model: (body.model as string) || "flymd-mock-1",
-      choices: [{ text: "[mock completion] " + String(body.prompt || ""), index: 0, finish_reason: "stop" }],
-    });
+    const req = (request.body || {}) as any;
+    if (!req.model || req.prompt === undefined) {
+      return sendErr(reply, 400, "bad_request", "缺少 model 或 prompt 字段");
+    }
+    try {
+      const resp = await routeCompletion(req, getConfigs(app), buildCtx(false));
+      return sendOk(reply, 200, resp);
+    } catch (e: any) {
+      return sendErr(reply, e?.status || 500, e?.type || "internal", e?.message || String(e));
+    }
   });
 
+  // ---- /v1/embeddings ----
   app.post("/ai/ai_proxy.php/v1/embeddings", async (request, reply) => {
-    const body = (request.body || {}) as Record<string, unknown>;
-    const input = Array.isArray(body.input) ? body.input : [String(body.input || "")];
-    return sendOk(reply, 200, {
-      object: "list",
-      data: input.map((_, i) => ({
-        object: "embedding",
-        embedding: Array.from({ length: 8 }, (_, j) => Math.sin((i + 1) * (j + 1) * 0.13)),
-        index: i,
-      })),
-      model: (body.model as string) || "flymd-mock-embed",
-    });
+    const req = (request.body || {}) as any;
+    if (!req.model || req.input === undefined) {
+      return sendErr(reply, 400, "bad_request", "缺少 model 或 input 字段");
+    }
+    try {
+      const resp = await routeEmbedding(req, getConfigs(app), buildCtx(false));
+      return sendOk(reply, 200, resp);
+    } catch (e: any) {
+      return sendErr(reply, e?.status || 500, e?.type || "internal", e?.message || String(e));
+    }
   });
 
+  // ---- /ai/audio_proxy.php(音频转录,mock)----
+  // TODO Iter 2: 接入 Whisper / Paraformer
   app.post("/ai/audio_proxy.php", async (_request, reply) => {
     return sendOk(reply, 200, {
       text: "[mock] 音频转录 mock 返回的固定文本。",
@@ -423,67 +473,9 @@ function registerAiRoutes(app: FastifyInstance) {
   });
 }
 
-function streamChatCompletion(reply: any, body: Record<string, unknown>) {
-  const model = (body.model as string) || "flymd-mock-1";
-  const messages = (body.messages as Array<{ role: string; content: string }>) || [];
-  const last = [...messages].reverse().find((m) => m?.role === "user");
-  const userText = last?.content || "";
-  const reply2 = `[mock] 你说:"${userText.slice(0, 100)}"。这是 mock 响应。`;
-  const id = "chatcmpl-" + Math.random().toString(36).slice(2, 10);
-  const created = Math.floor(Date.now() / 1000);
 
-  reply.raw.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "Access-Control-Allow-Origin": "*",
-  });
 
-  const chunks: string[] = [];
-  const n = 5;
-  for (let i = 0; i < n; i++) {
-    const s = Math.floor((reply2.length * i) / n);
-    const e = Math.floor((reply2.length * (i + 1)) / n);
-    chunks.push(reply2.slice(s, e));
-  }
-  let i = 0;
-  function send() {
-    if (i >= chunks.length) {
-      reply.raw.write(
-        "data: " +
-          JSON.stringify({
-            id,
-            object: "chat.completion.chunk",
-            created,
-            model,
-            choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          }) +
-          "\n\n",
-      );
-      reply.raw.write("data: [DONE]\n\n");
-      reply.raw.end();
-      return;
-    }
-    const isFirst = i === 0;
-    reply.raw.write(
-      "data: " +
-        JSON.stringify({
-          id,
-          object: "chat.completion.chunk",
-          created,
-          model,
-          choices: [
-            { index: 0, delta: isFirst ? { role: "assistant" } : {}, content: chunks[i] },
-          ],
-        }) +
-        "\n\n",
-    );
-    i++;
-    setTimeout(send, 60);
-  }
-  send();
-  return reply;
-}
+
 
 // ============================================================
 // D. AI 小说引擎(/xiaoshuo/*)
@@ -536,7 +528,10 @@ function registerXiaoshuoRoutes(app: FastifyInstance) {
 
   app.post("/xiaoshuo/ai/proxy", async (request, reply) => {
     const body = (request.body || {}) as Record<string, unknown>;
-    if (body.stream === true) return streamChatCompletion(reply, body);
+    if (body.stream === true) {
+      const iter = await routeChatStream(body as any, getConfigs(app), buildCtx(false));
+      return streamOpenAI(reply, iter);
+    }
     return sendOk(reply, 200, {
       ok: true,
       id: "chatcmpl-" + Math.random().toString(36).slice(2, 10),
