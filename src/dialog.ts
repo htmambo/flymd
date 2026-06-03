@@ -5,6 +5,109 @@
 
 import { t } from './i18n'
 
+// ============================================================
+// 文件外部更改监听 — 冲突确认模态(由 main.ts 装配 extWatcher 时调用)
+// ============================================================
+
+/** 文件监听冲突模态的返回值 */
+export type FileWatchConflictChoice = 'reload' | 'keep' | 'cancel'
+
+/** 转义 HTML 特殊字符(避免文件名注入)。在多处对话框中复用。 */
+export function escapeHtml(s: string): string {
+  return String(s || '').replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;'
+      case '<': return '&lt;'
+      case '>': return '&gt;'
+      case '"': return '&quot;'
+      case "'": return '&#39;'
+      default: return c
+    }
+  })
+}
+
+/** 取纯文件名(用于模态文案) */
+function fileWatchBasename(p: string): string {
+  const s = String(p || '').replace(/[\\/]+/g, '/')
+  const idx = s.lastIndexOf('/')
+  return idx >= 0 ? s.slice(idx + 1) : s
+}
+
+/**
+ * 模态:文件外部变更冲突(脏标签场景)
+ *
+ * 按钮顺序:取消(neutral,默认焦点) / 保留本地(primary) / 重新加载(danger)
+ * - ESC 视为取消
+ * - 遮罩点击视为取消
+ * - 焦点默认落在"取消",防误操作
+ */
+export function showFileWatchConflictDialog(filePath: string): Promise<FileWatchConflictChoice> {
+  return new Promise((resolve) => {
+    injectStyles()
+
+    const name = fileWatchBasename(filePath)
+    const title = t('filewatch.conflict.title' as any) || '文件已在外部修改'
+    const body = (t('filewatch.conflict.body' as any) || '{name} 已被其它程序修改,且当前文档存在未保存改动。请选择处理方式:')
+      .replace('{name}', name)
+    const buttons = {
+      reload: t('filewatch.conflict.btn.reload' as any) || '重新加载(放弃本地)',
+      keep: t('filewatch.conflict.btn.keep' as any) || '保留本地(下次保存覆盖)',
+      cancel: t('filewatch.conflict.btn.cancel' as any) || '取消',
+    }
+
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay'
+    const box = document.createElement('div')
+    box.className = 'custom-dialog-box'
+    const titleEl = document.createElement('div')
+    titleEl.className = 'custom-dialog-title'
+    titleEl.innerHTML = `<span class="custom-dialog-icon">⚠</span>${escapeHtml(title)}`
+    const msgEl = document.createElement('div')
+    msgEl.className = 'custom-dialog-message'
+    msgEl.textContent = body
+    const btnRow = document.createElement('div')
+    btnRow.className = 'custom-dialog-buttons'
+
+    let closed = false
+    function close(result: FileWatchConflictChoice): void {
+      if (closed) return
+      closed = true
+      document.removeEventListener('keydown', handleKeyDown)
+      try { overlay.remove() } catch { /* 已被父级清理 */ }
+      resolve(result)
+    }
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        close('cancel')
+      }
+    }
+    function makeBtn(className: string, label: string, result: FileWatchConflictChoice): HTMLButtonElement {
+      const btn = document.createElement('button')
+      btn.className = className
+      btn.textContent = label
+      btn.addEventListener('click', () => close(result))
+      return btn
+    }
+
+    const cancelBtn = makeBtn('custom-dialog-button', buttons.cancel, 'cancel')
+    btnRow.appendChild(cancelBtn)
+    btnRow.appendChild(makeBtn('custom-dialog-button primary', buttons.keep, 'keep'))
+    btnRow.appendChild(makeBtn('custom-dialog-button danger', buttons.reload, 'reload'))
+
+    box.appendChild(titleEl)
+    box.appendChild(msgEl)
+    box.appendChild(btnRow)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close('cancel') })
+    document.addEventListener('keydown', handleKeyDown)
+    setTimeout(() => cancelBtn.focus(), 50)
+  })
+}
+
+
 // 对话框返回值类型
 export type DialogResult = 'save' | 'discard' | 'cancel'
 
@@ -703,4 +806,170 @@ export function showUploadMissingRemoteDialog(
     }
     document.addEventListener('keydown', handleKeyDown)
   })
+}
+
+// ============================================================
+// 文件监听 — 偏好设置模态
+// ============================================================
+
+export type FileWatchPrefs = {
+  enabled: boolean
+  autoReloadClean: boolean
+  debugLog: boolean
+}
+
+/** 仅本模态用到的局部样式(不影响其他对话框) */
+const fileWatchPrefsStyles = `
+.fwprefs-list { display: grid; gap: 14px; margin: 4px 0 22px 0; }
+.fwprefs-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; }
+.fwprefs-label { color: var(--fg); font-size: 14px; font-weight: 600; cursor: pointer; }
+.fwprefs-hint  { color: var(--fg); font-size: 12px; line-height: 1.5; opacity: 0.7; margin-top: 3px; }
+`
+function injectFileWatchPrefsStyles(): void {
+  injectStyles()
+  const styleId = 'file-watch-prefs-dialog-styles'
+  if (document.getElementById(styleId)) return
+  const style = document.createElement('style')
+  style.id = styleId
+  style.textContent = fileWatchPrefsStyles
+  document.head.appendChild(style)
+}
+
+/**
+ * 文件监听设置模态(3 开关:总开关 / 干净自动重载 / 调试日志)
+ *
+ * 行为:
+ * - 返回 `null`:用户取消(ESC / 点关闭 / 点遮罩)
+ * - 返回 `FileWatchPrefs`:用户点击保存
+ * - 默认焦点在"关闭"按钮(防误操作)
+ */
+export function showFileWatchPrefsDialog(initial: FileWatchPrefs): Promise<FileWatchPrefs | null> {
+  return new Promise((resolve) => {
+    injectFileWatchPrefsStyles()
+
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay'
+    const box = document.createElement('div')
+    box.className = 'custom-dialog-box'
+
+    // 标题 + 简介
+    const titleEl = document.createElement('div')
+    titleEl.className = 'custom-dialog-title'
+    titleEl.textContent = t('filewatch.prefs.title' as any) || '文件监听设置'
+    const msgEl = document.createElement('div')
+    msgEl.className = 'custom-dialog-message'
+    msgEl.textContent = t('filewatch.prefs.message' as any)
+      || '配置外部文件修改后的提示、重载与调试行为。'
+
+    // 三行 switch
+    const list = document.createElement('div')
+    list.className = 'fwprefs-list'
+    const enabledEl = makeSwitchRow(list, {
+      id: 'fwprefs-enabled',
+      label: t('filewatch.prefs.enabled' as any) || '启用外部修改监听',
+      hint: t('filewatch.prefs.enabled.hint' as any) || '关闭后,外部修改不会触发任何提示或自动重载',
+    })
+    const autoReloadEl = makeSwitchRow(list, {
+      id: 'fwprefs-autoReloadClean',
+      label: t('filewatch.prefs.autoReloadClean' as any) || '干净标签自动重载',
+      hint: t('filewatch.prefs.autoReloadClean.hint' as any)
+        || '当前标签未修改时,自动用磁盘内容覆盖;脏标签仍会弹模态',
+    })
+    const debugEl = makeSwitchRow(list, {
+      id: 'fwprefs-debugLog',
+      label: t('filewatch.prefs.debugLog' as any) || '调试日志',
+      hint: t('filewatch.prefs.debugLog.hint' as any)
+        || '在控制台输出 watcher / integration 的详细日志',
+    })
+
+    enabledEl.checked = !!initial.enabled
+    autoReloadEl.checked = !!initial.autoReloadClean
+    debugEl.checked = !!initial.debugLog
+
+    // 按钮:关闭(neutral,默认焦点)在左,保存(primary)在右
+    const btnRow = document.createElement('div')
+    btnRow.className = 'custom-dialog-buttons'
+    const closeBtn = document.createElement('button')
+    closeBtn.type = 'button'
+    closeBtn.className = 'custom-dialog-button'
+    closeBtn.textContent = t('filewatch.prefs.btn.close' as any) || '关闭'
+    const saveBtn = document.createElement('button')
+    saveBtn.type = 'button'
+    saveBtn.className = 'custom-dialog-button primary'
+    saveBtn.textContent = t('filewatch.prefs.btn.save' as any) || '保存'
+    btnRow.appendChild(closeBtn)
+    btnRow.appendChild(saveBtn)
+
+    box.appendChild(titleEl)
+    box.appendChild(msgEl)
+    box.appendChild(list)
+    box.appendChild(btnRow)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+
+    let closed = false
+    function closeDialog(result: FileWatchPrefs | null): void {
+      if (closed) return
+      closed = true
+      document.removeEventListener('keydown', handleKeyDown)
+      try { overlay.remove() } catch { /* 已被清理 */ }
+      resolve(result)
+    }
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeDialog(null)
+      }
+    }
+    function handleSave(): void {
+      closeDialog({
+        enabled: enabledEl.checked,
+        autoReloadClean: autoReloadEl.checked,
+        debugLog: debugEl.checked,
+      })
+    }
+    saveBtn.addEventListener('click', handleSave)
+    closeBtn.addEventListener('click', () => closeDialog(null))
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(null) })
+    document.addEventListener('keydown', handleKeyDown)
+    setTimeout(() => closeBtn.focus(), 50)
+  })
+}
+
+/** 内部工具:构造一行(label + hint 在左,switch 在右),返回 checkbox 元素 */
+function makeSwitchRow(
+  container: HTMLElement,
+  opts: { id: string; label: string; hint: string },
+): HTMLInputElement {
+  const row = document.createElement('div')
+  row.className = 'fwprefs-row'
+
+  const left = document.createElement('div')
+  const label = document.createElement('label')
+  label.className = 'fwprefs-label'
+  label.htmlFor = opts.id
+  label.textContent = opts.label
+  const hint = document.createElement('div')
+  hint.className = 'fwprefs-hint'
+  hint.textContent = opts.hint
+  left.appendChild(label)
+  left.appendChild(hint)
+
+  const switchLabel = document.createElement('label')
+  switchLabel.className = 'switch'
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.id = opts.id
+  const trk = document.createElement('span')
+  trk.className = 'trk'
+  const kn = document.createElement('span')
+  kn.className = 'kn'
+  switchLabel.appendChild(input)
+  switchLabel.appendChild(trk)
+  switchLabel.appendChild(kn)
+
+  row.appendChild(left)
+  row.appendChild(switchLabel)
+  container.appendChild(row)
+  return input
 }

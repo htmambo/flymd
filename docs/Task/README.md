@@ -57,4 +57,6 @@ docs/Task/
 
 - ✅ [2026-06-02-open-file-external-change-watch.md](Archive/2026-06/2026-06-02-open-file-external-change-watch.md) — 打开文件外部更改监听（一期 MVP,完成 2026-06-03,⚠️ 未经 codex 复核）
   - **PR-1 ✅**（核心模块 + 主流程集成,1.1–1.12 子任务全部完成）
-  - **PR-2 ⏸ 暂缓**（模态 UI + 偏好面板 + 文档,本期可作为后续 PR）
+  - **PR-1.1 ✅**（codex review 修 7 个 P0/P1 阻断 bug,commit 371997b）
+  - **PR-2 ✅**（模态抽离 + 偏好面板 3 开关 + 中英双文档）
+  - 详见 [2026-06-04-external-watch-pr1-fixes.md](Archive/2026-06/2026-06-04-external-watch-pr1-fixes.md) / [2026-06-04-external-watch-pr2.md](Archive/2026-06/2026-06-04-external-watch-pr2.md)

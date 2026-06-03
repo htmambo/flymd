@@ -13,8 +13,10 @@ import { dispatchPathDeleted } from './pathEvents'
 import { logDebug, logWarn } from './logger'
 import { t } from '../i18n'
 import type { OpenFileWatcher, WatchToken } from './openFileWatcher'
+import type { FileWatchConflictChoice } from '../dialog'
 
-export type ConflictChoice = 'reload' | 'keep' | 'cancel'
+/** 对话框返回值(由 dialog.ts 装配);此处 re-export 以便 main.ts 仍可从本模块 import */
+export type ConflictChoice = FileWatchConflictChoice
 export type RevalidateResult = 'unchanged' | 'changed' | 'missing'
 
 export interface OpenFileWatcherIntegrationDeps {
@@ -66,13 +68,6 @@ export interface OpenFileWatcherIntegration {
   setEnabled(on: boolean): void
   /** 卸载 */
   dispose(): void
-}
-
-/** 工具:从路径取纯文件名(用于模态文案) */
-function basenameOf(p: string): string {
-  const s = String(p || '').replace(/[\\/]+/g, '/')
-  const idx = s.lastIndexOf('/')
-  return idx >= 0 ? s.slice(idx + 1) : s
 }
 
 export function attachExternalChangeWatcher(
@@ -280,21 +275,3 @@ export function attachExternalChangeWatcher(
   }
 }
 
-/** 暴露给模态的简单工具:转义后的文件名字符串 */
-export function conflictModalMessage(filePath: string, opts?: { keptLabel?: string }): {
-  title: string
-  body: string
-  buttons: { reload: string; keep: string; cancel: string }
-} {
-  const name = basenameOf(filePath)
-  return {
-    title: t('filewatch.conflict.title' as any) || '文件已在外部修改',
-    body: (t('filewatch.conflict.body' as any) || '{name} 已被其它程序修改,且当前文档存在未保存改动。请选择处理方式:')
-      .replace('{name}', name),
-    buttons: {
-      reload: t('filewatch.conflict.btn.reload' as any) || '重新加载(放弃本地)',
-      keep: opts?.keptLabel || t('filewatch.conflict.btn.keep' as any) || '保留本地(下次保存覆盖)',
-      cancel: t('filewatch.conflict.btn.cancel' as any) || '取消',
-    },
-  }
-}

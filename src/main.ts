@@ -22,9 +22,9 @@ import { setWysiwygPreload } from './wysiwyg/v2/silentTransition'
 // Tauri 插件（v2）
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
-import { showThreeButtonDialog } from './dialog'
+import { showThreeButtonDialog, showFileWatchConflictDialog, showFileWatchPrefsDialog, type FileWatchPrefs } from './dialog'
 import { createOpenFileWatcher } from './core/openFileWatcher'
-import { attachExternalChangeWatcher, conflictModalMessage, type ConflictChoice } from './core/openFileWatcherIntegration'
+import { attachExternalChangeWatcher, type ConflictChoice } from './core/openFileWatcherIntegration'
 import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 import { open as openFileHandle, BaseDirectory } from '@tauri-apps/plugin-fs'
@@ -8223,6 +8223,11 @@ function showFileMenu() {
       accel: '',
       action: () => { void togglePortableModeFromMenu() },
     })
+    items.push({
+      label: t('menu.filewatchPrefs') || '文件监听设置…',
+      accel: '',
+      action: () => { void openFileWatchPrefsDialog() },
+    })
     showTopMenu(anchor, items)
   })()
 }
@@ -11514,6 +11519,55 @@ try {
 let extWatcherInstance: ReturnType<typeof createOpenFileWatcher> | null = null
 let extWatcherIntegration: ReturnType<typeof attachExternalChangeWatcher> | null = null
 
+/** 文件监听偏好(从 store 读,带默认值兜底) */
+const DEFAULT_FILE_WATCH_PREFS: FileWatchPrefs = {
+  enabled: true,
+  autoReloadClean: true,
+  debugLog: false,
+}
+
+/** 同步读取(每次 handleExternalChange 入口会调) */
+function getFileWatchPrefs(): FileWatchPrefs {
+  if (!store) return { ...DEFAULT_FILE_WATCH_PREFS }
+  try {
+    const raw = store.get('externalFileWatch' as any) as Partial<FileWatchPrefs> | undefined
+    return {
+      enabled: raw?.enabled ?? DEFAULT_FILE_WATCH_PREFS.enabled,
+      autoReloadClean: raw?.autoReloadClean ?? DEFAULT_FILE_WATCH_PREFS.autoReloadClean,
+      debugLog: raw?.debugLog ?? DEFAULT_FILE_WATCH_PREFS.debugLog,
+    }
+  } catch {
+    return { ...DEFAULT_FILE_WATCH_PREFS }
+  }
+}
+
+/** 写回 store(用于偏好模态保存) */
+async function setFileWatchPrefs(p: FileWatchPrefs): Promise<void> {
+  if (!store) return
+  try {
+    await store.set('externalFileWatch' as any, p)
+    await store.save()
+  } catch (e) {
+    console.error('[fileWatchPrefs] save failed', e)
+  }
+}
+
+/**
+ * 打开偏好模态:用户保存后写回 store,若总开关翻转则同步刷新 watcher 句柄。
+ */
+async function openFileWatchPrefsDialog(): Promise<void> {
+  const before = getFileWatchPrefs()
+  const result = await showFileWatchPrefsDialog(before)
+  if (!result) return
+  await setFileWatchPrefs(result)
+  // 总开关变化:立即让 watcher 释放/重建句柄(#7 PR-1.1 已支持)
+  if (result.enabled !== before.enabled && extWatcherIntegration) {
+    extWatcherIntegration.setEnabled(result.enabled)
+  }
+  // 把"打开偏好"事件暴露出去,便于诊断/测试
+  try { window.dispatchEvent(new CustomEvent('flymd-filewatch-prefs-updated', { detail: result })) } catch {}
+}
+
 /**
  * 从磁盘重新载入当前文件到 editor,保留光标/滚动位置。
  * 用于外部变更自动重载与冲突弹窗后的"重新加载"。
@@ -11604,68 +11658,18 @@ async function reloadCurrentFileFromDisk(): Promise<void> {
   try { window.dispatchEvent(new CustomEvent('flymd-file-reloaded')) } catch {}
 }
 
-/**
- * 模态:文件外部变更冲突 — 复用 dialog.ts 的样式 .custom-dialog-*
- * 按钮顺序:取消 / 保留本地(主) / 重新加载(危险)
- */
-function showFileWatchConflictDialog(filePath: string): Promise<ConflictChoice> {
-  return new Promise((resolve) => {
-    const { title, body, buttons } = conflictModalMessage(filePath)
-    const overlay = document.createElement('div')
-    overlay.className = 'custom-dialog-overlay'
-    const box = document.createElement('div')
-    box.className = 'custom-dialog-box'
-    const titleEl = document.createElement('div')
-    titleEl.className = 'custom-dialog-title'
-    titleEl.innerHTML = `<span class="custom-dialog-icon">⚠</span>${escapeHtml(title)}`
-    const msgEl = document.createElement('div')
-    msgEl.className = 'custom-dialog-message'
-    msgEl.textContent = body
-    const btnRow = document.createElement('div')
-    btnRow.className = 'custom-dialog-buttons'
-    function close(result: ConflictChoice) {
-      try { if (overlay.parentNode) document.body.removeChild(overlay) } catch {}
-      resolve(result)
-    }
-    const cancelBtn = document.createElement('button')
-    cancelBtn.className = 'custom-dialog-button'
-    cancelBtn.textContent = buttons.cancel
-    cancelBtn.addEventListener('click', () => close('cancel'))
-    const keepBtn = document.createElement('button')
-    keepBtn.className = 'custom-dialog-button primary'
-    keepBtn.textContent = buttons.keep
-    keepBtn.addEventListener('click', () => close('keep'))
-    const reloadBtn = document.createElement('button')
-    reloadBtn.className = 'custom-dialog-button danger'
-    reloadBtn.textContent = buttons.reload
-    reloadBtn.addEventListener('click', () => close('reload'))
-    btnRow.appendChild(cancelBtn)
-    btnRow.appendChild(keepBtn)
-    btnRow.appendChild(reloadBtn)
-    box.appendChild(titleEl)
-    box.appendChild(msgEl)
-    box.appendChild(btnRow)
-    overlay.appendChild(box)
-    document.body.appendChild(overlay)
-  })
-}
-
-function escapeHtml(s: string): string {
-  return String(s || '').replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case '&': return '&amp;'
-      case '<': return '&lt;'
-      case '>': return '&gt;'
-      case '"': return '&quot;'
-      case "'": return '&#39;'
-      default: return c
-    }
-  })
-}
-
 function initExternalChangeWatcher(): void {
   if (extWatcherInstance) return
-  extWatcherInstance = createOpenFileWatcher({})
+  // logger 注入受偏好"调试日志"开关控制;warn 始终出(避免静默失败)
+  const fileWatchLogger = {
+    debug: (msg: string, details?: unknown) => {
+      try { if (getFileWatchPrefs().debugLog) logDebug(msg, details) } catch {}
+    },
+    warn: (msg: string, details?: unknown) => {
+      try { logWarn(msg, details) } catch {}
+    },
+  }
+  extWatcherInstance = createOpenFileWatcher({ logger: fileWatchLogger })
   extWatcherIntegration = attachExternalChangeWatcher({
     watcher: extWatcherInstance,
     isDirty: () => !!dirty,
@@ -11685,11 +11689,12 @@ function initExternalChangeWatcher(): void {
     notifyReloadedAfterConflict: () => {
       try { NotificationManager.show('plugin-success', t('filewatch.reloadedAfterConflict'), 2200) } catch {}
     },
-    enabled: () => true,
-    autoReloadCleanEnabled: () => true,
+    enabled: () => getFileWatchPrefs().enabled,
+    autoReloadCleanEnabled: () => getFileWatchPrefs().autoReloadClean,
   })
   // 暴露给 tabs/integration.ts 等其他模块
   try { (window as any).extWatcherIntegration = extWatcherIntegration } catch {}
+  try { (window as any).flymdOpenFileWatchPrefs = openFileWatchPrefsDialog } catch {}
 }
 
 try { initExternalChangeWatcher() } catch (e) { console.error('[extWatcher] init failed', e) }
