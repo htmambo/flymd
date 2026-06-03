@@ -1834,16 +1834,31 @@ fn main() {
         true,
         Some("CmdOrCtrl+Shift+P"),
       )?;
-      let sub = Submenu::with_id_and_items(handle, "flymd.menu", "FlyMD", true, &[&cmd])?;
+      // 文件监听设置:Windows PDF iframe / 全局加速键兜底
+      let filewatch = MenuItem::with_id(
+        handle,
+        "flymd.filewatch_prefs",
+        "文件监听设置…",
+        true,
+        Some("CmdOrCtrl+Shift+W"),
+      )?;
+      let sub = Submenu::with_id_and_items(handle, "flymd.menu", "FlyMD", true, &[&cmd, &filewatch])?;
       menu.append_items(&[&sub])?;
       Ok(menu)
     })
     .on_menu_event(|app, event| {
-      if event.id() != "flymd.command_palette" {
+      let id = event.id().as_ref();
+      if id == "flymd.command_palette" {
+        if let Some(win) = app.get_webview_window("main") {
+          let _ = win.emit("flymd://command-palette", ());
+        }
         return;
       }
-      if let Some(win) = app.get_webview_window("main") {
-        let _ = win.emit("flymd://command-palette", ());
+      if id == "flymd.filewatch_prefs" {
+        if let Some(win) = app.get_webview_window("main") {
+          let _ = win.emit("flymd://filewatch-prefs", ());
+        }
+        return;
       }
     });
 

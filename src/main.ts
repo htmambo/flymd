@@ -1599,6 +1599,7 @@ app.innerHTML = `
     <div class="ribbon-top">
       <button class="ribbon-btn" id="btn-filetree" title="${t('lib.toggle')}">${ribbonIcons.folder}</button>
       <button class="ribbon-btn" id="btn-open" title="${t('menu.file')}">${ribbonIcons.fileText}</button>
+      <button class="ribbon-btn" id="btn-filewatch" title="${t('menu.filewatchPrefs')} (Ctrl+Shift+W)">${ribbonIcons.eye}</button>
       <button class="ribbon-btn" id="btn-mode" title="${t('menu.mode')}">${ribbonIcons.layout}</button>
       <button class="ribbon-btn" id="btn-plugins" title="${t('menu.plugins')}">${ribbonIcons.menu}</button>
       <button class="ribbon-btn" id="btn-update" title="${t('menu.update')}">${ribbonIcons.refreshCw}</button>
@@ -8438,6 +8439,7 @@ function applyI18nUi() {
     // 菜单
     const map: Array<[string, string]> = [
       ['btn-open', t('menu.file')],
+      ['btn-filewatch', `${t('menu.filewatchPrefs')} (Ctrl+Shift+W)`],
       ['btn-mode', t('menu.mode')],
       ['btn-recent', t('menu.recent')],
       ['btn-uploader', t('menu.uploader')],
@@ -8852,10 +8854,12 @@ function bindEvents() {
   const btnUploader = document.getElementById('btn-uploader')
   const btnWysiwyg = document.getElementById('btn-wysiwyg')
   const btnLang = document.getElementById('btn-lang')
+  const btnFilewatch = document.getElementById('btn-filewatch')
 
   if (btnOpen) btnOpen.addEventListener('click', guard(() => showFileMenu()))
   if (btnMode) btnMode.addEventListener('click', guard(() => showModeMenu()))
   if (btnLang) btnLang.addEventListener('click', guard(() => showLangMenu()))
+  if (btnFilewatch) btnFilewatch.addEventListener('click', guard(() => { void openFileWatchPrefsDialog() }))
   if (btnSave) btnSave.addEventListener('click', guard(() => saveFile()))
   if (btnSaveas) btnSaveas.addEventListener('click', guard(() => saveAs()))
   if (btnToggle) btnToggle.addEventListener('click', guard(() => toggleMode()))
@@ -9798,6 +9802,14 @@ function bindEvents() {
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
       e.preventDefault()
       await openCommandPalette()
+      return
+    }
+    // Ctrl+Shift+W:文件监听设置(所有平台兜底;编辑器聚焦时也可开)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'w') {
+      e.preventDefault()
+      try { e.stopPropagation() } catch {}
+      try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
+      void openFileWatchPrefsDialog()
       return
     }
     // Ctrl/Cmd+P：打印（始终按阅读模式渲染）
@@ -10964,6 +10976,10 @@ function bindEvents() {
             if (isCommandPaletteOpen()) closeCommandPalette()
             else void openCommandPalette()
           } catch {}
+        })
+        // Tauri 原生菜单(CmdOrCtrl+Shift+W / Windows 例外 menubar)→ 打开文件监听设置
+        await mod.listen('flymd://filewatch-prefs', () => {
+          try { void openFileWatchPrefsDialog() } catch {}
         })
       }
     } catch {
