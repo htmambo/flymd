@@ -53,4 +53,8 @@ docs/Task/
 
 ### Archive
 
-（尚无）
+#### 2026-06
+
+- ✅ [2026-06-02-open-file-external-change-watch.md](Archive/2026-06/2026-06-02-open-file-external-change-watch.md) — 打开文件外部更改监听（一期 MVP,完成 2026-06-03,⚠️ 未经 codex 复核）
+  - **PR-1 ✅**（核心模块 + 主流程集成,1.1–1.12 子任务全部完成）
+  - **PR-2 ⏸ 暂缓**（模态 UI + 偏好面板 + 文档,本期可作为后续 PR）

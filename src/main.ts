@@ -23,6 +23,8 @@ import { setWysiwygPreload } from './wysiwyg/v2/silentTransition'
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
 import { open, save, ask } from '@tauri-apps/plugin-dialog'
 import { showThreeButtonDialog } from './dialog'
+import { createOpenFileWatcher } from './core/openFileWatcher'
+import { attachExternalChangeWatcher, conflictModalMessage, type ConflictChoice } from './core/openFileWatcherIntegration'
 import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
 import { open as openFileHandle, BaseDirectory } from '@tauri-apps/plugin-fs'
@@ -2745,6 +2747,8 @@ async function buildWysiwygV2FromTextarea(): Promise<HTMLDivElement | null> {
   currentFrontMatter = fmSplit.frontMatter
   const __mdInitBody = fmSplit.body
   await enableWysiwygV2(scrollView!, __mdInitBody, (mdNext) => {
+    // 外部重载期间(从磁盘重新拉取内容后写入)跳过此回调,避免覆盖 reload 显式设的 dirty=false
+    try { if ((window as any).__flymdExternalReloadInProgress) return } catch {}
     try {
       const bodyNext = normalizeTabIndentText(String(mdNext || ''))
       const fm = currentFrontMatter || ''
@@ -5232,6 +5236,9 @@ async function openFile2(preset?: unknown) {
     refreshTitle()
     refreshStatus()
 
+    // 注册激活标签到外部变更监听
+    try { extWatcherIntegration?.registerFor(currentFilePath) } catch (e) { console.warn('[extWatcher] registerFor failed', e) }
+
     // 若打开前处于所见模式：先退出所见，但强制落到“预览”而不是“源码”，避免用户看到一次源码闪烁
     if (wasWysiwyg) {
       try { mode = 'preview' } catch {}
@@ -5308,6 +5315,8 @@ async function saveFile() {
         throw e
       }
     }
+    // 写入完成,标记为"自写入"以避免 2s 内的 modify 事件被当作外部变更
+    try { extWatcherIntegration?.markSelfWriteCurrent() } catch (e) { console.warn('[extWatcher] markSelfWrite failed', e) }
     dirty = false
     refreshTitle()
     // 通知标签系统文件已保存
@@ -5508,6 +5517,10 @@ async function saveAs() {
         currentFilePath = target;
         dirty = false;
         refreshTitle();
+        // 切到新路径:老路径 unregister,新路径 register
+        try { extWatcherIntegration?.unregisterFor(target) } catch {}  // 防重复注册
+        try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs export) failed', e) }
+        try { extWatcherIntegration?.markSelfWriteCurrent() } catch {}
         await pushRecent(currentFilePath);
         await renderRecentPanel(false);
         logInfo('文件导出成功', { path: target, ext });
@@ -5533,6 +5546,10 @@ async function saveAs() {
     currentFilePath = target
     dirty = false
     refreshTitle()
+    // 切到新路径:老路径 unregister,新路径 register + markSelfWrite(防尾随事件)
+    try { extWatcherIntegration?.unregisterFor(target) } catch {}
+    try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
+    try { extWatcherIntegration?.markSelfWriteCurrent() } catch {}
     await pushRecent(currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件另存为成功', { path: target, size: editor.value.length })
@@ -5555,6 +5572,8 @@ async function newFile() {
     // 选择否/取消：继续新建但不保存（confirmNative 无法区分，按否处理）
   }
   editor.value = ''
+  // 旧路径解监听
+  try { if (currentFilePath) extWatcherIntegration?.unregisterFor(currentFilePath) } catch {}
   currentFilePath = null
   dirty = false
   refreshTitle()
@@ -6394,7 +6413,15 @@ try {
 try {
   if (typeof window !== 'undefined') {
     // 状态获取/设置
-    ;(window as any).flymdSetCurrentFilePath = (path: string | null) => { currentFilePath = path }
+    ;(window as any).flymdSetCurrentFilePath = (path: string | null) => {
+      const prev = currentFilePath
+      currentFilePath = path
+      // 联动外部变更监听:旧路径解监听,新路径注册
+      try {
+        if (prev && prev !== path) extWatcherIntegration?.unregisterFor(prev)
+        if (path) extWatcherIntegration?.registerFor(path)
+      } catch (e) { console.warn('[extWatcher] flymdSetCurrentFilePath hook failed', e) }
+    }
     ;(window as any).flymdSetDirty = (d: boolean) => { dirty = d; refreshTitle() }
     ;(window as any).flymdGetMode = () => mode
     ;(window as any).flymdSetMode = (m: Mode) => {
@@ -11472,3 +11499,181 @@ try {
     } catch (e) { console.error('flymdSetPluginMarketUrl 失败', e); return false }
   }
 } catch {}
+
+// ============================================================
+// 打开文件外部变更监听 — 装配
+// ============================================================
+
+let extWatcherInstance: ReturnType<typeof createOpenFileWatcher> | null = null
+let extWatcherIntegration: ReturnType<typeof attachExternalChangeWatcher> | null = null
+
+/**
+ * 从磁盘重新载入当前文件到 editor,保留光标/滚动位置。
+ * 用于外部变更自动重载与冲突弹窗后的"重新加载"。
+ *
+ * 关键时序(避免 renderPreview 被并发打断):
+ *   1) ed.value = content 同步覆盖
+ *   2) 派发 input 事件(让 wysiwyg / 撤销栈同步)
+ *   3) restore scroll/selection
+ *   4) refreshTitle/refreshStatus
+ *   5) await renderPreview()(与任意并发 render 比较 _renderPreviewSeq,最新一次必须赢)
+ */
+async function reloadCurrentFileFromDisk(): Promise<void> {
+  if (!currentFilePath) return
+  const ed = document.getElementById('editor') as HTMLTextAreaElement | null
+  if (!ed) return
+  const prevStart = ed.selectionStart
+  const prevEnd = ed.selectionEnd
+  const prevScroll = ed.scrollTop
+  const logFile = (msg: string, extra?: any) => {
+    try { logDebug(`[reloadCurrentFile] ${msg}`, { path: currentFilePath, ...(extra || {}) }) } catch {}
+  }
+  logFile('start', { mode, wysiwyg })
+
+  let content: string
+  try {
+    content = await readTextFileAnySafe(currentFilePath as any)
+  } catch (e: any) {
+    const msg = (e && (e.message || (e?.toString?.()))) ? String(e.message || e.toString()) : ''
+    const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+    if (isForbidden && typeof invoke === 'function') {
+      try {
+        content = await invoke<string>('read_text_file_any', { path: currentFilePath })
+      } catch (e2) {
+        // fallback 也失败:弹错误 toast + 详细日志后抛出
+        try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed' as any) || '重新加载失败', 3000) } catch {}
+        logFile('read fallback failed', { err: String(e2) })
+        throw e2
+      }
+    } else {
+      try { NotificationManager.show('plugin-error', t('filewatch.reloadFailed' as any) || '重新加载失败', 3000) } catch {}
+      logFile('read failed', { err: msg })
+      throw e
+    }
+  }
+  logFile('read ok', { length: content.length })
+
+  ed.value = content
+  // 不派发 input 事件。main.ts:10188 监听 input 无任何守卫直接设 dirty=true,
+  // pauseDirtySync 只能屏蔽 setupDirtySync/integration.ts:854,屏蔽不了它。
+  // preview 同步走 renderPreview,wysiwyg 同步走 scheduleWysiwygRender,均不依赖 input 事件。
+  // 恢复光标/滚动(防止被 input handler 覆盖)
+  try { ed.selectionStart = prevStart; ed.selectionEnd = prevEnd; ed.scrollTop = prevScroll } catch {}
+  dirty = false
+  try { refreshTitle() } catch (e) { logFile('refreshTitle failed', { err: String(e) }) }
+  try { refreshStatus() } catch (e) { logFile('refreshStatus failed', { err: String(e) }) }
+
+  // 通知 wysiwyg onChange 回调(2750)进入"程序性更新"模式:期间跳过设 dirty,
+  // 避免 scheduleWysiwygRender 触发的 Milkdown onChange 把我们刚设的 dirty=false 覆盖
+  try { (window as any).__flymdExternalReloadInProgress = true } catch {}
+
+  // 强制重渲染(适配 preview / edit / wysiwyg 三种模式)
+  try {
+    if (wysiwyg) {
+      // 所见模式:走 scheduleWysiwygRender(requestAnimationFrame 异步),需等一帧
+      try { scheduleWysiwygRender() } catch (e) { logFile('scheduleWysiwygRender failed', { err: String(e) }) }
+      await new Promise((r) => requestAnimationFrame(() => r(null)))
+      await new Promise((r) => requestAnimationFrame(() => r(null)))
+    } else if (mode === 'preview') {
+      // preview 模式:必须重渲染
+      try { await renderPreview() } catch (e) { logFile('renderPreview failed (preview mode)', { err: String(e) }) }
+    }
+    // edit 模式:textarea 可见,ed.value 已同步,无需重渲染
+  } catch (e) {
+    logFile('post-render error', { err: String(e) })
+  }
+  logFile('done')
+  // 解除 wysiwyg onChange 守卫(在 await 两帧后)
+  try { (window as any).__flymdExternalReloadInProgress = false } catch {}
+  try { refreshTitle() } catch {}  // 再次刷新一次,确保 dirty=false 反映到标题
+}
+
+/**
+ * 模态:文件外部变更冲突 — 复用 dialog.ts 的样式 .custom-dialog-*
+ * 按钮顺序:取消 / 保留本地(主) / 重新加载(危险)
+ */
+function showFileWatchConflictDialog(filePath: string): Promise<ConflictChoice> {
+  return new Promise((resolve) => {
+    const { title, body, buttons } = conflictModalMessage(filePath)
+    const overlay = document.createElement('div')
+    overlay.className = 'custom-dialog-overlay'
+    const box = document.createElement('div')
+    box.className = 'custom-dialog-box'
+    const titleEl = document.createElement('div')
+    titleEl.className = 'custom-dialog-title'
+    titleEl.innerHTML = `<span class="custom-dialog-icon">⚠</span>${escapeHtml(title)}`
+    const msgEl = document.createElement('div')
+    msgEl.className = 'custom-dialog-message'
+    msgEl.textContent = body
+    const btnRow = document.createElement('div')
+    btnRow.className = 'custom-dialog-buttons'
+    function close(result: ConflictChoice) {
+      try { if (overlay.parentNode) document.body.removeChild(overlay) } catch {}
+      resolve(result)
+    }
+    const cancelBtn = document.createElement('button')
+    cancelBtn.className = 'custom-dialog-button'
+    cancelBtn.textContent = buttons.cancel
+    cancelBtn.addEventListener('click', () => close('cancel'))
+    const keepBtn = document.createElement('button')
+    keepBtn.className = 'custom-dialog-button primary'
+    keepBtn.textContent = buttons.keep
+    keepBtn.addEventListener('click', () => close('keep'))
+    const reloadBtn = document.createElement('button')
+    reloadBtn.className = 'custom-dialog-button danger'
+    reloadBtn.textContent = buttons.reload
+    reloadBtn.addEventListener('click', () => close('reload'))
+    btnRow.appendChild(cancelBtn)
+    btnRow.appendChild(keepBtn)
+    btnRow.appendChild(reloadBtn)
+    box.appendChild(titleEl)
+    box.appendChild(msgEl)
+    box.appendChild(btnRow)
+    overlay.appendChild(box)
+    document.body.appendChild(overlay)
+  })
+}
+
+function escapeHtml(s: string): string {
+  return String(s || '').replace(/[&<>"']/g, (c) => {
+    switch (c) {
+      case '&': return '&amp;'
+      case '<': return '&lt;'
+      case '>': return '&gt;'
+      case '"': return '&quot;'
+      case "'": return '&#39;'
+      default: return c
+    }
+  })
+}
+
+function initExternalChangeWatcher(): void {
+  if (extWatcherInstance) return
+  extWatcherInstance = createOpenFileWatcher({})
+  extWatcherIntegration = attachExternalChangeWatcher({
+    watcher: extWatcherInstance,
+    isDirty: () => !!dirty,
+    getCurrentFilePath: () => currentFilePath,
+    isSkippablePath: (p: string) => /\.(pdf)$/i.test(String(p || '')),
+    reloadCurrentFile: () => reloadCurrentFileFromDisk(),
+    notifyAutoReloaded: () => {
+      try { NotificationManager.show('plugin-success', t('filewatch.autoReloaded'), 2200) } catch {}
+    },
+    notifyMissing: () => {
+      try { NotificationManager.show('plugin-error', t('filewatch.missing'), 3000) } catch {}
+    },
+    askConflictChoice: (p: string) => showFileWatchConflictDialog(p),
+    notifyKept: () => {
+      try { NotificationManager.show('plugin-success', t('filewatch.kept'), 1800) } catch {}
+    },
+    notifyReloadedAfterConflict: () => {
+      try { NotificationManager.show('plugin-success', t('filewatch.reloadedAfterConflict'), 2200) } catch {}
+    },
+    enabled: () => true,
+    autoReloadCleanEnabled: () => true,
+  })
+  // 暴露给 tabs/integration.ts 等其他模块
+  try { (window as any).extWatcherIntegration = extWatcherIntegration } catch {}
+}
+
+try { initExternalChangeWatcher() } catch (e) { console.error('[extWatcher] init failed', e) }

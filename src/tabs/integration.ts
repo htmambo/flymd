@@ -358,8 +358,34 @@ export async function initTabSystem(): Promise<void> {
       }
       // 标签切换后同步库侧栏选中态（否则高亮会停留在旧文档）
       syncFileTreeSelectionToActiveTab()
+      // 外部变更监听联动:旧标签解监听,新激活标签注册 + 切回时 stat 复检
+      try {
+        const tabs = tabManager.getTabs()
+        const activeId = tabManager.getActiveTabId?.() ?? (tabs.find((t: any) => t.id === (event as any).toTabId)?.id)
+        const active = tabs.find((t: any) => t.id === activeId) || null
+        const newPath = active?.filePath || null
+        // 1) 旧路径解监听(若有)
+        for (const t of tabs) {
+          if (t.id !== activeId && t.filePath) {
+            try { (window as any).extWatcherIntegration?.unregisterFor?.(t.filePath) } catch {}
+          }
+        }
+        // 2) 新激活路径注册 + 切回时 stat 复检
+        if (newPath) {
+          try { (window as any).extWatcherIntegration?.registerFor?.(newPath) } catch {}
+          // 切回时主动 revalidate(命中差异/缺失走冲突策略)
+          void (window as any).extWatcherIntegration?.revalidateCurrent?.()
+        }
+      } catch (e) { console.warn('[extWatcher] tab-switched hook failed', e) }
     } else if (event.type === 'tab-closed') {
       undoManager.removeTab(event.tabId)
+      // 关闭标签时解除该标签对应文件的监听
+      try {
+        const closed = tabManager.getTabs().find((t: any) => t.id === (event as any).tabId)
+        if (closed?.filePath) {
+          (window as any).extWatcherIntegration?.unregisterFor?.(closed.filePath)
+        }
+      } catch {}
     }
   })
 
@@ -374,6 +400,8 @@ export async function initTabSystem(): Promise<void> {
   ;(window as any).flymdCountDirtyTabs = countDirtyTabs
   ;(window as any).flymdSaveAllDirtyTabs = saveAllDirtyTabs
   ;(window as any).flymdSaveTabSession = saveTabSession
+  // 暴露给 main.ts:reloadCurrentFileFromDisk 复用此机制屏蔽 dirty 同步
+  ;(window as any).flymdPauseDirtySync = pauseDirtySyncFor
 
   // 监听编辑器变化，同步 dirty 状态
   setupDirtySync()
