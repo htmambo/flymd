@@ -11,7 +11,7 @@
  * 策略层(自动重载/弹模态/转草稿)在 openFileWatcherIntegration 中实现。
  */
 
-import { stat as fsStat } from '@tauri-apps/plugin-fs'
+import { stat as fsStat, readFile as fsReadFile } from '@tauri-apps/plugin-fs'
 import { logDebug, logWarn } from './logger'
 import { watchPathsAbs } from '../extensions/libraryWatch'
 
@@ -48,6 +48,10 @@ export interface OpenFileWatcherDeps {
   watchPathsAbs?: typeof watchPathsAbs
   /** 注入 stat;默认走 @tauri-apps/plugin-fs 的 stat */
   stat?: (p: string) => Promise<FileSnapshot | null>
+  /** 注入 readFile;默认走 @tauri-apps/plugin-fs 的 readFile(用于小文件 SHA-1) */
+  readFile?: (p: string) => Promise<Uint8Array>
+  /** 注入 crypto;默认 globalThis.crypto.subtle(用于 SHA-1) */
+  crypto?: { subtle: { digest(alg: string, buf: ArrayBuffer | Uint8Array): Promise<ArrayBuffer> } }
   /** 注入 now;默认 () => Date.now() */
   now?: () => number
   /** 注入 logger;默认 ./logger 的 logDebug/logWarn */
@@ -93,6 +97,8 @@ type Entry = {
   inFlight: boolean
   /** 异步 watch 句柄 race 防护:unregister/dispose 时设 true,resolve 后检查 */
   cancelled: boolean
+  /** SHA-1 计算并发去重:同一 entry 同一时刻只算一个 hash */
+  hashInFlight: boolean
 }
 
 function defaultNow(): number {
@@ -139,8 +145,13 @@ function snapshotEqual(a: FileSnapshot | null, b: FileSnapshot | null): boolean 
   if (a == null || b == null) return false
   if (a.mtimeMs !== b.mtimeMs) return false
   if (a.size !== b.size) return false
-  // contentHashOpt 可选;双 null / 双等 都视为相同
-  if ((a.contentHashOpt || null) !== (b.contentHashOpt || null)) return false
+  // contentHashOpt 可选:任一侧缺失时按 mtime+size 判定(降级零影响)
+  //   - 双 null / 双 undefined:都视为缺失,按上一步已通过
+  //   - 一侧有、一侧无:hash 算失败或并发去重路径;不视为不同
+  //   - 双有且不等:hash 真变,视为不同
+  const aH = a.contentHashOpt || null
+  const bH = b.contentHashOpt || null
+  if (aH && bH) return aH === bH
   return true
 }
 
@@ -160,6 +171,8 @@ function parentDirOf(filePath: string): string {
 export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileWatcher {
   const watchImpl = deps.watchPathsAbs ?? watchPathsAbs
   const statImpl = deps.stat ?? defaultStat()
+  const readImpl = deps.readFile ?? ((p: string) => fsReadFile(p as any) as Promise<Uint8Array>)
+  const cryptoImpl = deps.crypto ?? (globalThis as any).crypto
   const now = deps.now ?? defaultNow
   const logger = deps.logger ?? defaultLogger()
   const enabledFn = deps.enabled ?? (() => true)
@@ -172,6 +185,51 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
   let enabled = true
   /** dispose 标记 */
   let disposed = false
+
+  /**
+   * 小文件 SHA-1 助手。
+   * - 已知 size > maxBytes:早返回 null(不读字节)
+   * - 失败/不支持:返回 null(降级为 mtime+size 比对)
+   * - 二进制/非文本内容也算 SHA-1(哈希对内容是同构的)
+   */
+  async function computeSha1Hex(filePath: string, knownSize: number, maxBytes: number): Promise<string | null> {
+    try {
+      if (knownSize > maxBytes) return null
+      if (!cryptoImpl?.subtle?.digest) return null
+      const bytes = await readImpl(filePath)
+      // 防御:readFile 返回的字节数可能与 stat size 略有差异
+      if (bytes.byteLength > maxBytes) return null
+      const digest = await cryptoImpl.subtle.digest('SHA-1', bytes)
+      return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+    } catch (e) {
+      logger.warn('[openFileWatcher] computeSha1Hex failed', { filePath, err: String(e) })
+      return null
+    }
+  }
+
+  /**
+   * 在已有 stat snapshot 上**尝试**追加 SHA-1。
+   * - 大于阈值:直接返回原 snapshot(无 hash 字段)
+   * - 已被取消:返回 null,调用方应保留原 snapshot
+   * - 已有 hash 计算在飞:返回原 snapshot(去 hash)
+   * - 算完后再检查 cancelled:返回 null
+   * - 算成功:返回带 hash 的 snapshot
+   * - 算失败:返回原 snapshot(去 hash) — 降级
+   */
+  async function tryFillHash(entry: Entry, snapshot: FileSnapshot | null): Promise<FileSnapshot | null> {
+    if (!snapshot) return null
+    if (snapshot.size > HASH_THRESHOLD_BYTES) return snapshot
+    if (entry.cancelled) return null
+    if (entry.hashInFlight) return snapshot
+    entry.hashInFlight = true
+    try {
+      const hash = await computeSha1Hex(entry.originalPath, snapshot.size, HASH_THRESHOLD_BYTES)
+      if (entry.cancelled) return null
+      return { mtimeMs: snapshot.mtimeMs, size: snapshot.size, contentHashOpt: hash ?? undefined }
+    } finally {
+      entry.hashInFlight = false
+    }
+  }
 
   /**
    * 启动对 entry 的 watch;幂等。
@@ -254,12 +312,17 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
       }
       if (!s1) {
         // 真删除 / 不可访问:派发 removed,snapshot 置 null
+        // 取消检查:unregister/dispose 后不应再触发旧 entry 的回调
+        if (entry.cancelled || entriesByToken.get(entry.token) !== entry) return
         if (entry.snapshot != null) {
           entry.snapshot = null
           safeInvoke(entry, 'removed', null)
         }
         return
       }
+      // 小文件附带 SHA-1 精确比对(降 false positive)
+      s1 = await tryFillHash(entry, s1)
+      if (s1 == null) return  // 已被取消
       if (!snapshotEqual(entry.snapshot, s1)) {
         entry.snapshot = s1
         safeInvoke(entry, 'modified', s1)
@@ -293,6 +356,9 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     const existed = entriesByPath.get(norm)
     if (existed) {
       logger.debug('[openFileWatcher] 同路径重复注册,清理旧 token', { filePath: fp })
+      // 关键:与 unregister 一样设 cancelled,防 startWatch / hash 计算的
+      //   await resolve 后回调到旧 entry 继续污染新 entry
+      existed.cancelled = true
       if (existed.unwatch) {
         try { existed.unwatch() } catch {}
       }
@@ -311,18 +377,23 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
       unwatch: null,
       inFlight: false,
       cancelled: false,
+      hashInFlight: false,
     }
     entriesByPath.set(norm, entry)
     entriesByToken.set(entry.token, entry)
 
     // 初始 snapshot 异步填充(失败不阻塞)
     void (async () => {
-      const s = await statImpl(fp)
-      if (entriesByToken.has(entry.token)) {
+      const s0 = await statImpl(fp)
+      // 竞态:若已被 unregister,tryFillHash 内部会观察到 cancelled
+      const s = await tryFillHash(entry, s0)
+      if (s == null) return  // cancelled 或失败,保持 snapshot=null
+      if (!entry.cancelled && entriesByToken.has(entry.token)) {
         entry.snapshot = s
         logger.debug('[openFileWatcher] 初始 snapshot 就绪', {
           filePath: fp,
-          hasSnapshot: !!s,
+          hasSnapshot: true,
+          hasHash: !!s.contentHashOpt,
         })
       }
     })()
@@ -366,12 +437,15 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     e.suppressUntil = now() + SUPPRESS_WINDOW_MS
     // 立即刷新 snapshot,不依赖 watch 事件
     void (async () => {
-      const s = await statImpl(e.originalPath)
-      if (entriesByPath.has(norm)) {
+      const s0 = await statImpl(e.originalPath)
+      const s = await tryFillHash(e, s0)
+      if (s == null) return
+      if (!e.cancelled && entriesByPath.has(norm)) {
         e.snapshot = s
         logger.debug('[openFileWatcher] markSelfWrite,刷新 snapshot', {
           filePath: e.originalPath,
-          mtimeMs: s?.mtimeMs,
+          mtimeMs: s.mtimeMs,
+          hasHash: !!s.contentHashOpt,
         })
       }
     })()
@@ -398,12 +472,15 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     const e = entriesByPath.get(norm)
     if (!e) return
     void (async () => {
-      const s = await statImpl(e.originalPath)
-      if (entriesByPath.has(norm)) {
+      const s0 = await statImpl(e.originalPath)
+      const s = await tryFillHash(e, s0)
+      if (s == null) return
+      if (!e.cancelled && entriesByPath.has(norm)) {
         e.snapshot = s
         logger.debug('[openFileWatcher] finishSelfWrite,刷新 snapshot', {
           filePath: e.originalPath,
-          mtimeMs: s?.mtimeMs,
+          mtimeMs: s.mtimeMs,
+          hasHash: !!s.contentHashOpt,
         })
       }
     })()
@@ -413,10 +490,12 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     const norm = normalizePath(String(filePath || ''))
     const e = entriesByPath.get(norm)
     if (!e) return 'unchanged'
-    const s = await statImpl(e.originalPath)
-    if (!s) return 'missing'
+    const s0 = await statImpl(e.originalPath)
+    if (!s0) return 'missing'
+    const s = await tryFillHash(e, s0)
+    if (s == null) return 'unchanged'  // 取消/失败:不更新
     if (!snapshotEqual(e.snapshot, s)) {
-      e.snapshot = s
+      if (!e.cancelled) e.snapshot = s
       return 'changed'
     }
     return 'unchanged'
