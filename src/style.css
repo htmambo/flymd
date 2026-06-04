@@ -2393,35 +2393,48 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }
-/* 关闭态文件夹:按 data-depth 用对应彩虹色。
-   打开态同色 + filter:brightness(1.25) 提亮,与关闭态拉开差距。
+/* 关闭态文件夹:path 直接吃 var(--lib-depth-N) 走 stroke。
+   WebKitGTK 不解析 SVG element 的 color → path currentColor 链,
+   故跳过 currentColor 直接在 path 上写 stroke。
    hover/selected 走 --fg(更高优先级)。 */
-.lib-node[data-depth="0"] .lib-ico-folder { color: var(--lib-depth-0); }
-.lib-node[data-depth="1"] .lib-ico-folder { color: var(--lib-depth-1); }
-.lib-node[data-depth="2"] .lib-ico-folder { color: var(--lib-depth-2); }
-.lib-node[data-depth="3"] .lib-ico-folder { color: var(--lib-depth-3); }
-.lib-node[data-depth="4"] .lib-ico-folder { color: var(--lib-depth-4); }
-.lib-node[data-depth="5"] .lib-ico-folder { color: var(--lib-depth-5); }
-.lib-node[data-depth="6"] .lib-ico-folder { color: var(--lib-depth-6); }
-.lib-node[data-depth="7"] .lib-ico-folder { color: var(--lib-depth-7); }
-.lib-node[data-depth="8"] .lib-ico-folder { color: var(--lib-depth-8); }
-.lib-node[data-depth="9"] .lib-ico-folder { color: var(--lib-depth-9); }
-.lib-node[data-depth="10"] .lib-ico-folder { color: var(--lib-depth-10); }
-.lib-node[data-depth="11"] .lib-ico-folder { color: var(--lib-depth-11); }
+.lib-node[data-depth="0"] .lib-ico-folder path { stroke: var(--lib-depth-0); }
+.lib-node[data-depth="1"] .lib-ico-folder path { stroke: var(--lib-depth-1); }
+.lib-node[data-depth="2"] .lib-ico-folder path { stroke: var(--lib-depth-2); }
+.lib-node[data-depth="3"] .lib-ico-folder path { stroke: var(--lib-depth-3); }
+.lib-node[data-depth="4"] .lib-ico-folder path { stroke: var(--lib-depth-4); }
+.lib-node[data-depth="5"] .lib-ico-folder path { stroke: var(--lib-depth-5); }
+.lib-node[data-depth="6"] .lib-ico-folder path { stroke: var(--lib-depth-6); }
+.lib-node[data-depth="7"] .lib-ico-folder path { stroke: var(--lib-depth-7); }
+.lib-node[data-depth="8"] .lib-ico-folder path { stroke: var(--lib-depth-8); }
+.lib-node[data-depth="9"] .lib-ico-folder path { stroke: var(--lib-depth-9); }
+.lib-node[data-depth="10"] .lib-ico-folder path { stroke: var(--lib-depth-10); }
+.lib-node[data-depth="11"] .lib-ico-folder path { stroke: var(--lib-depth-11); }
 
-/* 打开态:同 depth 颜色 + filter 提亮 */
-.lib-node[data-depth="0"] .lib-ico-folder-open { color: var(--lib-depth-0); filter: brightness(1.25); }
-.lib-node[data-depth="1"] .lib-ico-folder-open { color: var(--lib-depth-1); filter: brightness(1.25); }
-.lib-node[data-depth="2"] .lib-ico-folder-open { color: var(--lib-depth-2); filter: brightness(1.25); }
-.lib-node[data-depth="3"] .lib-ico-folder-open { color: var(--lib-depth-3); filter: brightness(1.25); }
-.lib-node[data-depth="4"] .lib-ico-folder-open { color: var(--lib-depth-4); filter: brightness(1.25); }
-.lib-node[data-depth="5"] .lib-ico-folder-open { color: var(--lib-depth-5); filter: brightness(1.25); }
-.lib-node[data-depth="6"] .lib-ico-folder-open { color: var(--lib-depth-6); filter: brightness(1.25); }
-.lib-node[data-depth="7"] .lib-ico-folder-open { color: var(--lib-depth-7); filter: brightness(1.25); }
-.lib-node[data-depth="8"] .lib-ico-folder-open { color: var(--lib-depth-8); filter: brightness(1.25); }
-.lib-node[data-depth="9"] .lib-ico-folder-open { color: var(--lib-depth-9); filter: brightness(1.25); }
-.lib-node[data-depth="10"] .lib-ico-folder-open { color: var(--lib-depth-10); filter: brightness(1.25); }
-.lib-node[data-depth="11"] .lib-ico-folder-open { color: var(--lib-depth-11); filter: brightness(1.25); }
+/* 打开态:同 stroke + 22% 透明 fill,SVG 提亮 */
+.lib-node[data-depth="0"] .lib-ico-folder-open path { stroke: var(--lib-depth-0); fill: var(--lib-depth-0); fill-opacity: 0.22; }
+.lib-node[data-depth="1"] .lib-ico-folder-open path { stroke: var(--lib-depth-1); fill: var(--lib-depth-1); fill-opacity: 0.22; }
+.lib-node[data-depth="2"] .lib-ico-folder-open path { stroke: var(--lib-depth-2); fill: var(--lib-depth-2); fill-opacity: 0.22; }
+.lib-node[data-depth="3"] .lib-ico-folder-open path { stroke: var(--lib-depth-3); fill: var(--lib-depth-3); fill-opacity: 0.22; }
+.lib-node[data-depth="4"] .lib-ico-folder-open path { stroke: var(--lib-depth-4); fill: var(--lib-depth-4); fill-opacity: 0.22; }
+.lib-node[data-depth="5"] .lib-ico-folder-open path { stroke: var(--lib-depth-5); fill: var(--lib-depth-5); fill-opacity: 0.22; }
+.lib-node[data-depth="6"] .lib-ico-folder-open path { stroke: var(--lib-depth-6); fill: var(--lib-depth-6); fill-opacity: 0.22; }
+.lib-node[data-depth="7"] .lib-ico-folder-open path { stroke: var(--lib-depth-7); fill: var(--lib-depth-7); fill-opacity: 0.22; }
+.lib-node[data-depth="8"] .lib-ico-folder-open path { stroke: var(--lib-depth-8); fill: var(--lib-depth-8); fill-opacity: 0.22; }
+.lib-node[data-depth="9"] .lib-ico-folder-open path { stroke: var(--lib-depth-9); fill: var(--lib-depth-9); fill-opacity: 0.22; }
+.lib-node[data-depth="10"] .lib-ico-folder-open path { stroke: var(--lib-depth-10); fill: var(--lib-depth-10); fill-opacity: 0.22; }
+.lib-node[data-depth="11"] .lib-ico-folder-open path { stroke: var(--lib-depth-11); fill: var(--lib-depth-11); fill-opacity: 0.22; }
+.lib-node[data-depth="0"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="1"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="2"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="3"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="4"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="5"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="6"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="7"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="8"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="9"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="10"] .lib-ico-folder-open { filter: brightness(1.25); }
+.lib-node[data-depth="11"] .lib-ico-folder-open { filter: brightness(1.25); }
 
 /* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
 .container.with-library-left { --gap-left-library: var(--library-width, 240px); }
