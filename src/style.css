@@ -2250,7 +2250,9 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node {
   position: relative;
 }
-/* 竖线：位于本层缩进区中部（left:8px），高度由 JS 量算到最后一个子节点中心 */
+/* 竖线：位于本层缩进区中部（left:8px），高度由 JS 量算到最后一个子节点中心。
+   alpha 按 DOM 嵌套层级递减：0 阶最深 (0.4)，4 阶及更深兜底 (0.20)，
+   营造"远处更虚"的深度感。 */
 .library .lib-children::before {
   content: '';
   position: absolute;
@@ -2258,8 +2260,13 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 0;
   height: var(--tree-line-height, 0);
   width: 1px;
-  background: rgba(127,127,127,0.4);
+  background: rgba(127,127,127, 0.4);
 }
+.library .lib-children .lib-children::before { background: rgba(127,127,127, 0.32); }
+.library .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.26); }
+.library .lib-children .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.22); }
+.library .lib-children .lib-children .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.20); }
+
 /* 横线：从竖线(本层 x=8) 连到子节点图标左缘。节点左缘 = 缩进10 + 外边距4 = 14，
    故 left:-6 回到竖线(x=8)；节点 padding-left 为 14（图标在节点内 x=14，即本层 x=28），
    width:20 = 从 x=8 一路抵达图标(8→28)，在 ┬ 两侧各留出一段 ─（├ 后较短、┬ 后较长）。 */
@@ -2270,9 +2277,14 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 13px;
   width: 20px;
   height: 1px;
-  background: rgba(127,127,127,0.4);
+  background: rgba(127,127,127, 0.4);
   z-index: 1;
 }
+.library .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.32); }
+.library .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.26); }
+.library .lib-children .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.22); }
+.library .lib-children .lib-children .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.20); }
+
 /* 展开的目录：从横线中点向下延伸一小段竖线，连到子级 rail，形成 ├─┬─ / └─┬─。
    子级 .lib-children 左缘 = 本节点缩进 10，其 rail 在 +8 = 本层 x=18；
    节点左缘在本层 x=14，故 left:4px(=18-14) 正好落在子级竖线上（与缩进/内边距无关，各级恒成立）。
@@ -2284,9 +2296,13 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 13px;
   bottom: -2px;
   width: 1px;
-  background: rgba(127,127,127,0.4);
+  background: rgba(127,127,127, 0.4);
   z-index: 1;
 }
+.library .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.32); }
+.library .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.26); }
+.library .lib-children .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.22); }
+.library .lib-children .lib-children .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.20); }
 
 /* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
 .lib-ico { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: 0 0 auto; }
@@ -2308,11 +2324,13 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }
-/* 展开状态：用强调色 + 较高填充透明度强化对比，与收起态的灰色轮廓一眼可辨；
-   hover/selected 仍保持强调色，让"展开"状态在任意行交互下都稳定可见 */
+/* 关闭态文件夹:在 --muted 基础上往背景色压 25%,让"收起"更中性低调;
+   打开态在 --accent 基础上往白色提 20%,强化"展开"焦点。
+   两者拉开 视觉差距,一眼可辨展开/收起。 */
+.library .lib-ico-folder { color: color-mix(in srgb, var(--muted), var(--bg) 25%); }
 .library .lib-ico-folder-open,
 .library .lib-node:hover .lib-ico-folder-open,
-.library .lib-node.selected .lib-ico-folder-open { color: var(--accent); }
+.library .lib-node.selected .lib-ico-folder-open { color: color-mix(in srgb, var(--accent), white 20%); }
 
 /* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
 .container.with-library-left { --gap-left-library: var(--library-width, 240px); }
