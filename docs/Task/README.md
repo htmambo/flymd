@@ -55,6 +55,13 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [LIB_COLOR_DEPTH_TOGGLE_PLAN.md](Archive/2026-06/LIB_COLOR_DEPTH_TOGGLE_PLAN.md) — 主题设置加"彩色库树"开关(完成 2026-06-04)
+  - **T1 ✅** i18n: `theme.libColorDepth` zh + en
+  - **T2 ✅** fileTree.ts: 算 scheme `(level%5)+1` 写入 `data-scheme`
+  - **T3 ✅** style.css: 6 个 scheme 变量 + 5 阶 scheme 规则(scope `body.lib-color-depth`)+ 原配色兜底
+  - **T4 ✅** theme.ts: `flymd:lib:colorDepth` localStorage + `body.lib-color-depth` class + 面板 toggle
+  - **T5 ✅** 验证:`npm run build` ✅、`npm test` 139/139 ✅
+  - 提交:`a5af81c`
 - ✅ [LIB_TREE_DEPTH_STYLING_PLAN.md](Archive/2026-06/LIB_TREE_DEPTH_STYLING_PLAN.md) — 库树样式按层级彩虹循环 + 文件夹展开态更亮(完成 2026-06-04)
   - **T1 ✅** 6 色调色板(亮/暗模式 + body.light-mode)
   - **T2 ✅** 12 阶 `[data-depth="N"]` 规则(连接线 + 文件夹图标)
