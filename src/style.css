@@ -2379,7 +2379,12 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.lib-ico-svg path { vector-effect: non-scaling-stroke; }
+.lib-ico-svg path {
+  vector-effect: non-scaling-stroke;
+  /* WebKitGTK 偶发不解析 SVG presentation attr 的 currentColor;改走 CSS 显式声明 */
+  stroke: currentColor;
+}
+.lib-ico-folder-open path { fill: currentColor; }
 .lib-ico-svg text { stroke: none; fill: currentColor; }
 .lib-ico-folder { /* 文件夹图标 */ }
 .lib-ico-file { /* 普通文件图标 */ }
