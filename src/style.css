@@ -7663,13 +7663,6 @@ body.focus-mode .library .lib-header {
   border-bottom: none !important;
 }
 
-body.focus-mode .library .lib-ico,
-body.focus-mode .library .lib-ico-folder,
-body.focus-mode .library .lib-ico-file,
-body.focus-mode .library .lib-ico-app {
-  display: none !important;
-}
-
 body.focus-mode .library .lib-tg {
   display: inline-flex !important;
   opacity: 0.4;
@@ -7687,6 +7680,11 @@ body.focus-mode .library .lib-node {
   padding: 3px 8px;
   gap: 0;
   min-height: 22px;
+}
+
+/* 专注模式下缩进变小，树线横线需同步缩短，避免与图标重叠 */
+body.focus-mode .library .lib-children > .lib-node::before {
+  width: 14px;
 }
 
 /* 文件名纯文字显示 */

@@ -32,7 +32,7 @@ export function setCompactTitlebarFlag(enabled: boolean): void {
 }
 
 // 专注模式切换：负责 body 类、自定义标题栏与窗口装饰
-export async function toggleFocusMode(enabled?: boolean): Promise<void> {
+export async function toggleFocusMode(enabled?: boolean, store?: Store | null): Promise<void> {
   focusMode = enabled !== undefined ? !!enabled : !focusMode
 
   try {
@@ -43,7 +43,7 @@ export async function toggleFocusMode(enabled?: boolean): Promise<void> {
     if (focusMode) {
       createCustomTitleBar({
         getCurrentWindow,
-        onExitFocus: () => toggleFocusMode(false),
+        onExitFocus: () => toggleFocusMode(false, store),
       })
     } else {
       removeCustomTitleBar()
@@ -57,6 +57,14 @@ export async function toggleFocusMode(enabled?: boolean): Promise<void> {
     try {
       const titlebar = document.querySelector('.titlebar') as HTMLElement | null
       if (titlebar) titlebar.classList.remove('show')
+    } catch {}
+  }
+
+  // 持久化到 Store
+  if (store) {
+    try {
+      await store.set('focusMode', focusMode)
+      await store.save()
     } catch {}
   }
 }

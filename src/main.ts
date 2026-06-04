@@ -1655,7 +1655,7 @@ try { initNetworkProxyFetchShim() } catch {}
 // 将专注模式切换函数暴露到全局，供主题面板调用
 ;(window as any).flymdToggleFocusMode = async (enabled: boolean) => {
   try {
-    await toggleFocusMode(enabled)
+    await toggleFocusMode(enabled, store)
     try { updateFocusSidebarBg() } catch {}
   } catch {}
 }
@@ -7693,7 +7693,7 @@ const stickyNoteModeDeps: StickyNoteModeDeps = {
     try { syncToggleButton() } catch {}
   },
   openFile: (filePath) => openFile2(filePath),
-  toggleFocusMode: (enable) => toggleFocusMode(enable),
+  toggleFocusMode: (enable) => toggleFocusMode(enable, store),
   showLibrary: (show, focus) => showLibrary(show, focus),
   createControls: () => createStickyNoteControls(),
   forceLightTheme: () => {
@@ -9932,7 +9932,7 @@ function bindEvents() {
       return
     }
     // 专注模式快捷键 Ctrl+Shift+F
-    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); await toggleFocusMode(); return }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); await toggleFocusMode(undefined, store); return }
     // 文件操作快捷键
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); await openFile2(); return }
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') { e.preventDefault(); await saveAs(); return }
@@ -11218,8 +11218,15 @@ function bindEvents() {
       try { await restoreWindowStateBeforeSticky() } catch {}
       // 2) 兜底：窗口过小则拉回 960x640，避免残留便签尺寸
       try { await ensureMinWindowSize() } catch {}
-      // 3) 兜底：强制退出专注模式并恢复原生标题栏，防止异常无标题栏状态
-      try { await resetFocusModeDecorations() } catch {}
+      // 3) 恢复专注模式状态（从 Store 读取；若未开启则兜底重置，防止异常无标题栏状态）
+      try {
+        const savedFocusMode = await getFocusMode(store)
+        if (savedFocusMode) {
+          await toggleFocusMode(true, store)
+        } else {
+          await resetFocusModeDecorations()
+        }
+      } catch {}
       // 4) 统一将窗口居中显示，避免位置跑偏
       try { await centerWindow() } catch {}
 
