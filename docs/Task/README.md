@@ -55,6 +55,12 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [LIB_TREE_DEPTH_STYLING_PLAN.md](Archive/2026-06/LIB_TREE_DEPTH_STYLING_PLAN.md) — 库树样式按层级彩虹循环 + 文件夹展开态更亮(完成 2026-06-04)
+  - **T1 ✅** 6 色调色板(亮/暗模式 + body.light-mode)
+  - **T2 ✅** 12 阶 `[data-depth="N"]` 规则(连接线 + 文件夹图标)
+  - **T3 ✅** buildDir 加 level 参数,row 写 data-depth
+  - **T4 ✅** 修复 WebKitGTK SVG currentColor 失效(v3 commit b1112ed)
+  - **T5 ✅** build + test 验证:`npm run build` ✅、`npm test` 139/139 ✅、Codex review APPROVED
 - ✅ [DIFF_DIALOG_FOLLOWUP_PLAN.md](Archive/2026-06/DIFF_DIALOG_FOLLOWUP_PLAN.md) — 文本对比框 3 缺陷修复(完成 2026-06-04)
   - **T1 ✅** i18n 加 `filewatch.diff.btn.applyAll` zh + en
   - **T2 ✅** `copyHunkToRight / copyHunkToLeft` 改 `hunk.rows.length === 0` 判空,修复空行丢失
