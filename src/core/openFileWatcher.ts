@@ -82,6 +82,8 @@ export interface OpenFileWatcher {
 const SUPPRESS_WINDOW_MS = 2000
 const RENAME_RETRY_DELAY_MS = 400
 const HASH_THRESHOLD_BYTES = 1024 * 1024
+/** 库外文件(plugin-fs watch 降级为 no-op)轮询兜底间隔 */
+const POLL_INTERVAL_MS = 1500
 let _tokenCounter = 0
 
 type Entry = {
@@ -99,6 +101,8 @@ type Entry = {
   cancelled: boolean
   /** SHA-1 计算并发去重:同一 entry 同一时刻只算一个 hash */
   hashInFlight: boolean
+  /** 库外文件轮询兜底:watch 失败时启动 setInterval 调 checkChange */
+  pollingTimer: ReturnType<typeof setInterval> | null
 }
 
 function defaultNow(): number {
@@ -233,7 +237,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
 
   /**
    * 启动对 entry 的 watch;幂等。
-   * 失败不抛出(浏览器/网盘降级),仅 logWarn。
+   * 失败不抛出(浏览器/网盘降级),仅 logWarn;失败时启动低频轮询兜底。
    */
   function startWatch(entry: Entry): void {
     if (disposed || entry.unwatch) return
@@ -250,6 +254,8 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
               // race 检查:若期间被取消,忽略后续事件
               if (entry.cancelled) return
               handleEvent(entry, ev)
+              // 一旦收到事件,说明 plugin-fs watch 成功 — 停掉兜底轮询
+              stopPolling(entry)
             } catch (e) {
               logger.warn('[openFileWatcher] event handler error', e)
             }
@@ -267,14 +273,31 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
         entry.unwatch = unwatch
         logger.debug('[openFileWatcher] watch started', { filePath: entry.filePath })
       } catch (e) {
-        // 浏览器/不支持环境 -> 自我降级
-        logger.warn('[openFileWatcher] watchPathsAbs failed,降级为 no-op', {
+        // 浏览器/不支持环境 -> 自我降级,并启动低频 stat 轮询兜底
+        logger.warn('[openFileWatcher] watchPathsAbs failed,降级为轮询兜底', {
           filePath: entry.filePath,
           err: String(e),
         })
         entry.unwatch = null
+        startPolling(entry)
       }
     })()
+  }
+
+  /** 启动低频 stat 轮询(库外文件 plugin-fs watch 不可用时使用) */
+  function startPolling(entry: Entry): void {
+    if (entry.pollingTimer) return
+    entry.pollingTimer = setInterval(() => {
+      // cancelled 由 unregister/dispose 设 true;checkChange 内部已读 cancelled
+      void checkChange(entry)
+    }, POLL_INTERVAL_MS)
+  }
+
+  /** 停止轮询(收到 watch 事件 / unregister / dispose / setEnabled(false) 时) */
+  function stopPolling(entry: Entry): void {
+    if (!entry.pollingTimer) return
+    clearInterval(entry.pollingTimer)
+    entry.pollingTimer = null
   }
 
   /**
@@ -303,6 +326,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
 
   async function checkChange(entry: Entry): Promise<void> {
     if (entry.inFlight) return
+    if (entry.cancelled) return
     entry.inFlight = true
     try {
       let s1 = await statImpl(entry.originalPath)
@@ -378,6 +402,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
       inFlight: false,
       cancelled: false,
       hashInFlight: false,
+      pollingTimer: null,
     }
     entriesByPath.set(norm, entry)
     entriesByToken.set(entry.token, entry)
@@ -412,6 +437,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     if (e.unwatch) {
       try { e.unwatch() } catch {}
     }
+    stopPolling(e)
     entriesByPath.delete(e.filePath)
     entriesByToken.delete(token)
     logger.debug('[openFileWatcher] unregister', { filePath: e.originalPath })
@@ -425,6 +451,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
     if (e.unwatch) {
       try { e.unwatch() } catch {}
     }
+    stopPolling(e)
     entriesByPath.delete(norm)
     entriesByToken.delete(e.token)
     logger.debug('[openFileWatcher] unregisterByPath', { filePath: e.originalPath })
@@ -514,6 +541,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
           try { e.unwatch() } catch {}
           e.unwatch = null
         }
+        stopPolling(e)
       }
     } else {
       // 重新开启:对所有已存在 entry 重新启动 watch
@@ -533,6 +561,7 @@ export function createOpenFileWatcher(deps: OpenFileWatcherDeps = {}): OpenFileW
       if (e.unwatch) {
         try { e.unwatch() } catch {}
       }
+      stopPolling(e)
     }
     entriesByPath.clear()
     entriesByToken.clear()

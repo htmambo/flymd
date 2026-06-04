@@ -67,3 +67,9 @@ docs/Task/
   - **T2 ✅** 前端 `statFileAnySafe` 两跳包装(`src/core/fsSafe.ts`)
   - **T3 ✅** `createOpenFileWatcher` 注入 `stat: statFileAnySafe`(`src/main.ts`)
   - 验证:`npm run build` ✅、`cargo check` ✅、三视角(architect/security/code-quality)全 APPROVED
+- ✅ [EXTERNAL_WATCHER_LIBFILE_EVENT_DELIVERY_PLAN.md](Archive/2026-06/EXTERNAL_WATCHER_LIBFILE_EVENT_DELIVERY_PLAN.md) — 库外文件 watch 事件轮询兜底(完成 2026-06-04)
+  - **T1 ✅** 调研:plugin-fs `fs:allow-watch` 已是 `**`,scope 不阻塞;问题在 watch 在库外路径的事件投递不可靠
+  - **T2 ✅** 决策:方案 C(轮询 fallback),0 新依赖 0 新 Rust,复用既有 `checkChange` + `statFileAnySafe`
+  - **T3 ✅** `openFileWatcher` 新增 `pollingTimer` 字段 + `startPolling/stopPolling`,失败兜底 + 收到事件即停
+  - **T4 ✅** `checkChange` 入口加 `cancelled` 早返,关闭已存在的 race
+  - 验证:`npm run build` ✅、`npm test` 137/137 ✅、三视角(architect/security/code-quality)全 APPROVED
