@@ -55,6 +55,10 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [LIB_LIBRARY_ICON_STYLING_PLAN.md](Archive/2026-06/LIB_LIBRARY_ICON_STYLING_PLAN.md) — 根行 Home 图标补 scheme 配色(完成 2026-06-04)
+  - **T1 ✅** style.css: 5 条 `.lib-ico-library` path 规则(scope `body.lib-color-depth`),沿用 `.lib-ico-folder` 模式
+  - **T2 ✅** 验证: `npm run build` ✅(18.91s) + `npm test` 139/139 ✅
+  - 提交:`b1e04d6`
 - ✅ [LIB_COLOR_DEPTH_TOGGLE_PLAN.md](Archive/2026-06/LIB_COLOR_DEPTH_TOGGLE_PLAN.md) — 主题设置加"彩色库树"开关(完成 2026-06-04)
   - **T1 ✅** i18n: `theme.libColorDepth` zh + en
   - **T2 ✅** fileTree.ts: 算 scheme `(level%5)+1` 写入 `data-scheme`

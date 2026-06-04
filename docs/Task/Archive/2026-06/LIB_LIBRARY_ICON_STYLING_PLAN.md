@@ -1,4 +1,4 @@
-**状态**: 🔄 进行中 (开始时间: 2026-06-04)
+**状态**: ✅ 已完成 (完成时间: 2026-06-04)
 **创建人**: 果农
 **范围**: src/style.css
 
@@ -16,8 +16,9 @@
 ## 子任务清单
 
 - [x] **T1** style.css: 新增 5 条 `.lib-ico-library` scheme 规则(scope `body.lib-color-depth`),与 `.lib-ico-folder` 结构对称
-- [x] **T2** 验证: `npm run build` ✅ + `npm test` ✅
+- [x] **T2** 验证: `npm run build` ✅(18.91s) + `npm test` 139/139 ✅(2 个 fail suite 是 web/server 预存模块加载问题,与本次无关)
 - [x] **T3** 归档: Active → Archive/2026-06 + 更新 README 索引
+- 提交: `b1e04d6`
 
 ## 验收标准
 
