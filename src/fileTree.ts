@@ -717,7 +717,8 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
     const row = document.createElement('div')
     row.className = 'lib-node ' + (e.isDir ? 'lib-dir' : 'lib-file')
     ;(row as any).dataset.path = e.path
-    ;(row as any).dataset.depth = String(level)  // 用于 CSS 按层级配色
+    ;(row as any).dataset.depth = String(level)  // 行布局备用
+    ;(row as any).dataset.scheme = String((level % 5) + 1)  // 配色 scheme(1-5 循环,scheme 0 = 原配色)
     const label = document.createElement('span')
     label.className = 'lib-name'
     // 文件隐藏后缀名，文件夹保持原名
@@ -732,8 +733,8 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
       row.appendChild(ico); row.appendChild(label)
       const kids = document.createElement('div')
       kids.className = 'lib-children'
-      // kids 的 data-depth = 父行 depth(rail 颜色跟随父行)
-      ;(kids as any).dataset.depth = String(level)
+      // kids 的 data-scheme 继承父行(rail 颜色跟随父行)
+      ;(kids as any).dataset.scheme = String((level % 5) + 1)
       kids.style.display = 'none'
       parent.appendChild(row)
       parent.appendChild(kids)
@@ -1226,6 +1227,7 @@ async function renderRoot(root: string) {
     topRow.className = 'lib-node lib-dir'
     ;(topRow as any).dataset.path = root
     ;(topRow as any).dataset.depth = '0'  // 根行 = depth 0
+    ;(topRow as any).dataset.scheme = '1'  // 根行 scheme 1
     const ico = makeFolderIcon(root, true); const label = document.createElement('span'); label.className='lib-name'; label.textContent = nameOf(root) || root
     // 根目录也可能被省略号截断：悬浮显示完整路径
     label.title = root
@@ -1233,7 +1235,7 @@ async function renderRoot(root: string) {
     topRow.appendChild(ico); topRow.appendChild(label)
     const kids = document.createElement('div')
     kids.className = 'lib-children'
-    ;(kids as any).dataset.depth = '0'  // 根的 children = depth 0(rail 跟根行同色)
+    ;(kids as any).dataset.scheme = '1'  // 根的 children = scheme 1(rail 跟根行同色)
     const rootExpanded = state.expanded.has(root)
     topRow.classList.toggle('expanded', rootExpanded)
     kids.style.display = rootExpanded ? '' : 'none'

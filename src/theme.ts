@@ -63,6 +63,7 @@ export interface ThemeDefinition {
 
 const STORE_KEY = 'flymd:theme:prefs'
 const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
+const LIB_COLOR_DEPTH_KEY = 'flymd:lib:colorDepth'
 
 const DEFAULT_PREFS: ThemePrefs = {
   editBg: '#ffffff',
@@ -97,6 +98,25 @@ function setSourceLineNumbersEnabled(enabled: boolean): void {
   try {
     const ev = new CustomEvent('flymd:sourceLineNumbers:changed', { detail: { enabled } })
     window.dispatchEvent(ev)
+  } catch {}
+}
+
+// 库树彩虹色开关:默认开启。开启时 body 加 lib-color-depth class,5 阶 scheme 规则生效;
+// 关闭时移除 class,5 阶 scheme 规则全不生效,沿用 --muted/--accent 原配色
+function getLibColorDepthEnabled(): boolean {
+  try {
+    return localStorage.getItem(LIB_COLOR_DEPTH_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+function setLibColorDepthEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(LIB_COLOR_DEPTH_KEY, enabled ? 'true' : 'false')
+  } catch {}
+  try {
+    document.body.classList.toggle('lib-color-depth', enabled)
   } catch {}
 }
 
@@ -527,6 +547,9 @@ export function applySavedTheme(): void {
     }
   } catch {}
 
+  // 库树彩虹色开关:启动时按存储值加 body class(默认开启)
+  setLibColorDepthEnabled(getLibColorDepthEnabled())
+
   const prefs = loadThemePrefs()
   applyThemePrefs(prefs)
 }
@@ -693,6 +716,13 @@ function createPanel(): HTMLDivElement {
           <span class="theme-toggle-text">${t('theme.compactTitlebar')}</span>
           <div class="theme-toggle-switch">
             <input type="checkbox" id="compact-titlebar-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="lib-color-depth-toggle">
+          <span class="theme-toggle-text">${t('theme.libColorDepth')}</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="lib-color-depth-toggle" class="theme-toggle-input" />
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
@@ -1573,6 +1603,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     const wysiwygHtmlTableToggle = panel.querySelector('#wysiwyg-html-table-toggle') as HTMLInputElement | null
     const pasteUrlTitleToggle = panel.querySelector('#paste-url-title-toggle') as HTMLInputElement | null
     const pasteRemoteImagesToggle = panel.querySelector('#paste-remote-images-toggle') as HTMLInputElement | null
+    const libColorDepthToggle = panel.querySelector('#lib-color-depth-toggle') as HTMLInputElement | null
 
     const WYSIWYG_DEFAULT_KEY = 'flymd:wysiwyg:default'
     const SOURCEMODE_DEFAULT_KEY = 'flymd:sourcemode:default'
@@ -1672,6 +1703,13 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       sourceLineNumbersToggle.checked = getSourceLineNumbersEnabled()
       sourceLineNumbersToggle.addEventListener('change', () => {
         setSourceLineNumbersEnabled(sourceLineNumbersToggle.checked)
+      })
+    }
+
+    if (libColorDepthToggle) {
+      libColorDepthToggle.checked = getLibColorDepthEnabled()
+      libColorDepthToggle.addEventListener('change', () => {
+        setLibColorDepthEnabled(libColorDepthToggle.checked)
       })
     }
 
