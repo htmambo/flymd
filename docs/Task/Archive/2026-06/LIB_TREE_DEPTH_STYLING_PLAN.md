@@ -83,13 +83,15 @@
 | T2 | style.css: 12 阶 `[data-depth="N"]` 规则(连接线 + 文件夹图标) | ✅ |
 | T3 | fileTree.ts: buildDir 加 level 参数,row 写 data-depth | ✅ |
 | T4 | style.css: 修复 WebKitGTK SVG currentColor 失效(.lib-ico-svg path 显式 stroke) | ✅ |
-| T5 | build + test 验证 | ✅ |
+| T5 | style.css: 直接对 path 写 stroke/fill var(),彻底绕开 currentColor 链 | ✅ |
+| T6 | build + test 验证 | ✅ |
 
 ## 修复历史
 
 - **v1(commit 2abd243)** — 用 color-mix() 实现,WebKitGTK 不支持,用户截图无视觉变化
 - **v2(commit 10205fe)** — 改用彩虹循环调色板 + 最小 JS 改动(`buildDir` 写 `data-depth` 属性),CSS 用 `[data-depth="N"]` 选择器,12 阶循环,深树仍可辨;线条(rails)生效,但文件夹图标仍是白色
-- **v3(commit b1112ed,当前)** — `.lib-ico-svg path` 显式声明 `stroke: currentColor`、`.lib-ico-folder-open path` 声明 `fill: currentColor`。根因:WebKitGTK 偶发不解析 SVG presentation attribute 上的 `currentColor`(`<path stroke="currentColor">`),把 stroke 切到 CSS author rule 解决。Codex review APPROVED
+- **v3(commit b1112ed)** — `.lib-ico-svg path` 显式声明 `stroke: currentColor`、`.lib-ico-folder-open path` 声明 `fill: currentColor`。假设:WebKitGTK 偶发不解析 SVG presentation attribute 上的 `currentColor`(`<path stroke="currentColor">`),把 stroke 切到 CSS author rule 解决。Codex review APPROVED,但用户截图证实仍无效
+- **v4(commit 7c09a46,当前)** — 彻底跳过 currentColor 链,直接对 `.lib-ico-folder path` 写 `stroke: var(--lib-depth-N)`(12 阶),对 `.lib-ico-folder-open path` 写 `stroke + fill + fill-opacity: 0.22`(12 阶),filter brightness 留在 SVG。根因:WebKitGTK 解析 SVG element 的 `color` 属性时,不向子 path 传递 `currentColor`,导致整个 color → currentColor → stroke 链断开。绕开 currentColor,直接对 path 喂 var(),在所有 WebKit 版本生效
 
 ## 验收
 

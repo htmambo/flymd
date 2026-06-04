@@ -59,8 +59,9 @@ docs/Task/
   - **T1 ✅** 6 色调色板(亮/暗模式 + body.light-mode)
   - **T2 ✅** 12 阶 `[data-depth="N"]` 规则(连接线 + 文件夹图标)
   - **T3 ✅** buildDir 加 level 参数,row 写 data-depth
-  - **T4 ✅** 修复 WebKitGTK SVG currentColor 失效(v3 commit b1112ed)
-  - **T5 ✅** build + test 验证:`npm run build` ✅、`npm test` 139/139 ✅、Codex review APPROVED
+  - **T4 ✅** 修复 WebKitGTK SVG currentColor 失效(v3 commit b1112ed — 仅切 stroke 到 CSS,但 color→currentColor 链仍断)
+  - **T5 ✅** 彻底绕开 currentColor 链,直接对 path 写 stroke/fill var()(v4 commit 7c09a46)
+  - **T6 ✅** build + test 验证:`npm run build` ✅、`npm test` 139/139 ✅
 - ✅ [DIFF_DIALOG_FOLLOWUP_PLAN.md](Archive/2026-06/DIFF_DIALOG_FOLLOWUP_PLAN.md) — 文本对比框 3 缺陷修复(完成 2026-06-04)
   - **T1 ✅** i18n 加 `filewatch.diff.btn.applyAll` zh + en
   - **T2 ✅** `copyHunkToRight / copyHunkToLeft` 改 `hunk.rows.length === 0` 判空,修复空行丢失
