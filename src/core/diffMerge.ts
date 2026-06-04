@@ -305,7 +305,8 @@ export function rightRangeOf(hunk: Hunk): LineRange | null {
 export function copyHunkToRight(hunk: Hunk, rightText: string): string {
   const rightLines = String(rightText ?? '').split('\n')
   const block = hunkToLeftText(hunk)
-  const blockLines = block.length === 0 ? [] : block.split('\n')
+  // 用 hunk.rows.length 判空:即使全空行 hunkToLeftText 返回 '' 也要产出 [''] 一个空行
+  const blockLines = hunk.rows.length === 0 ? [] : block.split('\n')
 
   const rr = rightRangeOf(hunk)
   if (rr) {
@@ -334,7 +335,8 @@ export function copyHunkToRight(hunk: Hunk, rightText: string): string {
 export function copyHunkToLeft(hunk: Hunk, leftText: string): string {
   const leftLines = String(leftText ?? '').split('\n')
   const block = hunkToRightText(hunk)
-  const blockLines = block.length === 0 ? [] : block.split('\n')
+  // 用 hunk.rows.length 判空:即使全空行 hunkToRightText 返回 '' 也要产出 [''] 一个空行
+  const blockLines = hunk.rows.length === 0 ? [] : block.split('\n')
 
   const lr = leftRangeOf(hunk)
   if (lr) {

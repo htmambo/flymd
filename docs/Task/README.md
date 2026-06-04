@@ -55,6 +55,13 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [DIFF_DIALOG_FOLLOWUP_PLAN.md](Archive/2026-06/DIFF_DIALOG_FOLLOWUP_PLAN.md) — 文本对比框 3 缺陷修复(完成 2026-06-04)
+  - **T1 ✅** i18n 加 `filewatch.diff.btn.applyAll` zh + en
+  - **T2 ✅** `copyHunkToRight / copyHunkToLeft` 改 `hunk.rows.length === 0` 判空,修复空行丢失
+  - **T3 ✅** diffMerge 2 个新增回归 case(中间空行新增 / 多空行减少)
+  - **T4 ✅** `dialog.ts` 加"全部应用到右侧"按钮 + `applyAllHunksLeftToRight`(大文件降级模式禁用)
+  - **T5 ✅** `applyHunkLeftToRight` 滚动保护:caret 行号推算 + 三 pane 同步 scrollTop
+  - 验证:`npm run build` ✅、`npm test` 139/139 ✅、三视角(architect/security/code-quality)全 APPROVED
 - ✅ [2026-06-02-open-file-external-change-watch.md](Archive/2026-06/2026-06-02-open-file-external-change-watch.md) — 打开文件外部更改监听（一期 MVP,完成 2026-06-03,⚠️ 未经 codex 复核）
   - **PR-1 ✅**（核心模块 + 主流程集成,1.1–1.12 子任务全部完成）
   - **PR-1.1 ✅**（codex review 修 7 个 P0/P1 阻断 bug,commit 371997b）

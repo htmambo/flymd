@@ -155,6 +155,7 @@ export function showFileWatchDiffDialog(
       cancel: t('filewatch.diff.btn.cancel') || '取消',
       copyToRight: t('filewatch.diff.btn.copyToRight') || '从外部复制到本地',
       copyToLeft: t('filewatch.diff.btn.copyToLeft') || '从本地复制到外部',
+      applyAll: t('filewatch.diff.btn.applyAll') || '全部应用到右侧',
       locate: t('filewatch.diff.btn.locate') || '定位到该差异',
       ignoreWhitespace: t('filewatch.diff.ignoreWhitespace') || '忽略空白字符(空格 / 制表符)',
     }
@@ -267,6 +268,14 @@ export function showFileWatchDiffDialog(
     const nextBtn = document.createElement('button')
     nextBtn.className = 'custom-dialog-button'
     nextBtn.textContent = btnLabels.next
+    const applyAllBtn = document.createElement('button')
+    applyAllBtn.className = 'custom-dialog-button'
+    applyAllBtn.textContent = btnLabels.applyAll
+    applyAllBtn.title = btnLabels.applyAll
+    if (isLargeFileFallback) {
+      applyAllBtn.disabled = true
+      applyAllBtn.title = '大文件模式不支持批量应用'
+    }
     const counter = document.createElement('div')
     counter.className = 'filewatch-diff-counter'
     const spacer = document.createElement('div')
@@ -279,6 +288,7 @@ export function showFileWatchDiffDialog(
     applyBtn.textContent = btnLabels.apply
     footer.appendChild(prevBtn)
     footer.appendChild(nextBtn)
+    footer.appendChild(applyAllBtn)
     footer.appendChild(counter)
     footer.appendChild(spacer)
     footer.appendChild(cancelBtn)
@@ -446,7 +456,6 @@ export function showFileWatchDiffDialog(
       const rr = rightRangeOf(h)
       const beforeStart = rightTextarea.selectionStart
       const beforeEnd = rightTextarea.selectionEnd
-      const beforeScroll = rightTextarea.scrollTop
       // 累计 hunk 第一个右侧行(rr.start)之前的所有 rightLines 行长度 + 换行
       const rightLinesOld = rightText.split('\n')
       let caretOffset = 0
@@ -461,11 +470,40 @@ export function showFileWatchDiffDialog(
       const newStart = Math.min(caretOffset || beforeStart, newLen)
       const newEnd = Math.min(caretOffset || beforeEnd, newLen)
       try { rightTextarea.selectionStart = newStart; rightTextarea.selectionEnd = newEnd } catch {}
-      try { rightTextarea.scrollTop = beforeScroll } catch {}
       currentHunk = hunkId
       rebuildAfterEdit({ preserveCurrent: true })
-      // 重新定位到下一处(若有)
-      jumpTo(1)
+      // 关键:rebuildAfterEdit → renderLeftPane / renderGutter 会清空 innerHTML 重建,
+      // 导致 leftPane/gutter scrollTop 归零;rightTextarea 的 scrollTop 在 value 重新
+      // 赋值后浏览器也会重置。修复:用 caret 推算光标在新文本中的行号,再同步三个 pane
+      // 的 scrollTop 到该行附近(留 -2 行给顶部 padding / 视觉缓冲)。
+      const newCaretLine = (() => {
+        const lines = newRight.slice(0, newStart).split('\n')
+        return Math.max(0, lines.length - 1)
+      })()
+      const sampleRow = leftPane.querySelector('.filewatch-diff-line') as HTMLElement | null
+      const lineHeight = sampleRow ? Math.max(1, sampleRow.getBoundingClientRect().height) : 18
+      const targetTop = Math.max(0, (newCaretLine - 2) * lineHeight)
+      try { leftPane.scrollTop = targetTop } catch {}
+      try { gutterPane.scrollTop = targetTop } catch {}
+      try { rightTextarea.scrollTop = targetTop } catch {}
+    }
+
+    /** 一次性把左侧所有 hunk 应用到右侧(右侧完全采纳左侧/外部内容)。 */
+    function applyAllHunksLeftToRight(): void {
+      if (isLargeFileFallback) return
+      if (!view.hunks || view.hunks.length === 0) return
+      let text = rightText
+      // 按 hunk id 顺序应用,确保 splice 区间与右侧行号一致
+      const ordered = view.hunks.slice().sort((a, b) => a.id - b.id)
+      for (const h of ordered) {
+        text = copyHunkToRight(h, text)
+      }
+      if (text === rightText) return
+      rightTextarea.value = text
+      rebuildAfterEdit({ preserveCurrent: false })
+      // 全部应用后理论上 view.hunks 为空(无差异);若仍有残留(例如 change 段左
+      // 右文本恰好相同),定位到第一处让用户复核
+      if (view.hunks.length > 0) locateHunk(0)
     }
     /**
      * 定位(改进 3):跳到指定 hunk — 同步滚动到该 hunk 的左栏行 + 设右 textarea caret 到对应行。
@@ -572,6 +610,7 @@ export function showFileWatchDiffDialog(
     applyBtn.addEventListener('click', () => close({ choice: 'applyMerged', mergedContent: rightTextarea.value }))
     prevBtn.addEventListener('click', () => jumpTo(-1))
     nextBtn.addEventListener('click', () => jumpTo(1))
+    applyAllBtn.addEventListener('click', applyAllHunksLeftToRight)
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close({ choice: 'cancel' }) })
     document.addEventListener('keydown', handleKeyDown)
     rightTextarea.addEventListener('input', onTextareaInput)

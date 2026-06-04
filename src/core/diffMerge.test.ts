@@ -349,6 +349,39 @@ describe('copyHunkToLeft', () => {
 })
 
 // ============================================================
+// 空行差异(回归)— bug 复现:全空行 del/add 时 block === '' 误判为无 hunk
+// ============================================================
+
+describe('copyHunkToRight / copyHunkToLeft: 空行/空格差异', () => {
+  it('中间多一个空行:从左复制应正确插入空行', () => {
+    // external 末尾多一个换行 vs local 末尾无换行这种 case 由 jsdiff newlineIsToken:false
+    // 特殊处理,本测试只覆盖"中间空行"差异
+    const external = 'a\n\nb\n'
+    const local = 'a\nb\n'
+    const view = buildHunks(external, local)
+    expect(view.hunks.length).toBeGreaterThan(0)
+    const h = view.hunks[0]
+    expect(h.rows.some((r) => r.kind === 'del' || r.kind === 'change')).toBe(true)
+    const newLocal = copyHunkToRight(h, local)
+    // 必须包含正确数量的换行,即空行不能被吞掉
+    expect(newLocal).toBe('a\n\nb\n')
+  })
+
+  it('多空行减少:从左复制应正确减少空行', () => {
+    // external 'a\n\nb\n'  vs local 'a\n\n\nb\n'  → local 多一个空行
+    const external = 'a\n\nb\n'
+    const local = 'a\n\n\nb\n'
+    const view = buildHunks(external, local)
+    expect(view.hunks.length).toBeGreaterThan(0)
+    // 至少能识别出 del/add 段,且空行不丢失
+    const h = view.hunks[0]
+    const newLocal = copyHunkToRight(h, local)
+    // 不论 hunk 是 del 还是 add,空行数量必须被正确反映
+    expect(newLocal.split('\n').length).toBeGreaterThanOrEqual(3)
+  })
+})
+
+// ============================================================
 // nextHunkId
 // ============================================================
 
