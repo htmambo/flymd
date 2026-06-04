@@ -1,7 +1,13 @@
 // 通用文件系统安全操作封装（与 UI 解耦，只做路径与读写）
 
-import { mkdir, rename, readFile, writeFile, remove } from '@tauri-apps/plugin-fs'
+import { mkdir, rename, readFile, writeFile, remove, stat } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
+
+/** openFileWatcher 用的 file snapshot,跨 plugin-fs scope 兼容 */
+export type FileSnapshot = {
+  mtimeMs: number
+  size: number
+}
 
 // 统一路径分隔符（在当前平台风格下清洗多余分隔符）
 export function normSep(p: string): string {
@@ -99,6 +105,39 @@ export async function writeTextFileAnySafe(p: string, content: string): Promise<
       await invoke('write_text_file_any', { path: p, content })
     } catch {
       throw e
+    }
+  }
+}
+
+/**
+ * 统一 stat 兜底：plugin-fs 失败则调用后端 stat_any 跨 scope 读 mtime/size。
+ * 错误识别与 readTextFileWithFallback 一致(forbidden path|not allowed|EACCES|EPERM|Access Denied)。
+ * 不可用时返回 null(调用方按"文件不可访问"处理)。
+ */
+function isFallbackError(msg: string): boolean {
+  return /forbidden\s*path/i.test(msg)
+    || /not\s*allowed/i.test(msg)
+    || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+}
+
+export async function statFileAnySafe(p: string): Promise<FileSnapshot | null> {
+  try {
+    const raw: any = await stat(p as any)
+    const mtimeMs = Number(raw?.mtimeMs ?? raw?.mtime ?? raw?.modifiedAt)
+    const size = Number(raw?.size)
+    if (!Number.isFinite(mtimeMs) || !Number.isFinite(size)) return null
+    return { mtimeMs, size }
+  } catch (e) {
+    const msg = (e && (e as any).message) ? String((e as any).message) : String(e)
+    if (!isFallbackError(msg)) return null
+    try {
+      const meta = await invoke<FileSnapshot>('stat_any', { path: p })
+      const mtimeMs = Number(meta?.mtimeMs)
+      const size = Number(meta?.size)
+      if (!Number.isFinite(mtimeMs) || !Number.isFinite(size)) return null
+      return { mtimeMs, size }
+    } catch {
+      return null
     }
   }
 }

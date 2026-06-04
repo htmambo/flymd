@@ -62,3 +62,8 @@ docs/Task/
   - **PR-2.1 ✅**（codex review 修 1 P1 阻断 + 2 P2,commit a0aa86e）
   - **PR-3 ✅**（≤1MB SHA-1 hash 优化,降 false positive,commit 62d6709）
   - 详见 [2026-06-04-external-watch-pr1-fixes.md](Archive/2026-06/2026-06-04-external-watch-pr1-fixes.md) / [2026-06-04-external-watch-pr2.md](Archive/2026-06/2026-06-04-external-watch-pr2.md) / [2026-06-04-external-watch-pr3-hash.md](Archive/2026-06/2026-06-04-external-watch-pr3-hash.md)
+- ✅ [EXTERNAL_WATCHER_STAT_FALLBACK_PLAN.md](Archive/2026-06/EXTERNAL_WATCHER_STAT_FALLBACK_PLAN.md) — 库外文件外部变更 stat fallback 修复(完成 2026-06-04)
+  - **T1 ✅** Rust `stat_any` command(`src-tauri/src/main.rs`)
+  - **T2 ✅** 前端 `statFileAnySafe` 两跳包装(`src/core/fsSafe.ts`)
+  - **T3 ✅** `createOpenFileWatcher` 注入 `stat: statFileAnySafe`(`src/main.ts`)
+  - 验证:`npm run build` ✅、`cargo check` ✅、三视角(architect/security/code-quality)全 APPROVED

@@ -76,7 +76,7 @@ import { hasDownloadableMarkdownImages, rewriteHtmlImagesByDownload, rewriteMark
 import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
 import type { InstallableItem } from './extensions/market'
 import { listDirOnce } from './core/libraryFs'
-import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe } from './core/fsSafe'
+import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
@@ -11749,7 +11749,7 @@ function initExternalChangeWatcher(): void {
       try { logWarn(msg, details) } catch {}
     },
   }
-  extWatcherInstance = createOpenFileWatcher({ logger: fileWatchLogger })
+  extWatcherInstance = createOpenFileWatcher({ logger: fileWatchLogger, stat: statFileAnySafe })
   extWatcherIntegration = attachExternalChangeWatcher({
     watcher: extWatcherInstance,
     isDirty: () => !!dirty,

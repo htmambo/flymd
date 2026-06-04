@@ -1877,6 +1877,7 @@ fn main() {
         move_to_trash,
         force_remove_path,
         read_text_file_any,
+        stat_any,
         write_text_file_any,
         list_dir_any,
       get_pending_open_path,
@@ -2685,6 +2686,48 @@ async fn read_text_file_any(path: String) -> Result<String, String> {
   .map_err(|e| format!("join error: {e}"))?;
 
   res
+}
+
+// 跨 plugin-fs scope 读 mtime/size,供前端 file-watch stat fallback 使用。
+// 返回 { mtimeMs, size };平台 mtime 不可用时降级 created,再不行 0。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileMeta {
+  mtime_ms: u64,
+  size: u64,
+}
+
+#[tauri::command]
+async fn stat_any(path: String) -> Result<FileMeta, String> {
+  use std::fs;
+  use std::path::PathBuf;
+  use std::time::UNIX_EPOCH;
+
+  let pathbuf = PathBuf::from(&path);
+  if !pathbuf.exists() {
+    return Err("path not found".into());
+  }
+
+  tauri::async_runtime::spawn_blocking(move || {
+    let md = fs::metadata(&pathbuf).map_err(|e| format!("stat error: {e}"))?;
+    let size = md.len();
+    let mtime_ms = md
+      .modified()
+      .ok()
+      .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+      .map(|d| d.as_millis() as u64)
+      .or_else(|| {
+        md
+          .created()
+          .ok()
+          .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+          .map(|d| d.as_millis() as u64)
+      })
+      .unwrap_or(0);
+    Ok::<FileMeta, String>(FileMeta { mtime_ms, size })
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))?
 }
 
 #[tauri::command]
