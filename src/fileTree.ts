@@ -340,7 +340,9 @@ async function ensureDirExpanded(root: string, dirPath: string): Promise<void> {
   try { row.classList.add('expanded') } catch {}
   try { kids.style.display = '' } catch {}
   if (kids.childElementCount === 0) {
-    await buildDir(root, dirPath, kids)
+    // 该目录的子层 = 父行 depth + 1
+    const parentLevel = Number((row as any).dataset?.depth ?? 0)
+    await buildDir(root, dirPath, kids, parentLevel + 1)
   }
   // 切换文件夹图标为展开状态
   const oldIcon = row.querySelector('.lib-ico-folder')
@@ -702,7 +704,7 @@ function stripExt(name: string): string {
   return idx > 0 ? name.slice(0, idx) : name
 }
 
-async function buildDir(root: string, dir: string, parent: HTMLElement) {
+async function buildDir(root: string, dir: string, parent: HTMLElement, level: number = 0) {
   parent.innerHTML = ''
   const entries = await listDir(root, dir)
   const dirEntries = entries.filter(e => e.isDir)
@@ -715,6 +717,7 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
     const row = document.createElement('div')
     row.className = 'lib-node ' + (e.isDir ? 'lib-dir' : 'lib-file')
     ;(row as any).dataset.path = e.path
+    ;(row as any).dataset.depth = String(level)  // 用于 CSS 按层级配色
     const label = document.createElement('span')
     label.className = 'lib-name'
     // 文件隐藏后缀名，文件夹保持原名
@@ -729,11 +732,13 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
       row.appendChild(ico); row.appendChild(label)
       const kids = document.createElement('div')
       kids.className = 'lib-children'
+      // kids 的 data-depth = 父行 depth(rail 颜色跟随父行)
+      ;(kids as any).dataset.depth = String(level)
       kids.style.display = 'none'
       parent.appendChild(row)
       parent.appendChild(kids)
 
-      if (exp) { kids.style.display = ''; row.classList.add('expanded'); await buildDir(root, e.path, kids) }
+      if (exp) { kids.style.display = ''; row.classList.add('expanded'); await buildDir(root, e.path, kids, level + 1) }
 
       row.addEventListener('click', async (ev) => {
         const was = state.expanded.has(e.path)
@@ -751,7 +756,7 @@ async function buildDir(root: string, dir: string, parent: HTMLElement) {
         }
         if (now) {
           if (kids.childElementCount === 0) {
-            await buildDir(root, e.path, kids)
+            await buildDir(root, e.path, kids, level + 1)
           }
         }
         // 展开或收起都会改变本层及所有祖先层的竖线高度，统一重算
@@ -1220,6 +1225,7 @@ async function renderRoot(root: string) {
     const topRow = document.createElement('div')
     topRow.className = 'lib-node lib-dir'
     ;(topRow as any).dataset.path = root
+    ;(topRow as any).dataset.depth = '0'  // 根行 = depth 0
     const ico = makeFolderIcon(root, true); const label = document.createElement('span'); label.className='lib-name'; label.textContent = nameOf(root) || root
     // 根目录也可能被省略号截断：悬浮显示完整路径
     label.title = root
@@ -1227,10 +1233,11 @@ async function renderRoot(root: string) {
     topRow.appendChild(ico); topRow.appendChild(label)
     const kids = document.createElement('div')
     kids.className = 'lib-children'
+    ;(kids as any).dataset.depth = '0'  // 根的 children = depth 0(rail 跟根行同色)
     const rootExpanded = state.expanded.has(root)
     topRow.classList.toggle('expanded', rootExpanded)
     kids.style.display = rootExpanded ? '' : 'none'
-    if (rootExpanded) await buildDir(root, root, kids)
+    if (rootExpanded) await buildDir(root, root, kids, 1)
     updateTreeLine(kids)
 
     // 关键点：直到新树准备好，才一次性替换旧树；中间不出现“空白态”，自然就不闪
@@ -1296,7 +1303,7 @@ async function renderRoot(root: string) {
       setExpandedState(root, now)
       kids.style.display = now ? '' : 'none'
       topRow.classList.toggle('expanded', now)
-      if (now && kids.childElementCount === 0) await buildDir(root, root, kids)
+      if (now && kids.childElementCount === 0) await buildDir(root, root, kids, 1)
       requestAnimationFrame(updateAllTreeLines)
     })
   } finally {

@@ -67,6 +67,22 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
+
+  /* 库树 — 彩虹色循环调色板(6 色 × 2 循环 = 12 阶,深度间隔自然区分)
+     亮色模式用 500 调色板,暗色模式用 400 调色板(略浅,在深色背景上更醒目) */
+  --lib-depth-0: #ef4444;  /* red-500 */
+  --lib-depth-1: #f97316;  /* orange-500 */
+  --lib-depth-2: #eab308;  /* yellow-500 */
+  --lib-depth-3: #22c55e;  /* green-500 */
+  --lib-depth-4: #3b82f6;  /* blue-500 */
+  --lib-depth-5: #a855f7;  /* violet-500 */
+  /* 2 阶循环:重复同样 6 色,深树仍可辨 */
+  --lib-depth-6: var(--lib-depth-0);
+  --lib-depth-7: var(--lib-depth-1);
+  --lib-depth-8: var(--lib-depth-2);
+  --lib-depth-9: var(--lib-depth-3);
+  --lib-depth-10: var(--lib-depth-4);
+  --lib-depth-11: var(--lib-depth-5);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -98,6 +114,20 @@
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    /* 库树 — 彩虹色循环调色板(暗色模式用 400 调色板,略浅) */
+    --lib-depth-0: #f87171;  /* red-400 */
+    --lib-depth-1: #fb923c;  /* orange-400 */
+    --lib-depth-2: #facc15;  /* yellow-400 */
+    --lib-depth-3: #4ade80;  /* green-400 */
+    --lib-depth-4: #60a5fa;  /* blue-400 */
+    --lib-depth-5: #c084fc;  /* violet-400 */
+    --lib-depth-6: var(--lib-depth-0);
+    --lib-depth-7: var(--lib-depth-1);
+    --lib-depth-8: var(--lib-depth-2);
+    --lib-depth-9: var(--lib-depth-3);
+    --lib-depth-10: var(--lib-depth-4);
+    --lib-depth-11: var(--lib-depth-5);
   }
   body.platform-windows #app {
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45),
@@ -131,6 +161,20 @@ body.light-mode {
   --c-num: #059669;
   --c-fn: #db2777;
   --c-com: #9ca3af;
+
+  /* 库树 — 彩虹色循环调色板(强制浅色用 500) */
+  --lib-depth-0: #ef4444;
+  --lib-depth-1: #f97316;
+  --lib-depth-2: #eab308;
+  --lib-depth-3: #22c55e;
+  --lib-depth-4: #3b82f6;
+  --lib-depth-5: #a855f7;
+  --lib-depth-6: var(--lib-depth-0);
+  --lib-depth-7: var(--lib-depth-1);
+  --lib-depth-8: var(--lib-depth-2);
+  --lib-depth-9: var(--lib-depth-3);
+  --lib-depth-10: var(--lib-depth-4);
+  --lib-depth-11: var(--lib-depth-5);
 }
 
 html, body, #app { height: 100%; }
@@ -2250,9 +2294,11 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node {
   position: relative;
 }
-/* 竖线：位于本层缩进区中部（left:8px），高度由 JS 量算到最后一个子节点中心。
-   alpha 按 DOM 嵌套层级递减：0 阶最深 (0.4)，4 阶及更深兜底 (0.20)，
-   营造"远处更虚"的深度感。 */
+/* === 库树连接线 — 12 阶彩虹循环(data-depth 由 buildDir 写入 .lib-children 和 .lib-node) === */
+
+/* 竖线 rail:位于本层缩进区中部(left:8px),高度由 JS 量算。
+   .lib-children 的 data-depth = 父级行深度(根 children = 0,首层嵌套 = 1,...)。
+   rail 颜色 = 父级行颜色 = data-depth 对应的 --lib-depth-N。 */
 .library .lib-children::before {
   content: '';
   position: absolute;
@@ -2260,16 +2306,22 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 0;
   height: var(--tree-line-height, 0);
   width: 1px;
-  background: rgba(127,127,127, 0.4);
+  background: var(--lib-depth-0);
 }
-.library .lib-children .lib-children::before { background: rgba(127,127,127, 0.32); }
-.library .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.26); }
-.library .lib-children .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.22); }
-.library .lib-children .lib-children .lib-children .lib-children .lib-children::before { background: rgba(127,127,127, 0.20); }
+.lib-children[data-depth="0"]::before { background: var(--lib-depth-0); }
+.lib-children[data-depth="1"]::before { background: var(--lib-depth-1); }
+.lib-children[data-depth="2"]::before { background: var(--lib-depth-2); }
+.lib-children[data-depth="3"]::before { background: var(--lib-depth-3); }
+.lib-children[data-depth="4"]::before { background: var(--lib-depth-4); }
+.lib-children[data-depth="5"]::before { background: var(--lib-depth-5); }
+.lib-children[data-depth="6"]::before { background: var(--lib-depth-6); }
+.lib-children[data-depth="7"]::before { background: var(--lib-depth-7); }
+.lib-children[data-depth="8"]::before { background: var(--lib-depth-8); }
+.lib-children[data-depth="9"]::before { background: var(--lib-depth-9); }
+.lib-children[data-depth="10"]::before { background: var(--lib-depth-10); }
+.lib-children[data-depth="11"]::before { background: var(--lib-depth-11); }
 
-/* 横线：从竖线(本层 x=8) 连到子节点图标左缘。节点左缘 = 缩进10 + 外边距4 = 14，
-   故 left:-6 回到竖线(x=8)；节点 padding-left 为 14（图标在节点内 x=14，即本层 x=28），
-   width:20 = 从 x=8 一路抵达图标(8→28)，在 ┬ 两侧各留出一段 ─（├ 后较短、┬ 后较长）。 */
+/* 横线 stub:从竖线连到子节点图标左缘。仅 .lib-children 的直接子行(深度 ≥ 1)有 stub。 */
 .library .lib-children > .lib-node::before {
   content: '';
   position: absolute;
@@ -2277,18 +2329,22 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 13px;
   width: 20px;
   height: 1px;
-  background: rgba(127,127,127, 0.4);
+  background: var(--lib-depth-0);
   z-index: 1;
 }
-.library .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.32); }
-.library .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.26); }
-.library .lib-children .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.22); }
-.library .lib-children .lib-children .lib-children .lib-children .lib-children > .lib-node::before { background: rgba(127,127,127, 0.20); }
+.lib-children > .lib-node[data-depth="1"]::before { background: var(--lib-depth-1); }
+.lib-children > .lib-node[data-depth="2"]::before { background: var(--lib-depth-2); }
+.lib-children > .lib-node[data-depth="3"]::before { background: var(--lib-depth-3); }
+.lib-children > .lib-node[data-depth="4"]::before { background: var(--lib-depth-4); }
+.lib-children > .lib-node[data-depth="5"]::before { background: var(--lib-depth-5); }
+.lib-children > .lib-node[data-depth="6"]::before { background: var(--lib-depth-6); }
+.lib-children > .lib-node[data-depth="7"]::before { background: var(--lib-depth-7); }
+.lib-children > .lib-node[data-depth="8"]::before { background: var(--lib-depth-8); }
+.lib-children > .lib-node[data-depth="9"]::before { background: var(--lib-depth-9); }
+.lib-children > .lib-node[data-depth="10"]::before { background: var(--lib-depth-10); }
+.lib-children > .lib-node[data-depth="11"]::before { background: var(--lib-depth-11); }
 
-/* 展开的目录：从横线中点向下延伸一小段竖线，连到子级 rail，形成 ├─┬─ / └─┬─。
-   子级 .lib-children 左缘 = 本节点缩进 10，其 rail 在 +8 = 本层 x=18；
-   节点左缘在本层 x=14，故 left:4px(=18-14) 正好落在子级竖线上（与缩进/内边距无关，各级恒成立）。
-   bottom:-2px 越过节点底部与子级 rail 顶部相接。 */
+/* 展开的目录:从横线中点向下延伸一小段竖线,连到子级 rail。 */
 .library .lib-node.expanded::after {
   content: '';
   position: absolute;
@@ -2296,13 +2352,21 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   top: 13px;
   bottom: -2px;
   width: 1px;
-  background: rgba(127,127,127, 0.4);
+  background: var(--lib-depth-0);
   z-index: 1;
 }
-.library .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.32); }
-.library .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.26); }
-.library .lib-children .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.22); }
-.library .lib-children .lib-children .lib-children .lib-children .lib-children > .lib-node.expanded::after { background: rgba(127,127,127, 0.20); }
+.lib-node[data-depth="0"].expanded::after { background: var(--lib-depth-0); }
+.lib-node[data-depth="1"].expanded::after { background: var(--lib-depth-1); }
+.lib-node[data-depth="2"].expanded::after { background: var(--lib-depth-2); }
+.lib-node[data-depth="3"].expanded::after { background: var(--lib-depth-3); }
+.lib-node[data-depth="4"].expanded::after { background: var(--lib-depth-4); }
+.lib-node[data-depth="5"].expanded::after { background: var(--lib-depth-5); }
+.lib-node[data-depth="6"].expanded::after { background: var(--lib-depth-6); }
+.lib-node[data-depth="7"].expanded::after { background: var(--lib-depth-7); }
+.lib-node[data-depth="8"].expanded::after { background: var(--lib-depth-8); }
+.lib-node[data-depth="9"].expanded::after { background: var(--lib-depth-9); }
+.lib-node[data-depth="10"].expanded::after { background: var(--lib-depth-10); }
+.lib-node[data-depth="11"].expanded::after { background: var(--lib-depth-11); }
 
 /* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
 .lib-ico { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: 0 0 auto; }
@@ -2324,13 +2388,35 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }
-/* 关闭态文件夹:在 --muted 基础上往背景色压 25%,让"收起"更中性低调;
-   打开态在 --accent 基础上往白色提 20%,强化"展开"焦点。
-   两者拉开 视觉差距,一眼可辨展开/收起。 */
-.library .lib-ico-folder { color: color-mix(in srgb, var(--muted), var(--bg) 25%); }
-.library .lib-ico-folder-open,
-.library .lib-node:hover .lib-ico-folder-open,
-.library .lib-node.selected .lib-ico-folder-open { color: color-mix(in srgb, var(--accent), white 20%); }
+/* 关闭态文件夹:按 data-depth 用对应彩虹色。
+   打开态同色 + filter:brightness(1.25) 提亮,与关闭态拉开差距。
+   hover/selected 走 --fg(更高优先级)。 */
+.lib-node[data-depth="0"] .lib-ico-folder { color: var(--lib-depth-0); }
+.lib-node[data-depth="1"] .lib-ico-folder { color: var(--lib-depth-1); }
+.lib-node[data-depth="2"] .lib-ico-folder { color: var(--lib-depth-2); }
+.lib-node[data-depth="3"] .lib-ico-folder { color: var(--lib-depth-3); }
+.lib-node[data-depth="4"] .lib-ico-folder { color: var(--lib-depth-4); }
+.lib-node[data-depth="5"] .lib-ico-folder { color: var(--lib-depth-5); }
+.lib-node[data-depth="6"] .lib-ico-folder { color: var(--lib-depth-6); }
+.lib-node[data-depth="7"] .lib-ico-folder { color: var(--lib-depth-7); }
+.lib-node[data-depth="8"] .lib-ico-folder { color: var(--lib-depth-8); }
+.lib-node[data-depth="9"] .lib-ico-folder { color: var(--lib-depth-9); }
+.lib-node[data-depth="10"] .lib-ico-folder { color: var(--lib-depth-10); }
+.lib-node[data-depth="11"] .lib-ico-folder { color: var(--lib-depth-11); }
+
+/* 打开态:同 depth 颜色 + filter 提亮 */
+.lib-node[data-depth="0"] .lib-ico-folder-open { color: var(--lib-depth-0); filter: brightness(1.25); }
+.lib-node[data-depth="1"] .lib-ico-folder-open { color: var(--lib-depth-1); filter: brightness(1.25); }
+.lib-node[data-depth="2"] .lib-ico-folder-open { color: var(--lib-depth-2); filter: brightness(1.25); }
+.lib-node[data-depth="3"] .lib-ico-folder-open { color: var(--lib-depth-3); filter: brightness(1.25); }
+.lib-node[data-depth="4"] .lib-ico-folder-open { color: var(--lib-depth-4); filter: brightness(1.25); }
+.lib-node[data-depth="5"] .lib-ico-folder-open { color: var(--lib-depth-5); filter: brightness(1.25); }
+.lib-node[data-depth="6"] .lib-ico-folder-open { color: var(--lib-depth-6); filter: brightness(1.25); }
+.lib-node[data-depth="7"] .lib-ico-folder-open { color: var(--lib-depth-7); filter: brightness(1.25); }
+.lib-node[data-depth="8"] .lib-ico-folder-open { color: var(--lib-depth-8); filter: brightness(1.25); }
+.lib-node[data-depth="9"] .lib-ico-folder-open { color: var(--lib-depth-9); filter: brightness(1.25); }
+.lib-node[data-depth="10"] .lib-ico-folder-open { color: var(--lib-depth-10); filter: brightness(1.25); }
+.lib-node[data-depth="11"] .lib-ico-folder-open { color: var(--lib-depth-11); filter: brightness(1.25); }
 
 /* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
 .container.with-library-left { --gap-left-library: var(--library-width, 240px); }
