@@ -15,11 +15,14 @@ import { UsageService } from "../services/ai/usage.js";
 import { CacheService } from "../services/ai/cache.js";
 import { NotifyService } from "../services/notify/index.js";
 import { setRouterDeps, setNotifyService } from "../services/ai/router.js";
+import { RagService, FileIndexReader } from "../services/rag/index.js";
+import { AiGatewayLlm, AiGatewayEmbedder } from "../services/rag/llm.js";
 import { authPlugin } from "./plugins/auth.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes, registerSettingsUserRoutes } from "./routes/settings.js";
 import { registerAiAdminRoutes } from "./routes/ai-admin.js";
 import { registerNotifyAdminRoutes } from "./routes/notify-admin.js";
+import { registerRagRoutes } from "./routes/rag.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerLegacyMockRoutes } from "./routes/legacy-mock.js";
 
@@ -31,6 +34,7 @@ declare module "fastify" {
     usageService: UsageService;
     cacheService: CacheService;
     notifyService: NotifyService;
+    ragService: RagService | null;
   }
 }
 
@@ -83,6 +87,28 @@ export async function createApp(): Promise<FastifyInstance> {
   app.decorate("cacheService", cacheService);
   app.decorate("notifyService", notifyService);
 
+  // RAG 服务 — 构造失败不阻塞启动(比如没有 AI provider)
+  let ragService: RagService | null = null;
+  try {
+    const ragLlm = new AiGatewayLlm({
+      settings: settingsService,
+      userId: null,
+      requestId: "rag-service",
+    });
+    const ragEmbedder = new AiGatewayEmbedder({
+      settings: settingsService,
+    });
+    ragService = new RagService({
+      indexReader: new FileIndexReader(),
+      embedder: ragEmbedder,
+      llm: ragLlm,
+    });
+    app.log.info("RAG 服务已初始化");
+  } catch (e) {
+    app.log.warn({ err: e }, "RAG 服务初始化失败,/api/v1/rag/* 将返 503");
+  }
+  app.decorate("ragService", ragService);
+
   // 启动时清理过期 cache(可忽略失败)
   try {
     const purged = cacheService.purgeExpired();
@@ -109,6 +135,7 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(registerLegacyMockRoutes);
   await app.register(registerAiAdminRoutes);
   await app.register(registerNotifyAdminRoutes);
+  await app.register(registerRagRoutes);
 
   // 静态资源 + Vite dev middleware
   if (env.enableVite && env.nodeEnv === "development") {
