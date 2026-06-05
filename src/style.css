@@ -2381,6 +2381,13 @@ body.lib-color-depth [data-scheme="3"] .lib-ico-folder-open { filter: brightness
 body.lib-color-depth [data-scheme="4"] .lib-ico-folder-open { filter: brightness(1.25); }
 body.lib-color-depth [data-scheme="5"] .lib-ico-folder-open { filter: brightness(1.25); }
 
+/* 文件图标:与 .lib-ico-folder 同结构,绕开 WebKitGTK SVG currentColor 链 */
+body.lib-color-depth [data-scheme="1"] .lib-ico-file path { stroke: var(--lib-color-1); }
+body.lib-color-depth [data-scheme="2"] .lib-ico-file path { stroke: var(--lib-color-2); }
+body.lib-color-depth [data-scheme="3"] .lib-ico-file path { stroke: var(--lib-color-3); }
+body.lib-color-depth [data-scheme="4"] .lib-ico-file path { stroke: var(--lib-color-4); }
+body.lib-color-depth [data-scheme="5"] .lib-ico-file path { stroke: var(--lib-color-5); }
+
 /* 根行 Home 图标:与 .lib-ico-folder 同结构,绕开 WebKitGTK SVG currentColor 链。
    关闭开关时,scheme 规则不生效,沿用 .library .lib-ico { color: var(--muted) } 兜底。
    根行 scheme 永远为 1,只首条命中,余下 4 条为对称占位 */
