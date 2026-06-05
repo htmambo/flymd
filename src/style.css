@@ -73,10 +73,10 @@
      关闭"彩色库树"开关时,body 不带 lib-color-depth class,5 条 scheme 规则全不生效,沿用 --muted/--accent 原配色 */
   --lib-color-0: var(--muted);       /* 兜底:关闭开关时回退到原配色 */
   --lib-color-1: #ef4444;             /* red-500 */
-  --lib-color-2: #f97316;             /* orange-500 */
-  --lib-color-3: #eab308;             /* yellow-500 */
-  --lib-color-4: #22c55e;             /* green-500 */
-  --lib-color-5: #3b82f6;             /* blue-500 */
+  --lib-color-2: #22c55e;             /* green-500 */
+  --lib-color-3: #f97316;             /* orange-500 */
+  --lib-color-4: #3b82f6;             /* blue-500 */
+  --lib-color-5: #eab308;             /* yellow-500 */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -112,10 +112,10 @@
     /* 库树 — 5 色调色板(暗色模式用 400 调色板,略浅) */
     --lib-color-0: var(--muted);
     --lib-color-1: #f87171;  /* red-400 */
-    --lib-color-2: #fb923c;  /* orange-400 */
-    --lib-color-3: #facc15;  /* yellow-400 */
-    --lib-color-4: #4ade80;  /* green-400 */
-    --lib-color-5: #60a5fa;  /* blue-400 */
+    --lib-color-2: #4ade80;  /* green-400 */
+    --lib-color-3: #fb923c;  /* orange-400 */
+    --lib-color-4: #60a5fa;  /* blue-400 */
+    --lib-color-5: #facc15;  /* yellow-400 */
   }
   body.platform-windows #app {
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45),
@@ -153,10 +153,10 @@ body.light-mode {
   /* 库树 — 5 色调色板(强制浅色用 500) */
   --lib-color-0: var(--muted);
   --lib-color-1: #ef4444;
-  --lib-color-2: #f97316;
-  --lib-color-3: #eab308;
-  --lib-color-4: #22c55e;
-  --lib-color-5: #3b82f6;
+  --lib-color-2: #22c55e;
+  --lib-color-3: #f97316;
+  --lib-color-4: #3b82f6;
+  --lib-color-5: #eab308;
 }
 
 html, body, #app { height: 100%; }
@@ -2356,46 +2356,29 @@ body.lib-color-depth .lib-node[data-scheme="5"].expanded::after { background: va
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }
-/* 关闭态文件夹:path 直接吃 var(--lib-color-N) 走 stroke。
-   WebKitGTK 不解析 SVG element 的 color → path currentColor 链,
-   故跳过 currentColor 直接在 path 上写 stroke。
-   关闭开关时,5 条 scheme 规则不生效,沿用 .library .lib-ico { color: var(--muted) }
-   + SVG 自身 stroke="currentColor" 链路,呈原配色。
-   hover/selected 走 --fg(更高优先级)。 */
-body.lib-color-depth [data-scheme="1"] .lib-ico-folder path { stroke: var(--lib-color-1); }
-body.lib-color-depth [data-scheme="2"] .lib-ico-folder path { stroke: var(--lib-color-2); }
-body.lib-color-depth [data-scheme="3"] .lib-ico-folder path { stroke: var(--lib-color-3); }
-body.lib-color-depth [data-scheme="4"] .lib-ico-folder path { stroke: var(--lib-color-4); }
-body.lib-color-depth [data-scheme="5"] .lib-ico-folder path { stroke: var(--lib-color-5); }
+/* 彩色库树图标配色 — scheme 载体只设 CSS 变量,图标 path 从「最近的 [data-scheme] 祖先」就近继承。
+   旧版用后代选择器 [data-scheme=N] .lib-ico path 直写 stroke:深层图标祖先链含多个 scheme 载体,
+   5 条规则同特异性 (0,3,2),同特异性下源码末条([data-scheme=5])恒胜 → ≥5 级图标被钉死第 5 色。
+   自定义属性走「就近继承」(与源码顺序无关),图标最近的 [data-scheme] 祖先即自身行 → 各级正确循环。
+   path 仍直写 stroke/fill 绕开 WebKitGTK 偶发失效的 SVG currentColor 链;var() 第二参兜底。
+   关闭开关时本块不生效,回退 .library .lib-ico{color:var(--muted)} + SVG currentColor 原配色。 */
+body.lib-color-depth .library [data-scheme="1"] { --lib-ico-stroke: var(--lib-color-1); }
+body.lib-color-depth .library [data-scheme="2"] { --lib-ico-stroke: var(--lib-color-2); }
+body.lib-color-depth .library [data-scheme="3"] { --lib-ico-stroke: var(--lib-color-3); }
+body.lib-color-depth .library [data-scheme="4"] { --lib-ico-stroke: var(--lib-color-4); }
+body.lib-color-depth .library [data-scheme="5"] { --lib-ico-stroke: var(--lib-color-5); }
 
-/* 打开态:同 stroke + 22% 透明 fill,SVG 提亮
-   关闭开关时,scheme 规则不生效,沿用原 --accent fallback(见下) */
-body.lib-color-depth [data-scheme="1"] .lib-ico-folder-open path { stroke: var(--lib-color-1); fill: var(--lib-color-1); fill-opacity: 0.22; }
-body.lib-color-depth [data-scheme="2"] .lib-ico-folder-open path { stroke: var(--lib-color-2); fill: var(--lib-color-2); fill-opacity: 0.22; }
-body.lib-color-depth [data-scheme="3"] .lib-ico-folder-open path { stroke: var(--lib-color-3); fill: var(--lib-color-3); fill-opacity: 0.22; }
-body.lib-color-depth [data-scheme="4"] .lib-ico-folder-open path { stroke: var(--lib-color-4); fill: var(--lib-color-4); fill-opacity: 0.22; }
-body.lib-color-depth [data-scheme="5"] .lib-ico-folder-open path { stroke: var(--lib-color-5); fill: var(--lib-color-5); fill-opacity: 0.22; }
-body.lib-color-depth [data-scheme="1"] .lib-ico-folder-open { filter: brightness(1.25); }
-body.lib-color-depth [data-scheme="2"] .lib-ico-folder-open { filter: brightness(1.25); }
-body.lib-color-depth [data-scheme="3"] .lib-ico-folder-open { filter: brightness(1.25); }
-body.lib-color-depth [data-scheme="4"] .lib-ico-folder-open { filter: brightness(1.25); }
-body.lib-color-depth [data-scheme="5"] .lib-ico-folder-open { filter: brightness(1.25); }
+body.lib-color-depth .library .lib-ico-folder path,
+body.lib-color-depth .library .lib-ico-file path,
+body.lib-color-depth .library .lib-ico-library path { stroke: var(--lib-ico-stroke, currentColor); }
 
-/* 文件图标:与 .lib-ico-folder 同结构,绕开 WebKitGTK SVG currentColor 链 */
-body.lib-color-depth [data-scheme="1"] .lib-ico-file path { stroke: var(--lib-color-1); }
-body.lib-color-depth [data-scheme="2"] .lib-ico-file path { stroke: var(--lib-color-2); }
-body.lib-color-depth [data-scheme="3"] .lib-ico-file path { stroke: var(--lib-color-3); }
-body.lib-color-depth [data-scheme="4"] .lib-ico-file path { stroke: var(--lib-color-4); }
-body.lib-color-depth [data-scheme="5"] .lib-ico-file path { stroke: var(--lib-color-5); }
-
-/* 根行 Home 图标:与 .lib-ico-folder 同结构,绕开 WebKitGTK SVG currentColor 链。
-   关闭开关时,scheme 规则不生效,沿用 .library .lib-ico { color: var(--muted) } 兜底。
-   根行 scheme 永远为 1,只首条命中,余下 4 条为对称占位 */
-body.lib-color-depth [data-scheme="1"] .lib-ico-library path { stroke: var(--lib-color-1); }
-body.lib-color-depth [data-scheme="2"] .lib-ico-library path { stroke: var(--lib-color-2); }
-body.lib-color-depth [data-scheme="3"] .lib-ico-library path { stroke: var(--lib-color-3); }
-body.lib-color-depth [data-scheme="4"] .lib-ico-library path { stroke: var(--lib-color-4); }
-body.lib-color-depth [data-scheme="5"] .lib-ico-library path { stroke: var(--lib-color-5); }
+/* 打开态:同色描边 + 22% 透明填充 + 提亮(brightness 无 scheme 依赖,合并为一条) */
+body.lib-color-depth .library .lib-ico-folder-open path {
+  stroke: var(--lib-ico-stroke, currentColor);
+  fill: var(--lib-ico-stroke, currentColor);
+  fill-opacity: 0.22;
+}
+body.lib-color-depth .library .lib-ico-folder-open { filter: brightness(1.25); }
 
 /* 关闭开关时的原配色兜底:打开态文件夹图标走 --accent(008ce14 commit 的原规则) */
 .library .lib-ico-folder-open,

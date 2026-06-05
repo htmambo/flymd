@@ -98,3 +98,9 @@ docs/Task/
   - **T3 ✅** `openFileWatcher` 新增 `pollingTimer` 字段 + `startPolling/stopPolling`,失败兜底 + 收到事件即停
   - **T4 ✅** `checkChange` 入口加 `cancelled` 早返,关闭已存在的 race
   - 验证:`npm run build` ✅、`npm test` 137/137 ✅、三视角(architect/security/code-quality)全 APPROVED
+- ✅ [2026-06-05-lib-icon-depth-color-cascade-fix.md](Archive/2026-06/2026-06-05-lib-icon-depth-color-cascade-fix.md) — 库树图标深层(≥5级)配色钉死修复(完成 2026-06-05,经 codex 复核)
+  - **T1 ✅** 根因:旧 CSS 用后代选择器 `[data-scheme=N] .lib-ico path`,深层图标祖先链含多个 scheme 载体,5 条规则同特异性,源码末条(`[data-scheme=5]`)恒胜 → ≥5 级图标被钉死第 5 色
+  - **T2 ✅** 修复:scheme 载体只设 `--lib-ico-stroke` 变量,path 走 `var(--lib-ico-stroke, currentColor)` 就近继承;40 → 20 行
+  - **T3 ✅** 同步:5 色调色板 `--lib-color-2..5` 按绿-橙-蓝-黄重排(亮/暗/body.light-mode 三套)
+  - **T4 ✅** 同步:`buildDir` 文件 scheme 计算统一为 `level`,与文件夹共用 `level%5+1`,文件图标与 rail 严格同步
+  - **T5 ✅** 验证:`npx tsc --noEmit` ✅、codex 复审通过、用户 ≥6 级嵌套目录实测各级正确循环

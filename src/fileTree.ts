@@ -715,12 +715,12 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
 
   for (const e of [...dirEntries, ...fileEntries]) {
     const row = document.createElement('div')
-    row.className = 'lib-node ' + (e.isDir ? 'lib-dir' : 'lib-file')
-    ;(row as any).dataset.path = e.path
-    ;(row as any).dataset.depth = String(level)  // 行布局备用
+    row.className = 'lib-node ' + (e.isDir ? 'lib-dir' : 'lib-file');
+    (row as any).dataset.path = e.path;
+    (row as any).dataset.depth = String(level);  // 行布局备用
     // 文件图标跟随父级配色（与竖线 rail 同色），目录保持自身配色
-    const schemeBase = e.isDir ? level : (level > 0 ? level - 1 : 0)
-    ;(row as any).dataset.scheme = String((schemeBase % 5) + 1)  // 配色 scheme(1-5 循环,scheme 0 = 原配色)
+    const schemeBase = level > 0 ? level - 1 : 0;
+    (row as any).dataset.scheme = String((level % 5) + 1)  // 配色 scheme(1-5 循环,scheme 0 = 原配色)
     const label = document.createElement('span')
     label.className = 'lib-name'
     // 文件隐藏后缀名，文件夹保持原名
