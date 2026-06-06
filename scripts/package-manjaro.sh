@@ -118,13 +118,18 @@ fi
 # 叠加下面的 --clean，会在打包后删除 $srcdir → 把前端源码 src/ 整个清空（已踩过坑）。
 # 用独立的 BUILDDIR 让 $srcdir/$pkgdir 落到临时目录；$startdir 仍是仓库根，
 # PKGBUILD 里的 $startdir/...（二进制、图标、LICENSE）与 $srcdir/flymd.desktop 都照常可用。
-# 产物 .pkg.tar.* 仍写到 PKGDEST（默认 = $startdir = 仓库根），与原行为一致。
+# 产物 .pkg.tar.* 输出到 target/archlinux/ 目录
 build_tmp="$(mktemp -d "${TMPDIR:-/tmp}/flymd-makepkg.XXXXXX")"
 trap 'rm -rf "$build_tmp"' EXIT
 export BUILDDIR="$build_tmp"
+
+# 设置产物输出目录
+TARGET_DIR="$ROOT_DIR/target/archlinux"
+mkdir -p "$TARGET_DIR"
+export PKGDEST="$TARGET_DIR"
 
 echo "==> Building pacman package with makepkg"
 makepkg "${makepkg_args[@]}"
 
 echo "==> Package output"
-find "$ROOT_DIR" -maxdepth 1 -type f -name 'flymd-*.pkg.tar.*' -printf '  %f\n' | sort
+find "$TARGET_DIR" -maxdepth 1 -type f -name 'flymd-*.pkg.tar.*' -printf '  %f\n' | sort

@@ -161,7 +161,9 @@ EOF
 chmod 755 "$WORK_DIR/DEBIAN/postrm"
 
 # 5. 重新打包
-OUTPUT="$ROOT_DIR/flymd_${VERSION}_amd64.deb"
+TARGET_DIR="$ROOT_DIR/target/debian"
+mkdir -p "$TARGET_DIR"
+OUTPUT="$TARGET_DIR/flymd_${VERSION}_amd64.deb"
 echo "==> Rebuilding final package"
 dpkg-deb --build "$WORK_DIR" "$OUTPUT"
 
