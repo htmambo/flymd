@@ -5,6 +5,7 @@ import { t } from '../i18n'
 import { getLibraries, getActiveLibraryId, applyLibrariesSettings, getLibSwitcherPosition, setLibSwitcherPosition, upsertLibrary, renameLibrary, removeLibrary, type LibSwitcherPosition } from '../utils/library'
 import { getWebdavSyncConfigForLibrary, setWebdavSyncConfigForLibrary, openWebdavSyncDialog } from '../extensions/webdavSync'
 import { getFolderTemplates, saveFolderTemplates, scanLibraryForFoldersAndTemplates, type FolderTemplateConfig } from '../core/folderTemplates'
+import { DEFAULT_METADATA_LABELS, normalizeMetadataLabelMap, parseMetadataLabelMapText, stringifyMetadataLabelMap, type MetadataLabelMap } from '../core/metadataLabels'
 import { openRenameDialog } from './linkDialogs'
 import { ask, open } from '@tauri-apps/plugin-dialog'
 import { normalizePath as normalizeFsPath } from '../core/fsSafe'
@@ -116,6 +117,18 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
         <div class="lib-settings-sep"></div>
 
         <div class="lib-settings-subtitle-row">
+          <div class="lib-settings-subtitle">${t('lib.settings.metadataLabels') || '元数据字段显示名'}</div>
+          <div class="lib-settings-metadata-actions">
+            <button id="lib-settings-metadata-defaults" type="button" class="btn-secondary">${t('lib.settings.metadataLabels.defaults') || '填入默认'}</button>
+            <button id="lib-settings-metadata-clear" type="button" class="btn-secondary">${t('common.clear') || '清空'}</button>
+          </div>
+        </div>
+        <textarea id="lib-settings-metadata-labels" class="lib-settings-metadata-labels" rows="7" spellcheck="false" placeholder="tags = 标签&#10;author = 作者"></textarea>
+        <div class="upl-hint lib-settings-metadata-hint">${t('lib.settings.metadataLabels.hint') || '每行一个映射：key = 显示名；空行和 # 注释会忽略。未配置的 key 使用内置默认显示名，仍未命中则显示原 key。'}</div>
+
+        <div class="lib-settings-sep"></div>
+
+        <div class="lib-settings-subtitle-row">
           <div class="lib-settings-subtitle">文件夹模板</div>
           <span class="upl-hint">在指定文件夹内新建文件时，自动使用模板填充内容</span>
         </div>
@@ -160,6 +173,9 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   const elList = overlay.querySelector('#lib-settings-list') as HTMLDivElement
   const elOpenWebdav = overlay.querySelector('#lib-settings-open-webdav') as HTMLButtonElement | null
   const elTemplatesList = overlay.querySelector('#lib-settings-templates-list') as HTMLDivElement
+  const elMetadataLabels = overlay.querySelector('#lib-settings-metadata-labels') as HTMLTextAreaElement
+  const elMetadataDefaults = overlay.querySelector('#lib-settings-metadata-defaults') as HTMLButtonElement | null
+  const elMetadataClear = overlay.querySelector('#lib-settings-metadata-clear') as HTMLButtonElement | null
 
   let libs0 = await getLibraries()
   let activeId = await getActiveLibraryId()
@@ -180,6 +196,9 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   const draftTemplates = new Map<string, FolderTemplateConfig[]>()
   const dirtyTemplates = new Set<string>()
   const scanCache = new Map<string, { folders: string[]; templates: string[] }>()
+
+  const draftMetadataLabels = new Map<string, MetadataLabelMap>()
+  const dirtyMetadataLabels = new Set<string>()
 
   async function ensureWebdavDraftLoaded(id: string): Promise<void> {
     if (!id) return
@@ -211,6 +230,13 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
     draftTemplates.set(id, configs)
   }
 
+  function ensureMetadataLabelsDraftLoaded(id: string): void {
+    if (!id) return
+    if (draftMetadataLabels.has(id)) return
+    const lib = libs0.find(x => x.id === id)
+    draftMetadataLabels.set(id, normalizeMetadataLabelMap((lib as any)?.metadataLabels))
+  }
+
   function syncSelectedUiFromDraft(): void {
     try {
       if (!selectedLibId) {
@@ -223,10 +249,17 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
           elOpenWebdav.disabled = true
           elOpenWebdav.title = ''
         }
+        try { elMetadataLabels.value = '' } catch {}
+        try { elMetadataLabels.disabled = true } catch {}
+        try { if (elMetadataDefaults) elMetadataDefaults.disabled = true } catch {}
+        try { if (elMetadataClear) elMetadataClear.disabled = true } catch {}
         return
       }
       try { elWebdavEnabled.disabled = false } catch {}
       try { elWebdavRoot.disabled = false } catch {}
+      try { elMetadataLabels.disabled = false } catch {}
+      try { if (elMetadataDefaults) elMetadataDefaults.disabled = false } catch {}
+      try { if (elMetadataClear) elMetadataClear.disabled = false } catch {}
       const lib = libs0.find(x => x.id === selectedLibId)
       elCurName.textContent = lib?.name || (t('lib.menu') || '库')
       const w = draftWebdav.get(selectedLibId)
@@ -238,8 +271,10 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       if (elOpenWebdav) {
         const isActive = !!(activeId && selectedLibId === activeId)
         elOpenWebdav.disabled = !isActive
-        elOpenWebdav.title = isActive ? '' : '请先切换到该库再打开 WebDAV 详细设置'
+          elOpenWebdav.title = isActive ? '' : '请先切换到该库再打开 WebDAV 详细设置'
       }
+      const labels = draftMetadataLabels.get(selectedLibId) || {}
+      elMetadataLabels.value = stringifyMetadataLabelMap(labels)
     } catch {}
   }
 
@@ -249,6 +284,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
     selectedLibId = nextId
     await ensureWebdavDraftLoaded(nextId)
     await ensureTemplatesDraftLoaded(nextId)
+    ensureMetadataLabelsDraftLoaded(nextId)
     scanCache.delete(nextId) // 切换库时清除扫描缓存，确保重新加载
     syncSelectedUiFromDraft()
     renderList()
@@ -258,6 +294,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   if (selectedLibId) {
     await ensureWebdavDraftLoaded(selectedLibId)
     await ensureTemplatesDraftLoaded(selectedLibId)
+    ensureMetadataLabelsDraftLoaded(selectedLibId)
     syncSelectedUiFromDraft()
     renderTemplatesList()
   }
@@ -278,6 +315,31 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       cur.rootPathInput = String(elWebdavRoot.value || '')
       draftWebdav.set(selectedLibId, cur)
       dirtyWebdav.add(selectedLibId)
+    } catch {}
+  })
+
+  elMetadataLabels.addEventListener('input', () => {
+    try {
+      if (!selectedLibId) return
+      draftMetadataLabels.set(selectedLibId, parseMetadataLabelMapText(elMetadataLabels.value))
+      dirtyMetadataLabels.add(selectedLibId)
+    } catch {}
+  })
+  elMetadataDefaults?.addEventListener('click', () => {
+    try {
+      if (!selectedLibId) return
+      const labels = normalizeMetadataLabelMap(DEFAULT_METADATA_LABELS)
+      draftMetadataLabels.set(selectedLibId, labels)
+      dirtyMetadataLabels.add(selectedLibId)
+      elMetadataLabels.value = stringifyMetadataLabelMap(labels)
+    } catch {}
+  })
+  elMetadataClear?.addEventListener('click', () => {
+    try {
+      if (!selectedLibId) return
+      draftMetadataLabels.set(selectedLibId, {})
+      dirtyMetadataLabels.add(selectedLibId)
+      elMetadataLabels.value = ''
     } catch {}
   })
 
@@ -376,10 +438,13 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
             draftWebdav.delete(lib.id)
             dirtyTemplates.delete(lib.id)
             draftTemplates.delete(lib.id)
+            dirtyMetadataLabels.delete(lib.id)
+            draftMetadataLabels.delete(lib.id)
 
             activeId = await getActiveLibraryId()
             if (selectedLibId === lib.id) selectedLibId = activeId || libs0[0]?.id || null
             if (selectedLibId) await ensureWebdavDraftLoaded(selectedLibId)
+            if (selectedLibId) ensureMetadataLabelsDraftLoaded(selectedLibId)
 
             if (opts.onRefreshUi) await opts.onRefreshUi({ rebuildTree: true })
             syncSelectedUiFromDraft()
@@ -709,10 +774,12 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
 
       if (!draftOrderIds.includes(lib.id)) draftOrderIds = [...draftOrderIds, lib.id]
       if (!draftSidebarVisible.has(lib.id)) draftSidebarVisible.set(lib.id, true)
+      if (!draftMetadataLabels.has(lib.id)) draftMetadataLabels.set(lib.id, {})
 
       activeId = await getActiveLibraryId()
       selectedLibId = lib.id
       await ensureWebdavDraftLoaded(lib.id)
+      ensureMetadataLabelsDraftLoaded(lib.id)
 
       if (opts.onRefreshUi) await opts.onRefreshUi({ rebuildTree: true })
       syncSelectedUiFromDraft()
@@ -735,7 +802,13 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
     try {
       const vis: Record<string, boolean> = {}
       for (const [k, v] of draftSidebarVisible.entries()) vis[k] = !!v
-      await applyLibrariesSettings({ orderIds: draftOrderIds, sidebarVisibleById: vis })
+      if (selectedLibId) {
+        draftMetadataLabels.set(selectedLibId, parseMetadataLabelMapText(elMetadataLabels.value))
+        dirtyMetadataLabels.add(selectedLibId)
+      }
+      const metadataLabelsById: Record<string, MetadataLabelMap> = {}
+      for (const libId of dirtyMetadataLabels) metadataLabelsById[libId] = normalizeMetadataLabelMap(draftMetadataLabels.get(libId))
+      await applyLibrariesSettings({ orderIds: draftOrderIds, sidebarVisibleById: vis, metadataLabelsById })
 
       // 保存库切换位置设置并立即更新 UI
       const newSwitcherPos = (elSwitcherPos?.value || draftSwitcherPos) as LibSwitcherPosition

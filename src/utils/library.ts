@@ -3,6 +3,7 @@
 
 import type { Store } from '@tauri-apps/plugin-store'
 import { getSharedStore } from './sharedStore'
+import { normalizeMetadataLabelMap, type MetadataLabelMap } from '../core/metadataLabels'
 
 // 库实体类型
 export type Library = {
@@ -15,6 +16,8 @@ export type Library = {
   sidebarVisible?: boolean
   // 该库上次打开的文件路径（用于启动时恢复）
   lastOpenFile?: string
+  // YAML Front Matter 字段显示名映射（库级覆盖；未配置时使用内置默认映射）
+  metadataLabels?: MetadataLabelMap
 }
 
 async function getStore(): Promise<Store> {
@@ -62,6 +65,8 @@ function toStoreLibrary(l: Library): Record<string, any> {
   // 默认 true：只在 false 时显式存，避免污染配置
   if (l?.sidebarVisible === false) out.sidebarVisible = false
   if (typeof l?.lastOpenFile === 'string' && l.lastOpenFile) out.lastOpenFile = l.lastOpenFile
+  const metadataLabels = normalizeMetadataLabelMap(l?.metadataLabels)
+  if (Object.keys(metadataLabels).length > 0) out.metadataLabels = metadataLabels
   return out
 }
 
@@ -104,10 +109,12 @@ export async function getLibraries(): Promise<Library[]> {
       const lastUsedAt = Number((it as any).lastUsedAt) > 0 ? Number((it as any).lastUsedAt) : undefined
       const sidebarVisible = (it as any).sidebarVisible === false ? false : true
       const lastOpenFile = typeof (it as any).lastOpenFile === 'string' ? (it as any).lastOpenFile : undefined
+      const metadataLabels = normalizeMetadataLabelMap((it as any).metadataLabels)
       const l: Library = { id, name, root, sidebarVisible }
       if (typeof createdAt === 'number') l.createdAt = createdAt
       if (typeof lastUsedAt === 'number') l.lastUsedAt = lastUsedAt
       if (lastOpenFile) l.lastOpenFile = lastOpenFile
+      if (Object.keys(metadataLabels).length > 0) l.metadataLabels = metadataLabels
       arr.push(l)
     }
     return arr
@@ -240,7 +247,7 @@ export async function setLibrariesOrder(idsInOrder: string[]): Promise<void> {
   await setLibraries(out)
 }
 
-export async function applyLibrariesSettings(input: { orderIds?: string[]; sidebarVisibleById?: Record<string, boolean> }): Promise<void> {
+export async function applyLibrariesSettings(input: { orderIds?: string[]; sidebarVisibleById?: Record<string, boolean>; metadataLabelsById?: Record<string, MetadataLabelMap> }): Promise<void> {
   const libs = await getLibraries()
   if (libs.length === 0) return
 
@@ -275,6 +282,23 @@ export async function applyLibrariesSettings(input: { orderIds?: string[]; sideb
       out = out.map(l => {
         if (!(l.id in m)) return l
         return { ...l, sidebarVisible: !!(m as any)[l.id] }
+      })
+    }
+  } catch {}
+
+  // 3) 批量更新库级元数据字段显示名映射
+  try {
+    const m = input?.metadataLabelsById || null
+    if (m && typeof m === 'object') {
+      out = out.map(l => {
+        if (!(l.id in m)) return l
+        const labels = normalizeMetadataLabelMap((m as any)[l.id])
+        if (Object.keys(labels).length === 0) {
+          const next = { ...l }
+          try { delete (next as any).metadataLabels } catch {}
+          return next
+        }
+        return { ...l, metadataLabels: labels }
       })
     }
   } catch {}

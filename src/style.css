@@ -1650,6 +1650,8 @@ body > .block-menu { display: none !important; }
   margin-bottom: 4px;
 }
 .preview-meta-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 600;
   font-size: 13px;
   color: var(--fg);
@@ -1658,6 +1660,8 @@ body > .block-menu { display: none !important; }
   white-space: nowrap;
 }
 .preview-meta-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: transparent;
@@ -1670,22 +1674,26 @@ body > .block-menu { display: none !important; }
   background: rgba(127,127,127,0.08);
 }
 .preview-meta-body {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 12px;
 }
 .preview-meta-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
+  min-width: 0;
 }
 .preview-meta-label {
+  flex: 0 0 auto;
   font-weight: 500;
 }
 .preview-meta-value {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .preview-meta-chip {
   padding: 2px 8px;
@@ -1698,6 +1706,11 @@ body > .block-menu { display: none !important; }
 }
 .preview-meta.collapsed .preview-meta-body {
   display: none;
+}
+@media (max-width: 720px) {
+  .preview-meta-body {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* 文档库侧栏 */
@@ -4523,6 +4536,27 @@ body.sticky-note-mode .width-bubble {
 .lib-settings-order-btn.danger { border-color: rgba(239, 68, 68, 0.35); color: rgb(239, 68, 68); background: rgba(239, 68, 68, 0.08); }
 .lib-settings-order-btn.danger:hover:not(:disabled) { background: rgba(239, 68, 68, 0.12); }
 .lib-settings-webdav-actions { margin-top: 8px; }
+.lib-settings-metadata-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.lib-settings-metadata-labels {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  box-sizing: border-box;
+}
+.lib-settings-metadata-labels:focus {
+  outline: none;
+  border-color: rgba(37, 99, 235, 0.55);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15) inset;
+}
+.lib-settings-metadata-hint { margin-top: 6px; }
 
 .lib-settings-templates-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .lib-settings-template-row { display: flex; align-items: flex-start; gap: 8px; }

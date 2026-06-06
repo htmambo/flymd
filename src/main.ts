@@ -55,7 +55,8 @@ import {
 } from './utils/richClipboard'
 import { saveImageToLocalAndGetPathCore, toggleUploaderEnabledFromMenuCore } from './core/imagePaste'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
-import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition } from './utils/library'
+import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition, getActiveLibrary } from './utils/library'
+import { resolveMetadataLabel, type MetadataLabelMap } from './core/metadataLabels'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
 import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 import { initRibbonLibraryList, type RibbonLibraryListApi } from './ui/ribbonLibraryList'
@@ -2432,7 +2433,7 @@ function parseFrontMatterMeta(fm: string | null): any | null {
 // 暴露到全局，供所见模式在粘贴 URL 时复用同一套抓取标题逻辑
 try { (window as any).flymdFetchPageTitle = fetchPageTitle } catch {}
 
-function injectPreviewMeta(container: HTMLDivElement, meta: any | null) {
+function injectPreviewMeta(container: HTMLDivElement, meta: any | null, metadataLabels?: MetadataLabelMap | null) {
   if (!meta || typeof meta !== 'object') return
   const m: any = meta
 
@@ -2441,14 +2442,37 @@ function injectPreviewMeta(container: HTMLDivElement, meta: any | null) {
   const cats = Array.isArray(m.categories)
     ? m.categories.map((x: any) => String(x || '').trim()).filter(Boolean)
     : (m.category ? [String(m.category || '').trim()] : [])
+  const catsKey = Array.isArray(m.categories) ? 'categories' : (m.category ? 'category' : 'categories')
   const tags = Array.isArray(m.tags)
     ? m.tags.map((x: any) => String(x || '').trim()).filter(Boolean)
     : []
+  const statusKey = typeof m.status === 'string' ? 'status' : (m.draft === true ? 'draft' : 'status')
   const status = typeof m.status === 'string' ? m.status : (m.draft === true ? 'draft' : '')
+  const slugKey = m.slug ? 'slug' : (m.typechoSlug ? 'typechoSlug' : 'slug')
   const slug = (m.slug || m.typechoSlug) ? String(m.slug || m.typechoSlug || '') : ''
+  const idKey = m.typechoId ? 'typechoId' : (m.id ? 'id' : (m.cid ? 'cid' : 'id'))
   const id = (m.typechoId || m.id || m.cid) ? String(m.typechoId || m.id || m.cid || '') : ''
+  const dateKey = m.date ? 'date' : (m.dateCreated ? 'dateCreated' : (m.created ? 'created' : (m.typechoUpdatedAt ? 'typechoUpdatedAt' : 'date')))
   const dateRaw = m.date || m.dateCreated || m.created || m.typechoUpdatedAt || ''
   const source = typeof m.source === 'string' ? m.source : ''
+
+  const isMetaEmpty = (value: any): boolean => {
+    if (value == null) return true
+    if (typeof value === 'string') return !value.trim()
+    if (Array.isArray(value)) return value.every((item) => isMetaEmpty(item))
+    if (value instanceof Date) return Number.isNaN(value.getTime())
+    if (typeof value === 'object') return Object.keys(value).length === 0
+    return false
+  }
+
+  const formatMetaValue = (value: any): string => {
+    if (value == null) return ''
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString()
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value)
+    try { return JSON.stringify(value) || '' } catch {}
+    return String(value || '').trim()
+  }
 
   const metaRoot = document.createElement('div')
   metaRoot.className = 'preview-meta'
@@ -2483,12 +2507,8 @@ function injectPreviewMeta(container: HTMLDivElement, meta: any | null) {
   const body = document.createElement('div')
   body.className = 'preview-meta-body'
 
-  const addRow = (label: string, value: string | string[]) => {
-    if (Array.isArray(value)) {
-      if (!value.length) return
-    } else {
-      if (!value || !String(value).trim()) return
-    }
+  const addRow = (label: string, value: any) => {
+    if (isMetaEmpty(value)) return
     const row = document.createElement('div')
     row.className = 'preview-meta-row'
     const lab = document.createElement('span')
@@ -2499,27 +2519,54 @@ function injectPreviewMeta(container: HTMLDivElement, meta: any | null) {
     val.className = 'preview-meta-value'
     if (Array.isArray(value)) {
       for (const it of value) {
-        const chipText = String(it || '').trim()
+        const chipText = formatMetaValue(it)
         if (!chipText) continue
         const chip = document.createElement('span')
         chip.className = 'preview-meta-chip'
         chip.textContent = chipText
         val.appendChild(chip)
       }
+      if (val.children.length === 0) return
     } else {
-      val.textContent = String(value)
+      const text = formatMetaValue(value)
+      if (!text) return
+      val.textContent = text
     }
     row.appendChild(val)
     body.appendChild(row)
   }
+  const addRowForKey = (key: string, value: any) => addRow(resolveMetadataLabel(key, metadataLabels), value)
 
-  if (cats.length) addRow('分类', cats)
-  if (tags.length) addRow('标签', tags)
-  if (status) addRow('状态', status)
-  if (slug) addRow('Slug', slug)
-  if (id) addRow('ID', id)
-  if (dateRaw) addRow('时间', String(dateRaw))
-  if (source) addRow('来源', source)
+  if (cats.length) addRowForKey(catsKey, cats)
+  if (tags.length) addRowForKey('tags', tags)
+  if (status) addRowForKey(statusKey, status)
+  if (slug) addRowForKey(slugKey, slug)
+  if (id) addRowForKey(idKey, id)
+  if (dateRaw) addRowForKey(dateKey, String(dateRaw))
+  if (source) addRowForKey('source', source)
+
+  const handledKeys = new Set([
+    'title',
+    'categories',
+    'category',
+    'tags',
+    'status',
+    'draft',
+    'slug',
+    'typechoSlug',
+    'typechoId',
+    'id',
+    'cid',
+    'date',
+    'dateCreated',
+    'created',
+    'typechoUpdatedAt',
+    'source',
+  ])
+  for (const [key, value] of Object.entries(m)) {
+    if (!key || handledKeys.has(key)) continue
+    addRowForKey(key, value)
+  }
 
   if (body.children.length > 0) {
     metaRoot.appendChild(body)
@@ -3985,10 +4032,14 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   } catch {}
   // 阅读模式/所见模式预览：渲染时剥离 YAML Front Matter，仅显示正文；若存在 Front Matter，则解析用于预览元数据条
   let previewMeta: any | null = null
+  let previewMetaLabels: MetadataLabelMap | null = null
   try {
     const r = splitYamlFrontMatter(raw)
     previewMeta = parseFrontMatterMeta(r.frontMatter)
     raw = r.body
+  } catch {}
+  try {
+    if (previewMeta) previewMetaLabels = (await getActiveLibrary())?.metadataLabels || null
   } catch {}
   // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整段当数学渲染
   raw = protectExcelDollarRefs(raw)
@@ -4102,7 +4153,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     } catch {}
     // 一次性替换预览 DOM
     try {
-      try { injectPreviewMeta(buf, previewMeta) } catch {}
+      try { injectPreviewMeta(buf, previewMeta, previewMetaLabels) } catch {}
       if (seq !== _renderPreviewSeq) return
       mdHost.innerHTML = ''
       mdHost.appendChild(buf)
@@ -8426,7 +8477,10 @@ async function showLibraryMenu() {
     items.push({ label: (t('lib.settings.title') || '库设置') + '…', action: async () => {
       try {
         await openLibrarySettingsDialog({
-          onRefreshUi: async (opt) => { await refreshLibraryUiAndTree(!!opt?.rebuildTree) },
+          onRefreshUi: async (opt) => {
+            await refreshLibraryUiAndTree(!!opt?.rebuildTree)
+            try { if (mode === 'preview') await renderPreview() } catch {}
+          },
         })
       } catch {}
     } })
