@@ -718,8 +718,6 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
     row.className = 'lib-node ' + (e.isDir ? 'lib-dir' : 'lib-file');
     (row as any).dataset.path = e.path;
     (row as any).dataset.depth = String(level);  // 行布局备用
-    // 文件图标跟随父级配色（与竖线 rail 同色），目录保持自身配色
-    const schemeBase = level > 0 ? level - 1 : 0;
     (row as any).dataset.scheme = String((level % 5) + 1)  // 配色 scheme(1-5 循环,scheme 0 = 原配色)
     const label = document.createElement('span')
     label.className = 'lib-name'
@@ -734,9 +732,9 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
       const ico = makeFolderIcon(e.path, false, exp)
       row.appendChild(ico); row.appendChild(label)
       const kids = document.createElement('div')
-      kids.className = 'lib-children'
+      kids.className = 'lib-children';
       // kids 的 data-scheme 继承父行(rail 颜色跟随父行)
-      ;(kids as any).dataset.scheme = String((level % 5) + 1)
+      (kids as any).dataset.scheme = String((level % 5) + 1)
       kids.style.display = 'none'
       parent.appendChild(row)
       parent.appendChild(kids)
