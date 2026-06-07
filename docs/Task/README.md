@@ -226,3 +226,13 @@ docs/Task/
   - **pre-existing 保留**: computeResize 左/上拖动数学(负 delta 反而让窗口变宽,与原 main.ts 一致)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 407/407 通过(原 390 + 新增 17)、main.ts 净 -319 行(10475→10156)
   - 提交:`d011364`(已推送 origin)
+- ✅ [2026-06-08-batch11-main-ts-extract-titlebar-status.md](Archive/2026-06/2026-06-08-batch11-main-ts-extract-titlebar-status.md) — Batch 11:抽离 titlebarStatus 状态镜像层(完成 2026-06-08,经 codex R2 复审 APPROVED)
+  - **T1 ✅** `src/ui/titlebarStatus.ts` 新建:createTitlebarStatus factory(200 行,20 tests);8 个状态镜像函数聚类
+    - refreshTitle / refreshStatus / syncToggleButton / setUpdateBadge
+    - getScrollPercent / setScrollPercent / saveScrollPosition / restoreScrollPosition
+  - **T2 ✅** main.ts 接线:工厂 `let ... | null` 延迟实例化,90+ 调用站点 `titlebarStatusApi?.xxx()` 可选链
+  - **关键设计**:工厂先 let null,DOM 查询就绪后实例化(行 1710+);可选链统一 init 前静默跳过,无 null guard 噪声
+  - **Codex R2**:APPROVED 0 blocker / 0 important,4 个 nit 已修(editor 类型 / scheduleOutlineUpdate 必填 / 1217 可选链 / 9857 注释 typo)
+  - **pre-existing 保留**:fastInfo 优先 + slice 回退、setScrollPercent clamp [0,1]、restore 重试 50/100/200ms
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 427/427 通过(原 407 + 新增 20)、main.ts 净 -105 行(10050→9945)
+  - 提交:`743ec6c`(已推送 origin)
