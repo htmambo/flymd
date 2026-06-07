@@ -45,6 +45,8 @@ import { protectExcelDollarRefs } from './utils/excelFormula'
 import { guessSyncedDocImageAbsPath } from './utils/localImagePath'
 import { resolveLocalImageAbsPathFromSrc, toDocRelativeImagePathIfInImages } from './utils/localImageSrcResolve'
 import { TAB_INDENT, applyTabIndentEdit, normalizeTabIndentText, getLeadingTabIndentLength, getTabIndentLengthEndingAt } from './utils/tabIndent'
+import { nowMs, scheduleAfterFirstPaint } from './utils/scheduling'
+import { readLibraryDockedFromLocalStorage, writeLibraryDockedToLocalStorage, readLibrarySideFromLocalStorage, writeLibrarySideToLocalStorage, type LibrarySide } from './utils/libraryPrefs'
 import { bindWindowMaximizedState } from './windows/maximizedState'
 import {
   copySelectionAsRichHtmlWithEmbeddedImages,
@@ -254,27 +256,6 @@ async function getKatexMod(): Promise<any> {
   if (_katexMod) return _katexMod
   _katexMod = await import('katex')
   return _katexMod
-}
-
-function nowMs(): number {
-  try { return (performance && typeof performance.now === 'function') ? performance.now() : Date.now() } catch { return Date.now() }
-}
-
-function scheduleAfterFirstPaint(task: () => void, delay = 0): void {
-  const run = () => {
-    try {
-      window.setTimeout(() => {
-        try { task() } catch {}
-      }, Math.max(0, delay | 0))
-    } catch {
-      try { task() } catch {}
-    }
-  }
-  try {
-    requestAnimationFrame(() => { run() })
-  } catch {
-    window.setTimeout(run, Math.max(16, delay | 0))
-  }
 }
 
 let _deferredStartupWorkScheduled = false
@@ -830,10 +811,7 @@ let selectedFolderPath: string | null = null
 let selectedNodeEl: HTMLElement | null = null
 // 库面板停靠状态：true=固定在左侧并收缩编辑区；false=覆盖式抽屉
   let libraryDocked = true
-  const LIBRARY_DOCKED_LS_KEY = 'flymd:libraryDocked'
-  type LibrarySide = 'left' | 'right'
   let librarySide: LibrarySide = 'left'
-  const LIBRARY_SIDE_LS_KEY = 'flymd:librarySide'
   let libraryVisible = true
   // 大纲布局模式：embedded=嵌入库侧栏；left=库 | 大纲 | 编辑区；right=库 | 编辑区 | 大纲
   type OutlineLayout = 'embedded' | 'left' | 'right'
@@ -851,27 +829,7 @@ let stickyNoteReminders: StickyNoteReminderMap = {}   // 便签待办提醒状�
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
 let _libFloatToggleEl: HTMLButtonElement | null = null
-function readLibraryDockedFromLocalStorage(): boolean | null {
-  try {
-    const raw = localStorage.getItem(LIBRARY_DOCKED_LS_KEY)
-    if (raw === '1') return true
-    if (raw === '0') return false
-  } catch {}
-  return null
-}
-function writeLibraryDockedToLocalStorage(v: boolean): void {
-  try { localStorage.setItem(LIBRARY_DOCKED_LS_KEY, v ? '1' : '0') } catch {}
-}
-function readLibrarySideFromLocalStorage(): LibrarySide | null {
-  try {
-    const raw = localStorage.getItem(LIBRARY_SIDE_LS_KEY)
-    if (raw === 'left' || raw === 'right') return raw
-  } catch {}
-  return null
-}
-function writeLibrarySideToLocalStorage(v: LibrarySide): void {
-  try { localStorage.setItem(LIBRARY_SIDE_LS_KEY, v) } catch {}
-}
+// 4 个 localStorage 工具(read/writeLibraryDockedFrom/ToLocalStorage + Side)由 utils/libraryPrefs 提供
 function selectLibraryNode(el: HTMLElement | null, path: string | null, isDir: boolean) {
   try {
     if (selectedNodeEl) selectedNodeEl.classList.remove('selected')
