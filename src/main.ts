@@ -46,6 +46,7 @@ import { guessSyncedDocImageAbsPath } from './utils/localImagePath'
 import { resolveLocalImageAbsPathFromSrc, toDocRelativeImagePathIfInImages } from './utils/localImageSrcResolve'
 import { TAB_INDENT, applyTabIndentEdit, normalizeTabIndentText, getLeadingTabIndentLength, getTabIndentLengthEndingAt } from './utils/tabIndent'
 import { nowMs, scheduleAfterFirstPaint } from './utils/scheduling'
+import { isInputPendingCompat } from './utils/platform'
 import { readLibraryDockedFromLocalStorage, writeLibraryDockedToLocalStorage, readLibrarySideFromLocalStorage, writeLibrarySideToLocalStorage, type LibrarySide } from './utils/libraryPrefs'
 import { bindWindowMaximizedState } from './windows/maximizedState'
 import {
@@ -282,14 +283,6 @@ function scheduleDeferredStartupWork(): void {
   scheduleAfterFirstPaint(() => {
     try { void getAutoSave().loadFromStore() } catch {}
   }, 400)
-}
-
-function isInputPendingCompat(): boolean {
-  try {
-    const fn = (navigator as any)?.scheduling?.isInputPending
-    if (typeof fn === 'function') return !!fn.call((navigator as any).scheduling)
-  } catch {}
-  return false
 }
 
 function renderKatexToHtmlCached(katexMod: any, latex: string, displayMode: boolean): string {

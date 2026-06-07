@@ -4,6 +4,7 @@ import { mathInlineSchema, mathBlockSchema } from '@milkdown/plugin-math'
 import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { normalizeKatexLatexForInline } from '../../../utils/katexNormalize'
+import { isInputPendingCompat } from '../../../utils/platform'
 
 // 所见模式的大文档性能关键点：不要在主线程里同步渲染一堆 KaTeX。
 // 这里采用“空闲时渲染 + 有输入就让路 + 小公式缓存”的策略，避免右键/按钮点击被卡住。
@@ -13,14 +14,6 @@ const KATEX_HTML_CACHE_MAX = 1500
 const KATEX_HTML_CACHE_MAX_LATEX_LEN = 512
 let _mathIO: IntersectionObserver | null = null
 const _mathIOHandlers = new WeakMap<Element, () => void>()
-
-function isInputPendingCompat(): boolean {
-  try {
-    const fn = (navigator as any)?.scheduling?.isInputPending
-    if (typeof fn === 'function') return !!fn.call((navigator as any).scheduling)
-  } catch {}
-  return false
-}
 
 function requestIdleCompat(cb: (deadline?: any) => void, timeout = 200) {
   try {
