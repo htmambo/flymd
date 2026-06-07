@@ -49,6 +49,7 @@ import { nowMs, scheduleAfterFirstPaint } from './utils/scheduling'
 import { isInputPendingCompat } from './utils/platform'
 import { readLibraryDockedFromLocalStorage, writeLibraryDockedToLocalStorage, readLibrarySideFromLocalStorage, writeLibrarySideToLocalStorage, type LibrarySide } from './utils/libraryPrefs'
 import { bindWindowMaximizedState } from './windows/maximizedState'
+import { createWindowPlacement } from './windows/windowPlacement'
 import {
   copySelectionAsRichHtmlWithEmbeddedImages,
   hasSelectionInside,
@@ -84,7 +85,11 @@ import type { InstallableItem } from './extensions/market'
 import { listDirOnce } from './core/libraryFs'
 import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
 import { deleteFileSafe, newFileSafe } from './core/libraryFileOps'
+import { initNetworkProxyFetchShim } from './core/networkProxyFetchShim'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
+
+// 顶层 window 几何工厂(被 startScaleFactor / ensureMinWindowSize / centerWindow 调用)
+const windowPlacementApi = createWindowPlacement({ getCurrentWindow, currentMonitor, invoke })
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -1473,6 +1478,8 @@ async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Pro
   await openFile2(filePath)
 }
 
+try { ensurePreviewLinkHandlingBound() } catch {}
+
 function ensurePreviewLinkHandlingBound(): void {
   if (_previewLinkEventsBound || !preview) return
   preview.addEventListener('click', (ev) => {
@@ -1513,177 +1520,6 @@ function ensurePreviewLinkHandlingBound(): void {
   }, true)
   _previewLinkEventsBound = true
 }
-try { ensurePreviewLinkHandlingBound() } catch {}
-
-function initNetworkProxyFetchShim(): void {
-  const NET_PROXY_KEY = 'flymd:net:proxy'
-  let installed = false
-  let nativeFetch: any = null
-  let httpFetch: any = null
-  let httpBody: any = null
-  let httpImportPromise: Promise<any> | null = null
-
-  const readEnabled = (): boolean => {
-    try {
-      const raw = localStorage.getItem(NET_PROXY_KEY)
-      if (!raw) return false
-      const v = JSON.parse(raw || '{}') as any
-      return !!v.enabled
-    } catch { return false }
-  }
-
-  const loadHttp = async (): Promise<{ fetch: any; Body?: any } | null> => {
-    if (httpFetch) return { fetch: httpFetch, Body: httpBody }
-    if (!httpImportPromise) {
-      httpImportPromise = (async () => {
-        try {
-          const mod: any = await import('@tauri-apps/plugin-http')
-          if (typeof mod?.fetch !== 'function') return null
-          httpFetch = mod.fetch
-          httpBody = mod.Body
-          return { fetch: httpFetch, Body: httpBody }
-        } catch {
-          return null
-        }
-      })()
-    }
-    return await httpImportPromise
-  }
-
-  const normalizeHeaders = (h: any): Record<string, string> | any => {
-    try {
-      if (!h) return h
-      if (typeof Headers !== 'undefined' && h instanceof Headers) {
-        const out: Record<string, string> = {}
-        h.forEach((v: string, k: string) => { out[k] = v })
-        return out
-      }
-      if (Array.isArray(h)) {
-        const out: Record<string, string> = {}
-        for (const it of h) {
-          if (!Array.isArray(it) || it.length < 2) continue
-          const k = String(it[0] || '')
-          const v = String(it[1] || '')
-          if (k) out[k] = v
-        }
-        return out
-      }
-      return h
-    } catch {
-      return h
-    }
-  }
-
-  const resolveHttpUrl = (input: any): string | null => {
-    try {
-      if (typeof input !== 'string') return null
-      const u = new URL(input, window.location.href)
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-      return u.toString()
-    } catch {
-      return null
-    }
-  }
-
-  const proxiedFetch = async (input: any, init?: any): Promise<any> => {
-    try {
-      if (!nativeFetch) nativeFetch = (window.fetch as any)?.bind(window)
-
-      // Request 场景：仅在 init 为空时做“无损搬运”，否则保留原生语义
-      let url = resolveHttpUrl(input)
-      let reqFromRequest: Request | null = null
-      try {
-        if (!url && typeof Request !== 'undefined' && input instanceof Request) {
-          if (init != null) return nativeFetch(input, init)
-          reqFromRequest = input
-          url = resolveHttpUrl(reqFromRequest.url)
-        }
-      } catch {}
-      if (!url) return nativeFetch(input, init)
-
-      const http = await loadHttp()
-      if (!http || typeof http.fetch !== 'function') return nativeFetch(input, init)
-
-      const req: any = init ? { ...init } : {}
-      req.headers = normalizeHeaders(req.headers)
-
-      // 从 Request 搬运 method/headers/body（仅当 init 为空）
-      if (reqFromRequest) {
-        try {
-          req.method = reqFromRequest.method || req.method || 'GET'
-          req.headers = normalizeHeaders(reqFromRequest.headers)
-          const m = String(req.method || 'GET').toUpperCase()
-          if (m !== 'GET' && m !== 'HEAD') {
-            // 读取 body 会消耗流：只在 clone 成功且能读到 bytes 时处理，否则降级走原生 fetch
-            const clone = reqFromRequest.clone()
-            const ab = await clone.arrayBuffer()
-            req.body = ab
-          }
-        } catch {
-          return nativeFetch(input, init)
-        }
-      }
-
-      // tauri plugin-http 不等价于浏览器 fetch：不支持的 body 类型直接降级，避免“为了代理把行为搞崩”
-      const body = req.body
-      try {
-        if (typeof FormData !== 'undefined' && body instanceof FormData) return nativeFetch(input, init)
-        if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) return nativeFetch(input, init)
-        if (typeof Blob !== 'undefined' && body instanceof Blob) return nativeFetch(input, init)
-      } catch {}
-
-      // 兼容 bytes：把 ArrayBuffer/Uint8Array 包装成 plugin-http 的 Body.bytes
-      try {
-        const Body = (http as any).Body
-        if (Body && typeof Body.bytes === 'function') {
-          if (body instanceof Uint8Array) req.body = Body.bytes(body)
-          else if (body instanceof ArrayBuffer) req.body = Body.bytes(new Uint8Array(body))
-        }
-      } catch {}
-
-      // URLSearchParams -> string（让 Content-Type 由调用者 headers 决定）
-      try { if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) req.body = body.toString() } catch {}
-
-      return await http.fetch(url, req)
-    } catch {
-      // 兜底：任何异常都回到原始 fetch
-      try { return nativeFetch(input, init) } catch { throw new Error('fetch failed') }
-    }
-  }
-
-  const install = () => {
-    try {
-      if (installed) return
-      if (!nativeFetch) nativeFetch = (window.fetch as any)?.bind(window)
-      if (typeof nativeFetch !== 'function') return
-      ;(window as any).fetch = proxiedFetch as any
-      installed = true
-    } catch {}
-  }
-
-  const uninstall = () => {
-    try {
-      if (!installed) return
-      if (nativeFetch && typeof nativeFetch === 'function') {
-        ;(window as any).fetch = nativeFetch
-      }
-      installed = false
-    } catch {}
-  }
-
-  const update = () => {
-    try {
-      if (readEnabled()) install()
-      else uninstall()
-    } catch {}
-  }
-
-  update()
-  try {
-    window.addEventListener('flymd:netproxy:changed', () => { update() })
-  } catch {}
-}
-
 // 编辑器底部 padding 的“基线值”（从 CSS 计算得到，包含文末留白）
 let _editorPadBottomBasePx = 40
 try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || 40 } catch {}
@@ -6537,7 +6373,7 @@ function initWindowResize() {
 
     // MouseEvent.screenX/screenY 是“逻辑像素”（DIP）；而 innerSize/outerPosition 是“物理像素”。
     // 单位混用会导致高 DPI 下 resize 时窗口乱跳/位置漂移（尤其是从左/上/四角拖拽）。
-    startScaleFactor = await getWindowScaleFactorSafe()
+    startScaleFactor = await windowPlacementApi.getWindowScaleFactorSafe()
     startX = e.screenX * startScaleFactor
     startY = e.screenY * startScaleFactor
 
@@ -7000,109 +6836,6 @@ async function restoreWindowStateBeforeSticky(): Promise<void> {
     importDpi: () => import('@tauri-apps/api/dpi'),
   }
   await restoreWindowStateBeforeStickyCore(deps)
-}
-
-// DPI 缩放：统一获取当前窗口缩放系数（物理像素 / 逻辑像素）。
-// 这是个“务实兜底”：优先用 Tauri 的 scaleFactor，失败再退回到浏览器 devicePixelRatio。
-async function getWindowScaleFactorSafe(): Promise<number> {
-  try {
-    const win = getCurrentWindow()
-    const sf = await win.scaleFactor()
-    if (typeof sf === 'number' && Number.isFinite(sf) && sf > 0.05 && sf < 16) return sf
-  } catch {}
-  try {
-    const dpr = (window as any)?.devicePixelRatio
-    if (typeof dpr === 'number' && Number.isFinite(dpr) && dpr > 0.05 && dpr < 16) return dpr
-  } catch {}
-  return 1
-}
-
-// 退出便签模式时恢复全局状态标志（供关闭后新实例正确启动）
-
-
-// 兜底：如果检测到窗口尺寸异常偏小，则恢复到 960x640
-  async function ensureMinWindowSize(): Promise<void> {
-    try {
-      const win = getCurrentWindow()
-      const size = await win.innerSize()
-      // innerSize 是物理像素；最小尺寸用“逻辑像素”定义（跟 UI/CSS 同一个世界）。
-      const sf = await getWindowScaleFactorSafe()
-      const minW = Math.round(960 * sf)
-      const minH = Math.round(640 * sf)
-      let targetW = size.width
-      let targetH = size.height
-
-      // 下限：至少保持默认窗口大小
-      if (targetW < minW) targetW = minW
-      if (targetH < minH) targetH = minH
-
-      // 上限：使用 Rust 侧计算的虚拟桌面尺寸（多屏合并），避免无限变大的异常窗口
-      let maxW = 0
-      let maxH = 0
-      try {
-        const screen = await invoke('get_virtual_screen_size') as { width?: number; height?: number } | null
-        if (screen && typeof screen.width === 'number' && typeof screen.height === 'number') {
-          maxW = screen.width
-          maxH = screen.height
-        }
-      } catch {
-        // 若获取失败，则退化为仅做下限保护，保持旧版本行为
-      }
-      if (maxW > 0 && targetW > maxW) targetW = maxW
-      if (maxH > 0 && targetH > maxH) targetH = maxH
-
-    if (targetW !== size.width || targetH !== size.height) {
-      await win.setSize({ type: 'Physical', width: Math.round(targetW), height: Math.round(targetH) } as any)
-    }
-  } catch {}
-}
-
-// 兜底：启动时将窗口居中显示
-async function centerWindow(): Promise<void> {
-  try {
-    const win = getCurrentWindow()
-    const pos = await win.outerPosition()
-    const size = await win.outerSize()
-
-    // 仅当窗口明显跑到屏幕外/几乎不可见时才居中：否则会破坏“记忆窗口位置”的用户预期。
-    let waX = 0
-    let waY = 0
-    let waW = 0
-    let waH = 0
-    try {
-      const mon = await currentMonitor()
-      if (mon && mon.workArea && mon.workArea.position && mon.workArea.size) {
-        waX = mon.workArea.position.x
-        waY = mon.workArea.position.y
-        waW = mon.workArea.size.width
-        waH = mon.workArea.size.height
-      }
-    } catch {}
-    if (!waW || !waH) {
-      // 退化：浏览器 screen 是“逻辑像素”，这里乘缩放系数转为物理像素。
-      const sf = await getWindowScaleFactorSafe()
-      const screenW = window?.screen?.availWidth || window?.screen?.width || 0
-      const screenH = window?.screen?.availHeight || window?.screen?.height || 0
-      if (!screenW || !screenH) return
-      waX = 0
-      waY = 0
-      waW = Math.round(screenW * sf)
-      waH = Math.round(screenH * sf)
-    }
-
-    // 至少露出一小块：否则用户看到的就是“窗口不见了”。这里用 48px 做可见阈值。
-    const VIS = 48
-    const visibleEnough =
-      pos.x + VIS < waX + waW &&
-      pos.y + VIS < waY + waH &&
-      pos.x + size.width - VIS > waX &&
-      pos.y + size.height - VIS > waY
-    if (visibleEnough) return
-
-    const x = Math.round(waX + Math.max(0, (waW - size.width) / 2))
-    const y = Math.round(waY + Math.max(0, (waH - size.height) / 2))
-    await win.setPosition({ type: 'Physical', x, y } as any)
-  } catch {}
 }
 
 // 兜底：强制退出专注模式，恢复原生标题栏（等价于“手动切换一次专注模式再切回来”的效果）
@@ -10132,7 +9865,7 @@ function bindEvents() {
       // 1) 若存在便签前窗口状态，先恢复
       try { await restoreWindowStateBeforeSticky() } catch {}
       // 2) 兜底：窗口过小则拉回 960x640，避免残留便签尺寸
-      try { await ensureMinWindowSize() } catch {}
+      try { await windowPlacementApi.ensureMinWindowSize() } catch {}
       // 3) 恢复专注模式状态（从 Store 读取；若未开启则兜底重置，防止异常无标题栏状态）
       try {
         const savedFocusMode = await getFocusMode(store)
@@ -10143,7 +9876,7 @@ function bindEvents() {
         }
       } catch {}
       // 4) 统一将窗口居中显示，避免位置跑偏
-      try { await centerWindow() } catch {}
+      try { await windowPlacementApi.centerWindow() } catch {}
 
       // 移除透明度 CSS 变量，确保主窗口不透明
       try { document.documentElement.style.removeProperty('--sticky-opacity') } catch {}
