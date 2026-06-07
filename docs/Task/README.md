@@ -227,6 +227,7 @@ docs/Task/
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 407/407 通过(原 390 + 新增 17)、main.ts 净 -319 行(10475→10156)
   - 提交:`d011364`(已推送 origin)
 - ✅ [2026-06-08-batch11-main-ts-extract-titlebar-status.md](Archive/2026-06/2026-06-08-batch11-main-ts-extract-titlebar-status.md) — Batch 11:抽离 titlebarStatus 状态镜像层(完成 2026-06-08,经 codex R2 复审 APPROVED)
+- ✅ [2026-06-08-batch12-main-ts-extract-sticky-todo-actions.md](Archive/2026-06/2026-06-08-batch12-main-ts-extract-sticky-todo-actions.md) — Batch 12:抽离 stickyTodoActions 工厂(便签模式待办交互,完成 2026-06-08,经 codex 4 轮 R4 复审 APPROVED)
   - **T1 ✅** `src/ui/titlebarStatus.ts` 新建:createTitlebarStatus factory(200 行,20 tests);8 个状态镜像函数聚类
     - refreshTitle / refreshStatus / syncToggleButton / setUpdateBadge
     - getScrollPercent / setScrollPercent / saveScrollPosition / restoreScrollPosition
