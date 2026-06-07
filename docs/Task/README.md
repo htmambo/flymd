@@ -128,3 +128,11 @@ docs/Task/
   - **T5 ✅** pdfContextExport.ts: 注释更新,反映新方案
   - **Codex 3 轮**:R1 REJECTED(2 阻断)、R2 REJECTED(1 阻断 dark-mode !important 漏)、R3 APPROVED(0 blocker/0 important/0 nit)
   - 验证:`npm run build` ✅(40.31s,exit 0)
+- ✅ [2026-06-07-phase-f-tsignore-cleanup.md](Archive/2026-06/2026-06-07-phase-f-tsignore-cleanup.md) — Phase F 第一步:非 main.ts 范围 @ts-ignore 全部清零(完成 2026-06-07,经 codex 2 轮联合复审)
+  - **Codex 2 轮**:R1 Claude 4/5 采纳+1/5 质疑(docx.ts:304 保留);R2 Codex 实测推翻 Claude 质疑,5/5 全采纳
+  - **T1 ✅** `uploader/imgla.ts:25` 删 @ts-ignore(line 26 已是 `(window as any)`)
+  - **T2 ✅** `uploader/s3.ts:12` 删 @ts-ignore(line 13 同样模式)
+  - **T3 ✅** `core/logger.ts:65,77` 删 @ts-ignore + 去掉 `(BaseDirectory as any)` 包装(plugin-fs 已 re-export 真实枚举)
+  - **T4 ✅** `exporters/docx.ts:304` 删 @ts-ignore(line 305 `const html2pdfMod: any` 已吸收属性类型)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、@ts-ignore 30→23
+  - 提交:`b1c75c6`(已推送 origin)
