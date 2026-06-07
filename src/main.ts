@@ -140,6 +140,7 @@ import {
   type StickyNoteUiHandles,
 } from './modes/stickyNoteUi'
 import { createStickyAutoSaver } from './modes/stickyAutoSave'
+import { createStickyTodoActions } from './modes/stickyTodoActions'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -3146,7 +3147,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         else { void renderKatexPlaceholders(buf, false, seq) }
       } catch {}
       // 便签模式：为待办项添加推送和提醒按钮，并自动调整窗口高度
-      try { if (stickyNoteMode) { addStickyTodoButtons(); scheduleAdjustStickyHeight() } } catch {}
+      try { if (stickyNoteMode) { stickyTodoActionsApi.addStickyTodoButtons(); scheduleAdjustStickyHeight() } } catch {}
       // 预览更新后自动刷新大纲（节流由内部逻辑与渲染频率保障）
       try { renderOutlinePanel() } catch {}
     } catch {}
@@ -6169,182 +6170,6 @@ const {
   createStickyNoteControls,
 } = stickyNoteUi
 
-// 便签待办按钮与推送/提醒逻辑仍保留在 main.ts，避免在首次拆分时引入过多依赖注入
-
-// 便签模式：为待办项添加推送和提醒按钮
-function addStickyTodoButtons() {
-  try {
-    // 获取预览区所有待办项
-    const taskItems = preview.querySelectorAll('li.task-list-item') as NodeListOf<HTMLLIElement>
-    if (!taskItems || taskItems.length === 0) return
-    const fileKey = currentFilePath || ''
-
-    taskItems.forEach((item, index) => {
-      // 避免重复添加按钮
-      if (item.querySelector('.sticky-todo-actions')) return
-
-      // 获取复选框
-      const checkbox = item.querySelector('input.task-list-item-checkbox') as HTMLInputElement | null
-
-      // 获取原始完整文本（包含时间）
-      const fullText = item.textContent?.trim() || ''
-
-      // 提取时间信息
-      const timePattern = /@\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(:\d{2})?/
-      const timeMatch = fullText.match(timePattern)
-      const datetimeText = timeMatch ? timeMatch[0] : ''
-
-      // 移除时间后的文本
-      const textWithoutTime = datetimeText ? fullText.replace(timePattern, '').trim() : fullText
-
-      // 重构DOM结构
-      try {
-        // 清空item内容（保留复选框）
-        const childNodes = Array.from(item.childNodes)
-        childNodes.forEach(node => {
-          if (node !== checkbox) {
-            node.remove()
-          }
-        })
-
-        // 创建内容容器
-        const contentDiv = document.createElement('span')
-        contentDiv.className = 'task-content'
-        contentDiv.textContent = textWithoutTime
-        item.appendChild(contentDiv)
-
-        // 如果有时间，添加时间图标
-        if (datetimeText) {
-          const timeIcon = document.createElement('span')
-          timeIcon.className = 'task-time-icon'
-          timeIcon.textContent = '🕐'
-          item.appendChild(timeIcon)
-        }
-      } catch (e) {
-        console.error('[便签模式] 重构DOM失败:', e)
-      }
-
-      // 创建按钮容器
-      const actionsDiv = document.createElement('span')
-      actionsDiv.className = 'sticky-todo-actions'
-
-      // 推送按钮
-      const pushBtn = document.createElement('button')
-      pushBtn.className = 'sticky-todo-btn sticky-todo-push-btn'
-      pushBtn.title = '推送到 xxtui'
-      pushBtn.innerHTML = '📤'
-      pushBtn.addEventListener('click', async (e) => {
-        e.stopPropagation()
-        await handleStickyTodoPush(fullText, index)
-      })
-
-      // 创建提醒按钮
-      const reminderBtn = document.createElement('button')
-      reminderBtn.className = 'sticky-todo-btn sticky-todo-reminder-btn'
-      // 若已有持久化提醒标记，则使用“已创建”状态
-      const hasReminder = !!(fileKey && stickyNoteReminders[fileKey] && stickyNoteReminders[fileKey][fullText])
-      if (hasReminder) {
-        reminderBtn.title = '已创建提醒'
-        reminderBtn.innerHTML = '🔔'
-        reminderBtn.classList.add('sticky-todo-reminder-created')
-      } else {
-        reminderBtn.title = '创建提醒 (@时间)'
-        reminderBtn.innerHTML = '⏰'
-      }
-      reminderBtn.addEventListener('click', async (e) => {
-        e.stopPropagation()
-        await handleStickyTodoReminder(fullText, index, reminderBtn)
-      })
-
-      actionsDiv.appendChild(pushBtn)
-      actionsDiv.appendChild(reminderBtn)
-      item.appendChild(actionsDiv)
-
-      // 创建tooltip显示完整内容
-      try {
-        const tooltip = document.createElement('div')
-        tooltip.className = 'task-tooltip'
-
-        // 如果有时间，显示"内容 + 时间"，否则只显示内容
-        if (datetimeText) {
-          tooltip.textContent = `${textWithoutTime} ${datetimeText}`
-        } else {
-          tooltip.textContent = textWithoutTime
-        }
-
-        item.appendChild(tooltip)
-      } catch (e) {
-        console.error('[便签模式] 创建tooltip失败:', e)
-      }
-    })
-  } catch (e) {
-    console.error('[便签模式] 添加待办按钮失败:', e)
-  }
-}
-
-// 处理便签模式待办项推送
-async function handleStickyTodoPush(todoText: string, index: number) {
-  try {
-    const api = pluginHost.getPluginAPI('xxtui-todo-push')
-    if (!api || !api.pushToXxtui) {
-      alert('xxtui 插件未安装或未启用\n\n请在"插件"菜单中启用 xxtui 插件')
-      return
-    }
-
-    // 调用推送 API
-    const success = await api.pushToXxtui('[TODO]', todoText)
-    if (success) {
-      // 显示成功提示
-      pluginNotice('推送成功', 'ok', 2000)
-    } else {
-      alert('推送失败，请检查 xxtui 配置\n\n请在"插件"菜单 → "待办" → "设置"中配置 API Key')
-    }
-  } catch (e) {
-    console.error('[便签模式] 推送失败:', e)
-    alert('推送失败: ' + (e instanceof Error ? e.message : String(e)))
-  }
-}
-
-// 处理便签模式待办项创建提醒
-async function handleStickyTodoReminder(todoText: string, index: number, btn?: HTMLButtonElement) {
-  try {
-    const api = pluginHost.getPluginAPI('xxtui-todo-push')
-    if (!api || !api.parseAndCreateReminders) {
-      alert('xxtui 插件未安装或未启用\n\n请在"插件"菜单中启用 xxtui 插件')
-      return
-    }
-
-    // 将单条待办文本包装成完整格式，以便插件解析
-    const todoMarkdown = `- [ ] ${todoText}`
-    const result = await api.parseAndCreateReminders(todoMarkdown)
-
-    if (result.success > 0) {
-      pluginNotice(`创建提醒成功: ${result.success} 条`, 'ok', 2000)
-      // 本地标记：当前条目已创建提醒，仅影响本次预览会话
-      try {
-        if (btn) {
-          btn.innerHTML = '🔔'
-          btn.title = '已创建提醒'
-          btn.classList.add('sticky-todo-reminder-created')
-        }
-        const fileKey = currentFilePath || ''
-        if (fileKey) {
-          if (!stickyNoteReminders[fileKey]) stickyNoteReminders[fileKey] = {}
-          stickyNoteReminders[fileKey][todoText] = true
-          await saveStickyNotePrefs({ opacity: stickyNoteOpacity, color: stickyNoteColor, reminders: stickyNoteReminders })
-        }
-      } catch {}
-    } else if (!todoText.includes('@')) {
-      alert('请在待办内容中添加 @时间 格式，例如：\n\n• 开会 @明天 下午3点\n• 写周报 @2025-11-21 09:00\n• 打电话 @2小时后')
-    } else {
-      alert('创建提醒失败，请检查时间格式')
-    }
-  } catch (e) {
-    console.error('[便签模式] 创建提醒失败:', e)
-    alert('创建提醒失败: ' + (e instanceof Error ? e.message : String(e)))
-  }
-}
-
 // 便签模式运行时依赖：由 stickyNote.ts 统一驱动模式切换与窗口行为
 const stickyNoteModeDeps: StickyNoteModeDeps = {
   loadPrefs: () => loadStickyNotePrefs(),
@@ -6391,6 +6216,20 @@ const stickyNoteModeDeps: StickyNoteModeDeps = {
     console.error('[便签模式] ' + scope + ':', e)
   },
 }
+
+// 便签模式 todo 按钮(推送 + 提醒)工厂
+const stickyTodoActionsApi = createStickyTodoActions({
+  getPreview: () => preview,
+  getCurrentFilePath: () => currentFilePath,
+  getReminders: () => stickyNoteReminders,
+  setReminders: (m) => { stickyNoteReminders = m },
+  savePrefs: saveStickyNotePrefs,
+  getOpacity: () => stickyNoteOpacity,
+  getColor: () => stickyNoteColor,
+  getPluginAPI: (id) => pluginHost.getPluginAPI(id),
+  pluginNotice,
+  alert: (msg) => { try { alert(msg) } catch {} },
+})
 
 // 进入便签模式
 async function enterStickyNoteMode(filePath: string) {
