@@ -220,7 +220,6 @@ import { applyPlainTextPaste, type PlainPasteEnv } from './core/plainPaste'
 
 type Mode = 'edit' | 'preview'
 // 最近文件最多条数
-const RECENT_MAX = 5
 
 // 渲染器（延迟初始化，首次进入预览时创建）
 let md: MarkdownIt | null = null
@@ -1339,6 +1338,15 @@ import {
   fileUrlToPreviewPath,
   resolvePreviewLocalDocPath,
 } from './utils/previewPath'
+import { scanTaskList, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
+import { getRecentFiles as getRecent, pushRecentFile as pushRecent } from './core/recentFiles'
+import {
+  clearOutlineHeadsCache,
+  cssEscapeCompat,
+  buildOutlineHeadsCacheFromCtx,
+  ensureOutlineHeadsCacheFromCtx,
+  type OutlineMode,
+} from './ui/outlineHeadsCache'
 
 // 统一确认弹框：优先使用 Tauri 原生 ask；浏览器环境回退到 window.confirm
 async function confirmNative(message: string, title = '确认') : Promise<boolean> {
@@ -1931,30 +1939,6 @@ try {
   })
 } catch {}
 
-function scanTaskList(md: string): Array<{ line: number; ch: number }> {
-  try {
-    const lines = String(md || '').split('\n')
-    const out: Array<{ line: number; ch: number }> = []
-    let fenceOpen = false
-    let fenceCh = ''
-    for (let i = 0; i < lines.length; i++) {
-      const s = lines[i]
-      const mFence = s.match(/^ {0,3}(`{3,}|~{3,})/)
-      if (mFence) {
-        const ch = mFence[1][0]
-        if (!fenceOpen) { fenceOpen = true; fenceCh = ch } else if (ch === fenceCh) { fenceOpen = false; fenceCh = '' }
-      }
-      if (fenceOpen) continue
-      const m = s.match(/^(\s*)(?:[-+*]|\d+[.)])\s+\[( |x|X)\]\s+/)
-      if (!m) continue
-      const start = m[1].length
-      const bpos = s.indexOf('[', start) + 1
-      if (bpos <= 0) continue
-      out.push({ line: i, ch: bpos })
-    }
-    return out
-  } catch { return [] }
-}
 
 function onCalloutFoldClick(ev: Event) {
   try {
@@ -3408,52 +3392,6 @@ async function initStore() {
 
 // 延迟加载高亮库并创建 markdown-it
 // 任务列表（阅读模式）：将 "- [ ]" / "- [x]" 渲染为复选框
-function applyMdTaskListPlugin(md: any) {
-  try {
-    md.core.ruler.after('inline', 'task-list', function (state: any) {
-      try {
-        const tokens = state.tokens || []
-        const TokenCtor = state.Token
-        for (let i = 0; i < tokens.length; i++) {
-          const tInline = tokens[i]
-          if (!tInline || tInline.type !== 'inline') continue
-          // 寻找前置 list_item_open（兼容是否有 paragraph_open）
-          let liIdx = -1
-          const tPrev = tokens[i - 1]
-          const tPrev2 = tokens[i - 2]
-          if (tPrev && tPrev.type === 'paragraph_open' && tPrev2 && tPrev2.type === 'list_item_open') liIdx = i - 2
-          else if (tPrev && tPrev.type === 'list_item_open') liIdx = i - 1
-          if (liIdx < 0) continue
-          const tLiOpen = tokens[liIdx]
-          const children = (tInline.children || [])
-          if (children.length === 0) continue
-          const first = children[0]
-          if (!first || first.type !== 'text') continue
-          const m = (first.content || '').match(/^(\s*)\[( |x|X)\]\s+/)
-          if (!m) continue
-          try { tLiOpen.attrJoin('class', 'task-list-item') } catch {}
-          try {
-            const level = tLiOpen.level - 1
-            for (let j = liIdx - 1; j >= 0; j--) {
-              const tj = tokens[j]
-              if (!tj) continue
-              if ((tj.type === 'bullet_list_open' || tj.type === 'ordered_list_open') && tj.level === level) { try { tj.attrJoin('class', 'task-list') } catch {}; break }
-            }
-          } catch {}
-          try {
-            first.content = (first.content || '').replace(/^(\s*)\[(?: |x|X)\]\s+/, '')
-            const box = new TokenCtor('html_inline', '', 0)
-            const checked = (m[2] || '').toLowerCase() === 'x'
-            box.content = `<input class="task-list-item-checkbox" type="checkbox"${checked ? ' checked' : ''}>`
-            children.unshift(box)
-            tInline.children = children
-          } catch {}
-        }
-      } catch {}
-      return false
-    })
-  } catch {}
-}
 async function ensureRenderer() {
   if (md) return
   if (!hljsLoaded) {
@@ -4537,7 +4475,7 @@ async function openFile(preset?: string) {
     await switchToPreviewAfterOpen()
     // 打开后恢复上次阅读/编辑位置
     await restoreDocPosIfAny(selectedPath as any)
-    await pushRecent(currentFilePath as any)
+    await pushRecent(store, currentFilePath as any)
     await renderRecentPanel(false)
     logInfo('�ļ����سɹ�', { path: selectedPath, size: content.length })
   } catch (error) {
@@ -4642,7 +4580,7 @@ async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boole
 
   const updateRecent = opts?.updateRecent !== false
   if (updateRecent) {
-    try { await pushRecent(currentFilePath as any) } catch {}
+    try { await pushRecent(store, currentFilePath as any) } catch {}
     try { await renderRecentPanel(false) } catch {}
   }
 
@@ -4787,7 +4725,7 @@ async function openFile2(preset?: unknown) {
           null
         if (typeof fn === 'function') {
           await fn(selectedPath)
-          try { await pushRecent(selectedPath as any) } catch {}
+          try { await pushRecent(store, selectedPath as any) } catch {}
           try { await renderRecentPanel(false) } catch {}
         } else {
           const pretty = String(rule.displayName || `.${ext}`) || `.${ext}`
@@ -4860,7 +4798,7 @@ async function openFile2(preset?: unknown) {
       }, 0)
     }
 
-    await pushRecent(currentFilePath)
+    await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件打开成功', { path: selectedPath, size: content.length })
   } catch (error) {
@@ -4906,7 +4844,7 @@ async function saveFile() {
     refreshTitle()
     // 通知标签系统文件已保存
     window.dispatchEvent(new CustomEvent('flymd-file-saved'))
-    await pushRecent(currentFilePath)
+    await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件保存成功', { path: currentFilePath, size: editor.value.length })
     status.textContent = '文件已保存'
@@ -5111,7 +5049,7 @@ async function saveAs() {
         try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
         try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs export) failed', e) }
         try { extWatcherIntegration?.finishSelfWriteCurrent() } catch {}
-        await pushRecent(currentFilePath);
+        await pushRecent(store, currentFilePath);
         await renderRecentPanel(false);
         logInfo('文件导出成功', { path: target, ext });
         status.textContent = '已导出';
@@ -5142,7 +5080,7 @@ async function saveAs() {
     try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
     try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
     try { extWatcherIntegration?.markSelfWriteCurrent() } catch {}
-    await pushRecent(currentFilePath)
+    await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件另存为成功', { path: target, size: editor.value.length })
     status.textContent = '文件已保存'
@@ -5178,33 +5116,12 @@ async function newFile() {
 }
 
 // 最近文件管理
-async function getRecent(): Promise<string[]> {
-  if (!store) return []
-  try {
-    const value = (await store.get('recent')) as string[] | undefined
-    return Array.isArray(value) ? value : []
-  } catch {
-    return []
-  }
-}
-
-async function pushRecent(path: string) {
-  if (!store) return
-  try {
-    const list = await getRecent()
-    const filtered = [path, ...list.filter((p) => p !== path)].slice(0, RECENT_MAX)
-    await store.set('recent', filtered)
-    await store.save()
-  } catch (e) {
-    console.warn('保存最近文件失败:', e)
-  }
-}
 
 // 渲染/切换 最近文件 面板
 async function renderRecentPanel(toggle = true) {
   const panel = document.getElementById('recent-panel') as HTMLDivElement
   if (!panel) return
-  const recents = await getRecent()
+  const recents = await getRecent(store)
   if (recents.length === 0) {
     panel.innerHTML = '<div class="empty">暂时没有最近文件</div>'
   } else {
@@ -5283,70 +5200,6 @@ let _outlineScrollBound = false
 let _outlineActiveId = ''
 let _outlineRaf = 0
 let _outlineActiveEl: HTMLElement | null = null
-type OutlineHeadsCache = {
-  mode: 'wysiwyg'|'preview'|'source'
-  scrollEl: HTMLElement
-  bodyEl: HTMLElement
-  ids: string[]
-  tops: number[]
-}
-let _outlineHeadsCache: OutlineHeadsCache | null = null
-
-function clearOutlineHeadsCache() {
-  _outlineHeadsCache = null
-}
-
-function cssEscapeCompat(s: string): string {
-  try {
-    const ce = (globalThis as any)?.CSS?.escape
-    if (typeof ce === 'function') return ce(String(s))
-  } catch {}
-  // 兜底：只处理最容易把选择器搞炸的字符，足够应付我们生成的 slug。
-  return String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function buildOutlineHeadsCacheFromCtx(ctx: { mode: 'wysiwyg'|'preview'|'source'; scrollEl: HTMLElement | null; bodyEl: HTMLElement | null; heads: HTMLElement[] }): OutlineHeadsCache | null {
-  try {
-    if (!ctx.scrollEl || !ctx.bodyEl) return null
-    const heads = ctx.heads && ctx.heads.length > 0
-      ? ctx.heads
-      : (Array.from(ctx.bodyEl.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[])
-    if (heads.length < 1) return null
-    const ids: string[] = []
-    const tops: number[] = []
-    for (const h of heads) {
-      const id = (h.getAttribute('id') || '').trim()
-      if (!id) continue
-      // offsetTop 不触发布局回流，适合在滚动同步里使用。
-      const t = (h as any).offsetTop
-      ids.push(id)
-      tops.push(Number.isFinite(t) ? t : 0)
-    }
-    if (ids.length < 1) return null
-
-    // 兜底：某些布局下 offsetTop 可能全部为 0，禁用缓存，回退到旧逻辑。
-    let allZero = true
-    for (const t of tops) { if (t > 0) { allZero = false; break } }
-    if (allZero) return null
-
-    return { mode: ctx.mode, scrollEl: ctx.scrollEl, bodyEl: ctx.bodyEl, ids, tops }
-  } catch {
-    return null
-  }
-}
-
-function ensureOutlineHeadsCacheFromCtx(ctx: { mode: 'wysiwyg'|'preview'|'source'; scrollEl: HTMLElement | null; bodyEl: HTMLElement | null; heads: HTMLElement[] }): OutlineHeadsCache | null {
-  try {
-    if (!ctx.scrollEl || !ctx.bodyEl) return null
-    const cached = _outlineHeadsCache
-    if (cached && cached.mode === ctx.mode && cached.scrollEl === ctx.scrollEl && cached.bodyEl === ctx.bodyEl) return cached
-    const next = buildOutlineHeadsCacheFromCtx(ctx)
-    _outlineHeadsCache = next
-    return next
-  } catch {
-    return null
-  }
-}
 function getOutlineContext(needHeads = true): { mode: 'wysiwyg'|'preview'|'source'; scrollEl: HTMLElement | null; bodyEl: HTMLElement | null; heads: HTMLElement[] } {
   try {
     if (wysiwyg) {
