@@ -184,9 +184,18 @@ docs/Task/
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 328/328 通过(原 308 + 新增 20)、main.ts 净 -227 行(11279→11052)
   - 提交:`b737d88`(已推送 origin)
 - ✅ [2026-06-07-batch7-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-07-batch7-main-ts-extract-2-modules.md) — Batch 7:抽离 libraryFileOps/topMenu(完成 2026-06-07,经 codex R2 联合复审 2 轮 APPROVED)
+- ✅ [2026-06-07-batch8-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-07-batch8-main-ts-extract-2-modules.md) — Batch 8:抽离 codeCopyEvents/mainTopMenus(完成 2026-06-07,经 codex R2 复审 APPROVED)
   - **T1 ✅** `src/core/libraryFileOps.ts` 新建:deleteFileSafe + newFileSafe(85 行,8 tests);纯 FS 助手,无 main-local 闭包
   - **T2 ✅** `src/ui/topMenu.ts` 新建:showTopMenu + TopMenuItemSpec(120 行,10 tests jsdom);模块级 _topMenuDocHandler 状态封闭
   - **pre-existing 风险**:R2 抓 `deleteFileSafe` 非空目录兜底不可达(Tauri remove throw),属 pre-existing(HEAD 7159ea8 已存在),按 CLAUDE.md 不做范围外改动,降级为后续 batch 修复
   - **中间状态事故**:旧块删除与新 import 加入之间出现半残态,用户报告顶部 UI 缺失,立即修复并恢复
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 346/346 通过(原 328 + 新增 18)、main.ts 净 -181 行(11055→10874)
   - 提交:`13e05fb`(已推送 origin)
+- ✅ [2026-06-07-batch8-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-07-batch8-main-ts-extract-2-modules.md) — Batch 8:抽离 codeCopyEvents/mainTopMenus(完成 2026-06-07,经 codex R2 复审 APPROVED)
+  - **T1 ✅** `src/ui/codeCopyEvents.ts` 新建:initCodeCopyEvents(82 行,9 tests);capture 阶段 DOM click 委托,纯文本/Alt 围栏/clipboard 兜底
+  - **T2 ✅** `src/ui/mainTopMenus.ts` 新建:createMainTopMenus factory(162 行,14 tests);22-deps 参数化封装 file-level 状态
+  - **T3 ✅** main.ts 接线:let/函数包装器模式,setMode 走 deps setter 保留原观察行为
+  - **关键设计**:工厂 `let` 赋值在 `function` 包装器之后,函数声明 hoist 避免 TDZ;deps getter/setter 模式替代直接 `mode = ...` 闭包写入
+  - **pre-existing 保留**:`ok = true` in finally(Codex R2 已确认非本批范围)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 369/369 通过(原 346 + 新增 23)、main.ts 净 -130 行(10874→10744)
+  - 提交:`c757f9b`(已推送 origin)
