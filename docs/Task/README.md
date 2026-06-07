@@ -104,3 +104,21 @@ docs/Task/
   - **T3 ✅** 同步:5 色调色板 `--lib-color-2..5` 按绿-橙-蓝-黄重排(亮/暗/body.light-mode 三套)
   - **T4 ✅** 同步:`buildDir` 文件 scheme 计算统一为 `level`,与文件夹共用 `level%5+1`,文件图标与 rail 严格同步
   - **T5 ✅** 验证:`npx tsc --noEmit` ✅、codex 复审通过、用户 ≥6 级嵌套目录实测各级正确循环
+- ✅ [PDF_EXPORT_COMPLETENESS_FIX_PLAN.md](Archive/2026-06/PDF_EXPORT_COMPLETENESS_FIX_PLAN.md) — PDF 右键导出完整性修复(完成 2026-06-07,经 codex 复核)
+  - **T1 ✅** main.ts: 抽取 `renderMermaidIn` + 新增 `flymdRenderMarkdownToContainer`(复用主预览渲染管线)
+  - **T2 ✅** pdfContextExport: 挂载后再渲染,透传 filePath
+  - **T3 ✅** pdfContextExport: 错误/成功提示去重(移除双重 overlay.fail,区分"未提供"与"显式为空" content)
+  - **T4 ✅** pdf.ts: 图片内联移至挂载后,真实布局下等待
+  - **T5 ✅** progressOverlay: 遮罩弱化(`rgba(15,23,42,.28)`)+ 暗色主题适配
+  - **T6 ✅** `npm run build` ✅
+  - **T7 ✅** codex 复审追加 3 项:data-abs-path 安全(始终基于 src 重写)、移除多余 WebDAV remap、Tauri 兜底 URL 泄漏守卫
+  - 验证:`npm run build` ✅(44.17s,exit 0)
+- ✅ [PDF_EXPORT_ALWAYS_LIGHT_THEME_PLAN.md](Archive/2026-06/PDF_EXPORT_ALWAYS_LIGHT_THEME_PLAN.md) — PDF 始终白底 + Mermaid classDiagram 文字可见(完成 2026-06-07,经 3 轮 codex 复审最终 APPROVED)
+  - **根因**:Mermaid cache key 不含 theme + mermaidReady 一次性初始化;`body.dark-mode .preview !important` 硬编码色值不读 CSS 变量;临时改 document.body 引发 UI 闪烁 + 中途切换被吞
+  - **T1 ✅** pdf.ts: `resolvedBg='#ffffff'` 硬编码;`LIGHT_THEME_VARS` 22 个 CSS 变量 + `applyLightThemeVars(exportRoot)`
+  - **T2 ✅** pdf.ts: 移除 `document.body.classList` 操作(零全局状态污染)
+  - **T3 ✅** pdf.ts: offscreen `mount` 内追加 `<style>`,用 `.preview.flymd-export-preview` (0,2,0) + !important 覆盖 `body.dark-mode` 的 hardcoded 规则(链接/hljs token/table 斑马纹/blockquote/hr/pre)
+  - **T4 ✅** main.ts: `flymdReRenderMermaidIn` 走 no-cache 路径——`invalidateMermaidSvgCache` + `mermaidReady=false` + `mermaid.initialize(lightCfg)`(theme='default',删 themeVariables)+ 仅成功时 `mermaidReady=true`
+  - **T5 ✅** pdfContextExport.ts: 注释更新,反映新方案
+  - **Codex 3 轮**:R1 REJECTED(2 阻断)、R2 REJECTED(1 阻断 dark-mode !important 漏)、R3 APPROVED(0 blocker/0 important/0 nit)
+  - 验证:`npm run build` ✅(40.31s,exit 0)
