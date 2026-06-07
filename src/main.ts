@@ -4420,7 +4420,6 @@ const _imageUploader = createImageUploader({
 function isTauriRuntime(): boolean {
   try {
     // Tauri v1/v2 均可通过以下全局标记判断
-    // @ts-ignore
     return typeof window !== 'undefined' && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
   } catch { return false }
 }
@@ -8849,9 +8848,7 @@ function bindEvents() {
     } catch {}
   }
   // 全局错误捕获
-  window.addEventListener('error', (e) => { try { (e as any)?.preventDefault?.() } catch {}; // @ts-ignore
-    showError(e.message || '未捕获错误', (e as any)?.error)
-  })
+  window.addEventListener('error', (e) => { try { (e as any)?.preventDefault?.() } catch {}; showError(e.message || '未捕获错误', (e as any)?.error) })
   window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => { try { e.preventDefault() } catch {}; const reason = (e?.reason instanceof Error) ? e.reason : new Error(String(e?.reason ?? '未知拒绝'))
     showError('未处理的 Promise 拒绝', reason)
   })
