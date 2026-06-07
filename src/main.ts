@@ -789,10 +789,6 @@ let wysiwygEnterToRenderOnly = false
 let wysiwygHoldInlineDollarUntilEnter = false
 let wysiwygHoldFenceUntilEnter = false
 
-function shouldDeferWysiwygRender(): boolean {
-  return !!(wysiwygEnterToRenderOnly || wysiwygHoldInlineDollarUntilEnter || wysiwygHoldFenceUntilEnter)
-}
-
 // 模式切换提示：在右下角通知区域显示当前模式
 function notifyModeChange(): void {
   try {
@@ -940,18 +936,6 @@ async function setPortableModeEnabled(next: boolean): Promise<void> {
 }
 
 // 便携模式：导入备份（依赖 store，保留在 main.ts）
-async function importPortableBackupSilent(): Promise<boolean> {
-  try {
-    const payload = await readPortableBackupPayload()
-    if (!payload) return false
-    await restoreConfigFromPayload(payload)
-    return true
-  } catch (err) {
-    console.warn('[Portable] 导入失败', err)
-    return false
-  }
-}
-
 async function maybeAutoImportPortableBackup(): Promise<void> {
   try {
     // 先看当前环境是否真有导入必要，别每次启动都傻读一遍大备份文件
@@ -976,15 +960,6 @@ async function maybeAutoImportPortableBackup(): Promise<void> {
     await restoreConfigFromPayload(payload)
   } catch (err) {
     console.warn('[Portable] 自动导入异常', err)
-  }
-}
-
-async function maybeAutoExportPortableBackup(): Promise<void> {
-  try {
-    if (!(await isPortableModeEnabled())) return
-    await exportPortableBackupSilent()
-  } catch (err) {
-    console.warn('[Portable] 自动导出异常', err)
   }
 }
 
@@ -6321,14 +6296,6 @@ async function getDefaultPasteDir(): Promise<string | null> {
   } catch { return null }
 }
 
-async function setDefaultPasteDir(p: string) {
-  try {
-    if (!store) return
-    await store.set('defaultPasteDir', p)
-    await store.save()
-  } catch {}
-}
-
 // 读取图床上传配置：仅在“启用”且字段完整时返回（用于粘贴/拖拽自动上传）
 async function getUploaderConfig(): Promise<AnyUploaderConfig | null> {
   try {
@@ -7898,16 +7865,7 @@ async function getWindowScaleFactorSafe(): Promise<number> {
 }
 
 // 退出便签模式时恢复全局状态标志（供关闭后新实例正确启动）
-function resetStickyModeFlags(): void {
-  try {
-    stickyNoteMode = false
-    stickyNoteLocked = false
-    stickyNoteOnTop = false
-    stickyTodoAutoPreview = false
-    document.body.classList.remove('sticky-note-mode')
-    try { document.documentElement.style.removeProperty('--sticky-opacity') } catch {}
-  } catch {}
-}
+
 
 // 兜底：如果检测到窗口尺寸异常偏小，则恢复到 960x640
   async function ensureMinWindowSize(): Promise<void> {
