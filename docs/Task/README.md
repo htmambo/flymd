@@ -176,3 +176,10 @@ docs/Task/
   - **关键**:ContextMenuContext type 复用 contextMenus.ts(避免重复定义);deps 对象参数化替代 5 个闭包全局;mode 收窄到 'edit' | 'preview' | 'wysiwyg'
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 308/308 通过(原 290 + 新增 18)、main.ts 净 -91 行(11359→11268)
   - 提交:`6e8c495`(已推送 origin)
+- ✅ [2026-06-07-batch6-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-07-batch6-main-ts-extract-2-modules.md) — Batch 6:抽离 docPosition/previewMeta(完成 2026-06-07,经 codex R2 联合复审 2 轮 APPROVED)
+  - **T1 ✅** `src/core/docPosition.ts` 新建:createDocPositionStore factory(110 行,10 tests);deps getter 模式封装 7 个闭包状态
+  - **T2 ✅** `src/ui/previewMeta.ts` 新建:injectPreviewMeta + set/isPreviewMetaVisible(170 行,10 tests jsdom)
+  - **关键修复**:R2 首轮抓 `window.flymdFetchPageTitle` 全局暴露被误删(wysiwyg/v2:800 仍引用),已回填 fetchPageTitle 定义后
+  - **清理**:3 个未用 import(`resolveMetadataLabel` / `set/isPreviewMetaVisible` 已被新模块内化)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 328/328 通过(原 308 + 新增 20)、main.ts 净 -227 行(11279→11052)
+  - 提交:`b737d88`(已推送 origin)
