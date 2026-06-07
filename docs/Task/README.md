@@ -164,3 +164,14 @@ docs/Task/
   - **T3 ✅** `src/utils/previewPath.ts` 新建:5 个预览路径工具 + 常量(132 行,32 tests);参数化改造(显式 second arg currentFilePath 替代闭包全局)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 249/249 通过(原 188 + 新增 61)、main.ts 净 -186 行(11692→11506)
   - 提交:`75ef51a`(已推送 origin)
+- ✅ [2026-06-07-batch4-main-ts-extract-3-modules.md](Archive/2026-06/2026-06-07-batch4-main-ts-extract-3-modules.md) — Batch 4:抽离 taskList/outlineHeadsCache/recentFiles(完成 2026-06-07,经 codex R2 联合复审 APPROVED)
+  - **T1 ✅** `src/plugins/markdownItTaskList.ts` 新建:scanTaskList/applyMdTaskListPlugin(95 行,16 tests)
+  - **T2 ✅** `src/ui/outlineHeadsCache.ts` 新建:type + 4 函数(75 行,15 tests jsdom);模块级 `_outlineHeadsCache` 封闭
+  - **T3 ✅** `src/core/recentFiles.ts` 新建:RECENT_MAX + 2 函数(38 行,10 tests);参数化 store 替代闭包全局,8 处 call site 补传
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 290/290 通过(原 249 + 新增 41)、main.ts 净 -147 行(11506→11359)
+  - 提交:`e4309f8`(已推送 origin)
+  - **T1 ✅** `src/utils/visualColumn.ts` 新建:advanceVisualColumn/calcVisualColumn/offsetForVisualColumn(35 行,纯函数,12 tests)
+  - **T2 ✅** `src/core/frontMatter.ts` 新建:splitYamlFrontMatter/parseFrontMatterMeta(80 行,17 tests,plugin runtime 仍 re-export)
+  - **T3 ✅** `src/utils/previewPath.ts` 新建:5 个预览路径工具 + 常量(132 行,32 tests);参数化改造(显式 second arg currentFilePath 替代闭包全局)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 249/249 通过(原 188 + 新增 61)、main.ts 净 -186 行(11692→11506)
+  - 提交:`75ef51a`(已推送 origin)
