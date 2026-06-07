@@ -2752,7 +2752,6 @@ async function saveImageToLocalAndGetPath(file: File, fname: string, force?: boo
 }
 
 async function buildWysiwygV2FromTextarea(): Promise<HTMLDivElement | null> {
-  console.log('[WYSIWYG] buildWysiwygV2FromTextarea, editor.value length:', (editor.value || '').length)
   let root = document.getElementById('md-wysiwyg-root') as HTMLDivElement | null
   if (!root) {
     root = document.createElement('div')
@@ -3773,11 +3772,9 @@ function refreshStatus() {
 // 初始化存储（Tauri Store），失败则退化为内存模式
 async function initStore() {
   try {
-    console.log('初始化应用存储...')
     // Tauri v2 使用 Store.load，在应用数据目录下持久化
     store = await Store.load('flymd-settings.json')
     try { bindSharedStore(store) } catch {}
-    console.log('存储初始化成功')
     void logInfo('应用存储初始化成功')
     return true
   } catch (error) {
@@ -4227,10 +4224,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
 
   // Mermaid 渲染：标准化为 <div class="mermaid"> 后逐个渲染为 SVG
   try {
-    console.log('=== 开始 Mermaid 渲染流程 ===')
     // 情况1：<pre><code class="language-mermaid">...</code></pre>
     const codeBlocks = preview.querySelectorAll('pre > code.language-mermaid')
-    console.log('找到 language-mermaid 代码块数量:', codeBlocks.length)
     codeBlocks.forEach((code) => {
       try {
         const pre = code.parentElement as HTMLElement
@@ -4244,7 +4239,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
 
     // 情况2：<pre class="mermaid">...</pre>
     const preMermaid = preview.querySelectorAll('pre.mermaid')
-    console.log('找到 pre.mermaid 元素数量:', preMermaid.length)
     preMermaid.forEach((pre) => {
       try {
         const text = pre.textContent || ''
@@ -4256,7 +4250,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     })
 
     const nodes = Array.from(preview.querySelectorAll('.mermaid')) as HTMLElement[]
-    console.log(`找到 ${nodes.length} 个 Mermaid 节点`)
     if (nodes.length > 0) {
       let mermaid: any
       try {
@@ -4281,7 +4274,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         // 初始化 Mermaid；所见模式下降低日志级别，避免错误信息干扰输入体验
         mermaid.initialize(getMermaidConfig())
         mermaidReady = true
-        console.log('Mermaid 已初始化')
         try { decorateCodeBlocks(preview) } catch {}
       } else {
         // 已初始化时，动态调整主题（切换所见/预览模式或夜间模式时生效）
@@ -4294,24 +4286,20 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         const code = el.textContent || ''
         const hash = hashMermaidCode(code)
         const desiredId = `${hash}-${mermaidSvgCacheVersion}-${i}`
-        console.log(`渲染 Mermaid 图表 ${i + 1}:`, code.substring(0, 50))
         try {
           let svgMarkup = getCachedMermaidSvg(code, desiredId)
           let cacheHit = false
           if (svgMarkup) {
             cacheHit = true
-            console.log(`Mermaid 图表 ${i + 1} 使用缓存，ID: ${desiredId}`)
           } else {
             const renderId = `${hash}-${Date.now()}-${i}`
             const { svg } = await mermaid.render(renderId, code)
             cacheMermaidSvg(code, svg, renderId)
             svgMarkup = svg.split(renderId).join(desiredId)
-            console.log(`Mermaid 图表 ${i + 1} 首次渲染完成，缓存已更新`)
           }
           const wrap = document.createElement('div')
           wrap.innerHTML = svgMarkup || ''
           const svgEl = wrap.firstElementChild as SVGElement | null
-          console.log(`Mermaid 图表 ${i + 1} SVG 元素:`, svgEl?.tagName, svgEl?.getAttribute('viewBox'))
           if (svgEl) { try { normalizeMermaidSvg(svgEl) } catch {}
             svgEl.setAttribute('data-mmd-hash', hash)
             svgEl.setAttribute('data-mmd-cache', cacheHit ? 'hit' : 'miss')
@@ -4325,11 +4313,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
             try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
             el.replaceWith(fig)
             try { postAttachMermaidSvgAdjust(svgEl) } catch {}
-            console.log(`Mermaid 图表 ${i + 1} 已插入 DOM（${cacheHit ? '缓存命中' : '新渲染'}）`)
-            setTimeout(() => {
-              const check = document.querySelector(`#${svgEl.id}`)
-              console.log(`Mermaid 图表 ${i + 1} 检查 DOM 中是否存在:`, check ? '存在' : '不存在')
-            }, 100)
           } else {
             throw new Error('生成的 SVG 节点为空')
           }
@@ -5251,7 +5234,6 @@ async function openFile2(preset?: unknown) {
               background: true,
               shouldCommit: () => _autoWysiwygAfterOpenSeq === openSeq && currentFilePath === selectedPath && !wysiwyg,
             })
-            console.log('[WYSIWYG] 打开文档后自动启用所见模式（后台无感）', { wysiwygDefault, wasWysiwyg })
           } catch (e) {
             console.error('[WYSIWYG] 打开文档后启用所见模式失败:', e)
           }
@@ -8037,11 +8019,9 @@ async function deleteFileSafe(p: string, permanent = false): Promise<void> {
   // 第一步：尝试移至回收站（如果不是永久删除）
   if (!permanent && typeof invoke === 'function') {
     try {
-      console.log('[deleteFileSafe] 调用 move_to_trash')
       await invoke('move_to_trash', { path: p })
       // 验证删除是否成功
       const stillExists = await exists(p)
-      console.log('[deleteFileSafe] 回收站删除后检查文件是否存在:', stillExists)
       if (!stillExists) {
         console.log('[deleteFileSafe] 文件已成功移至回收站')
         return
@@ -10885,7 +10865,7 @@ function bindEvents() {
       }
     })
   } catch (e) {
-    console.log('窗口关闭监听注册失败（浏览器模式）')
+    // 浏览器/非 Tauri 环境下预期失败,无 action
   }
 
   // 点击外部区域时关闭最近文件面板
@@ -11076,7 +11056,6 @@ function bindEvents() {
 // 启动
 (async () => {
   try {
-    console.log('flyMD (飞速MarkDown) 应用启动...')
     try { logInfo('打点:JS启动') } catch {}
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
@@ -11390,15 +11369,16 @@ function bindEvents() {
       const domReady = performance.getEntriesByName('flymd-dom-ready')[0]?.startTime || 0
       const firstRender = performance.getEntriesByName('flymd-first-render')[0]?.startTime || 0
       const appReady = performance.getEntriesByName('flymd-app-ready')[0]?.startTime || 0
-      console.log('[启动性能]', {
-        'DOM就绪': `${(domReady - appStart).toFixed(0)}ms`,
-        '首次渲染': `${(firstRender - appStart).toFixed(0)}ms`,
-        '应用就绪': `${(appReady - appStart).toFixed(0)}ms`,
-        '总耗时': `${(appReady - appStart).toFixed(0)}ms`
-      })
+      if (DEBUG_RENDER) {
+        console.log('[启动性能]', {
+          'DOM就绪': `${(domReady - appStart).toFixed(0)}ms`,
+          '首次渲染': `${(firstRender - appStart).toFixed(0)}ms`,
+          '应用就绪': `${(appReady - appStart).toFixed(0)}ms`,
+          '总耗时': `${(appReady - appStart).toFixed(0)}ms`
+        })
+      }
     } catch {}
 
-    console.log('应用初始化完成')
     void logInfo('flyMD (飞速MarkDown) 应用初始化完成')
 
     // 检查是否默认启用所见模式（便签模式下不启用，避免覆盖便签的阅读模式样式）
@@ -11418,7 +11398,6 @@ function bindEvents() {
         setTimeout(async () => {
           try {
             await setWysiwygEnabled(true)
-            console.log('[WYSIWYG] 默认启用所见模式')
           } catch (e) {
             console.error('[WYSIWYG] 默认启用所见模式失败:', e)
           }
