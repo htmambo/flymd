@@ -610,6 +610,27 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
 
   const clone = el.cloneNode(true) as HTMLElement
 
+  // 强制展开所有 callout + 隐藏交互按钮：PDF 不支持点击交互，折叠态会丢内容，按钮也无意义。
+  // 改在 clone 上而非原 el 上，避免 live UI 闪烁。
+  try {
+    const callouts = clone.querySelectorAll('.callout')
+    callouts.forEach((el2) => {
+      try {
+        el2.classList.remove('folded')
+        try { el2.removeAttribute('data-folded') } catch {}
+        const content = el2.querySelector('.callout-content') as HTMLElement | null
+        if (content) { try { content.style.display = '' } catch {} }
+        const svg = el2.querySelector('.callout-fold-icon svg') as SVGElement | null
+        if (svg) { try { svg.style.transform = '' } catch {} }
+        // 隐藏折叠/复制按钮：PDF 中点击无意义，且占视觉空间
+        const fold = el2.querySelector('.callout-fold-icon') as HTMLElement | null
+        if (fold) { try { fold.style.display = 'none' } catch {} }
+        const copy = el2.querySelector('.callout-copy-icon') as HTMLElement | null
+        if (copy) { try { copy.style.display = 'none' } catch {} }
+      } catch {}
+    })
+  } catch {}
+
   // 重新渲染 Mermaid：使用新主题（light），避免 dark mode 导出的 PDF 仍是黑底/白字。
   // 依赖 main.ts 暴露的 flymdReRenderMermaidIn：会清缓存、强制 mermaid.initialize(light)、逐节点重新渲染。
   try {
@@ -937,6 +958,18 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
       body.dark-mode .preview.flymd-export-preview hr,
       body.light-mode .preview.flymd-export-preview hr {
         border-color: #e5e7eb !important;
+      }
+      /* Callout 兜底展开 + 隐藏交互按钮：PDF 不支持点击交互。
+         正常路径在 pdfContextExport / pdf.ts 主路径已 JS 强制展开并隐藏按钮；这里 CSS 兜底双保险。 */
+      body.dark-mode .preview.flymd-export-preview .callout-content,
+      body.light-mode .preview.flymd-export-preview .callout-content {
+        display: block !important;
+      }
+      body.dark-mode .preview.flymd-export-preview .callout-fold-icon,
+      body.dark-mode .preview.flymd-export-preview .callout-copy-icon,
+      body.light-mode .preview.flymd-export-preview .callout-fold-icon,
+      body.light-mode .preview.flymd-export-preview .callout-copy-icon {
+        display: none !important;
       }
     `
     mount.appendChild(forceLight)

@@ -60,6 +60,28 @@ export async function exportFileToPdf(options: PdfExportOptions): Promise<void> 
     // 透传 filePath 使渲染器能注入 data-abs-path/data-raw-src，供 exportPdf 内联图片时使用。
     await renderToContainer(previewBody, markdown, options.filePath || null)
 
+    // 5.5 强制展开所有 callout：PDF 不支持点击交互，若 callout 处于折叠态（HTML 初始或运行时点击过），
+    // callout-content 会被 display:none，截图时丢内容。同时隐藏折叠/复制按钮（PDF 中点击无意义）。
+    try {
+      const callouts = previewBody.querySelectorAll('.callout')
+      callouts.forEach((el) => {
+        try {
+          el.classList.remove('folded')
+          try { el.removeAttribute('data-folded') } catch {}
+          const content = el.querySelector('.callout-content') as HTMLElement | null
+          if (content) { try { content.style.display = '' } catch {} }
+          // 折叠图标也复位（避免 PDF 中出现 -90° 的折叠箭头）
+          const svg = el.querySelector('.callout-fold-icon svg') as SVGElement | null
+          if (svg) { try { svg.style.transform = '' } catch {} }
+          // 隐藏折叠/复制按钮：PDF 中点击无意义，且占视觉空间
+          const fold = el.querySelector('.callout-fold-icon') as HTMLElement | null
+          if (fold) { try { fold.style.display = 'none' } catch {} }
+          const copy = el.querySelector('.callout-copy-icon') as HTMLElement | null
+          if (copy) { try { copy.style.display = 'none' } catch {} }
+        } catch {}
+      })
+    } catch {}
+
     // 等待一帧，让浏览器完成布局计算
     await new Promise(resolve => requestAnimationFrame(resolve))
 
