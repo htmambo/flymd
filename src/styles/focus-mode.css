@@ -1,0 +1,134 @@
+/* ============ 右键菜单样式结束 ============ */
+
+/* ============ 专注模式（Focus Mode）============ */
+/* 隐藏顶栏，鼠标悬停顶部边缘时显示 */
+
+/* 专注模式下 #app 需要作为定位上下文 */
+body.focus-mode #app {
+  position: relative;
+}
+
+/* 专注模式下的 titlebar：使用 absolute 脱离文档流 */
+body.focus-mode .titlebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  transform: translateY(-100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.25s ease, opacity 0.25s ease;
+}
+
+/* 鼠标悬停顶部触发区域或 titlebar 本身时显示 */
+body.focus-mode .titlebar.show {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* 专注模式下容器高度扩展到 100% */
+body.focus-mode .container {
+  height: 100% !important;
+}
+
+/* 顶部触发区域：透明的悬停检测条 */
+.focus-trigger-zone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 10000;
+  pointer-events: none;
+  display: none;
+}
+
+body.focus-mode .focus-trigger-zone {
+  display: block;
+  pointer-events: auto;
+}
+
+/* 专注模式下库侧栏：纯文字，无图标，无悬浮效果，背景跟随编辑区 */
+body.focus-mode .library {
+  border-right: none !important;
+  box-shadow: none !important;
+}
+
+body.focus-mode .library .lib-header {
+  border-bottom: none !important;
+}
+
+body.focus-mode .library .lib-tg {
+  display: inline-flex !important;
+  opacity: 0.4;
+}
+
+/* 移除悬浮效果 */
+body.focus-mode .library .lib-node:hover {
+  background: transparent !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* 简化行间距和内边距 */
+body.focus-mode .library .lib-node {
+  padding: 3px 8px;
+  gap: 0;
+  min-height: 22px;
+}
+
+/* 专注模式下缩进变小，树线横线需同步缩短，避免与图标重叠 */
+body.focus-mode .library .lib-children > .lib-node::before {
+  width: 14px;
+}
+
+/* 文件名纯文字显示 */
+body.focus-mode .library .lib-node .lib-name {
+  padding-left: 0;
+  font-weight: 400;
+}
+
+/* 选中态保持简单背景 */
+body.focus-mode .library .lib-node.selected {
+  background: rgba(127,127,127,0.1);
+}
+
+/* 大纲条目也简化 */
+body.focus-mode .library .lib-outline .ol-item:hover {
+  background: transparent !important;
+  border-left-color: transparent !important;
+  transform: none !important;
+}
+
+body.focus-mode .library .lib-outline .ol-tg[data-idx] {
+  opacity: 0.35;
+}
+body.focus-mode .library .lib-outline .ol-item:hover .ol-tg[data-idx] {
+  opacity: 0.7;
+}
+
+/* 库按钮纯文字样式 */
+body.focus-mode .library .lib-choose-btn,
+body.focus-mode .library .lib-action-btn {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 4px 8px !important;
+  font-weight: 400 !important;
+  color: var(--muted) !important;
+}
+
+body.focus-mode .library .lib-choose-btn:hover,
+body.focus-mode .library .lib-action-btn:hover {
+  background: transparent !important;
+  color: var(--fg) !important;
+}
+
+body.focus-mode .library .lib-action-btn.active {
+  background: transparent !important;
+  color: var(--fg) !important;
+  font-weight: 500 !important;
+}
+
