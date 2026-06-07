@@ -311,11 +311,6 @@ function isInputPendingCompat(): boolean {
   return false
 }
 
-async function yieldToUi(): Promise<void> {
-  // setTimeout(0) 足够让出一次事件循环，避免长任务阻塞渲染/输入。
-  await new Promise<void>((r) => setTimeout(r, 0))
-}
-
 function renderKatexToHtmlCached(katexMod: any, latex: string, displayMode: boolean): string {
   const src = latex || ''
   // 大公式缓存意义不大，只会吃内存；小公式重复率高，缓存很划算。
@@ -1054,27 +1049,6 @@ async function getAppLocalDataDirCached(): Promise<string | null> {
   _appLocalDataDirCached = null
   return _appLocalDataDirCached
 }
-async function resolvePluginInstallAbsolute(dir: string): Promise<string | null> {
-  try {
-    const base = await getAppLocalDataDirCached()
-    if (!base) return null
-    const sep = base.includes('\\') ? '\\' : '/'
-    const cleaned = String(dir || '').replace(/^[/\\]+/, '').replace(/[\\/]+/g, '/')
-    if (!cleaned) return base
-    return base + sep + cleaned.replace(/\//g, sep)
-  } catch { return null }
-}
-function toPluginAssetUrl(absDir: string | null, relPath: string): string {
-  try {
-    if (!absDir) return ''
-    let rel = String(relPath || '').trim()
-    if (!rel) return ''
-    rel = rel.replace(/^[/\\]+/, '').replace(/[\\/]+/g, '/')
-    const sep = absDir.includes('\\') ? '\\' : '/'
-    const abs = absDir + sep + rel.replace(/\//g, sep)
-    return typeof convertFileSrc === 'function' ? convertFileSrc(abs) : abs
-  } catch { return '' }
-}
 const builtinPlugins: InstalledPlugin[] = [
   { id: 'uploader-s3', name: '图床管理', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '粘贴/拖拽图片自动上传，支持 S3/R2 或 ImgLa，使用设置中的凭据。' },
   { id: 'webdav-sync', name: 'WebDAV 同步', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: 'F5/启动/关闭前同步，基于修改时间覆盖' }
@@ -1482,25 +1456,6 @@ function initContextMenuListener() {
 }
 
 // ============ 右键菜单系统结束 ============
-
-// 获取扩展卡片在统一网格中的排序序号（越小越靠前）
-function getPluginOrder(id: string, name?: string, bias = 0): number {
-  try {
-    const key = id || ''
-    // @ts-ignore — _extGlobalOrder 在文件下方声明，TS 严格模式视为未声明
-    if (key && Object.prototype.hasOwnProperty.call(_extGlobalOrder, key)) {
-      // @ts-ignore
-      return _extGlobalOrder[key]
-    }
-    const base = 50_000 + bias
-    const label = String(name || id || '').toLowerCase()
-    if (!label) return base
-    const ch = label.charCodeAt(0)
-    return base + (Number.isFinite(ch) ? ch : 0)
-  } catch {
-    return 99_999
-  }
-}
 
 // 文档阅读/编辑位置持久化（最小实现）
 type DocPos = {
@@ -8199,19 +8154,7 @@ async function newFileSafe(dir: string, name = '新建文档.md', content?: stri
   await writeTextFile(full, content ?? '# 标题\n\n', {} as any)
   return full
 }
-async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<string> {
-  const sep = dir.includes('\\') ? '\\' : '/'
-  let n = name, i = 1
-  while (await exists(dir + sep + n)) {
-    n = `${name} ${++i}`
-  }
-  const full = dir + sep + n
-  await mkdir(full, { recursive: true } as any)
-  // 创建一个占位文件，使文件夹在库侧栏中可见
-  const placeholder = full + sep + 'README.md'
-  await writeTextFile(placeholder, '# ' + n + '\n\n', {} as any)
-  return full
-}async function renderDir(container: HTMLDivElement, dir: string) {
+async function renderDir(container: HTMLDivElement, dir: string) {
   container.innerHTML = ''
   const entries = await listDirOnce(dir)
   for (const e of entries) {
