@@ -53,9 +53,9 @@ main.ts 已从 `src/utils/*` 导入以下剥离模块（说明项目**已经在�
 | `writeLibraryDockedToLocalStorage` | 871 | 同上 | 同上 |
 | `readLibrarySideFromLocalStorage` | 874 | 同上 | 同上 |
 | `writeLibrarySideToLocalStorage` | 881 | 同上 | 同上 |
-| `escapeAttrValue` | 1439 | 纯函数 | `utils/htmlEscape.ts` |
+| `escapeAttrValue` | ~~1439~~ ❌已删 | 纯函数 | 已在 `src/utils/escape.ts:3` 独立存在,副本已删(d49c182) |
 | `isInputPendingCompat` | 306 | 平台检测 | `utils/platform.ts` |
-| `yieldToUi` | 314 | microtask 工具 | `utils/scheduler.ts` |
+| `yieldToUi` | ~~314~~ ❌已删 | microtask 工具 | 已在 `ui/quickSearch.ts:68` 独立存在,副本已删(3cc28b8) |
 | `scheduleAfterFirstPaint` | 263 | 同上 | 同上 |
 | `scheduleDeferredStartupWork` | 281 | 同上 | 同上 |
 
@@ -86,6 +86,7 @@ main.ts 已从 `src/utils/*` 导入以下剥离模块（说明项目**已经在�
 - 提取 readLibrary*Docked/Side + write*（4 个 localStorage 工具）
 - 预期效果：main.ts → 11,500 行（-500 行）
 - 收益：低（少量瘦身），但**为后续拆分打基础**
+- **进展(2026-06-07)**：已删除 10 个死代码/重复定义函数（-102 行实际削减,无 main.ts 行为变化）。包括 escapeAttrValue、yieldToUi、getPluginOrder、newFolderSafe、resolvePluginInstallAbsolute、toPluginAssetUrl、shouldDeferWysiwygRender、importPortableBackupSilent、maybeAutoExportPortableBackup、setDefaultPasteDir、resetStickyModeFlags。codex 复审 d49c182/3cc28b8/139208f 全部 APPROVED。
 
 **Batch 2（中风险，~3-4 天）**：UI 子组件逻辑
 - "右键菜单"上下文构建（line 1380-1450）→ `src/menus/contextMenu.ts`
