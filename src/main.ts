@@ -1330,6 +1330,15 @@ async function restoreDocPosIfAny(path?: string) {
 
 // 日志系统（已拆分到 core/logger.ts）
 import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
+import { advanceVisualColumn, calcVisualColumn, offsetForVisualColumn } from './utils/visualColumn'
+import { splitYamlFrontMatter, parseFrontMatterMeta } from './core/frontMatter'
+import {
+  decodePreviewHrefPath,
+  stripPreviewHrefSuffix,
+  normalizePreviewFsPath,
+  fileUrlToPreviewPath,
+  resolvePreviewLocalDocPath,
+} from './utils/previewPath'
 
 // 统一确认弹框：优先使用 Tauri 原生 ask；浏览器环境回退到 window.confirm
 async function confirmNative(message: string, title = '确认') : Promise<boolean> {
@@ -1476,90 +1485,11 @@ try { initWindowResize() } catch {}
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
-const PREVIEW_LOCAL_DOC_EXT_RE = /\.(md|markdown|txt|pdf)$/i
 let _previewLinkEventsBound = false
 
-function decodePreviewHrefPath(input: string): string {
-  try { return decodeURIComponent(input) } catch {}
-  try { return decodeURI(input) } catch {}
-  return input
-}
 
-function stripPreviewHrefSuffix(input: string): string {
-  const q = input.indexOf('?')
-  const h = input.indexOf('#')
-  let end = input.length
-  if (q >= 0) end = Math.min(end, q)
-  if (h >= 0) end = Math.min(end, h)
-  return input.slice(0, end)
-}
 
-function normalizePreviewFsPath(input: string): string {
-  const preferBackslash = !!(currentFilePath && currentFilePath.includes('\\'))
-  let raw = String(input || '').trim()
-  if (!raw) return ''
-  raw = raw.replace(/\\/g, '/')
 
-  let prefix = ''
-  if (/^[A-Za-z]:\//.test(raw)) {
-    prefix = raw.slice(0, 2)
-    raw = raw.slice(2)
-  } else if (raw.startsWith('//')) {
-    const parts = raw.slice(2).split('/').filter(Boolean)
-    if (parts.length >= 2) {
-      prefix = `//${parts[0]}/${parts[1]}`
-      raw = parts.slice(2).join('/')
-    } else {
-      prefix = '//'
-      raw = parts.join('/')
-    }
-  } else if (raw.startsWith('/')) {
-    prefix = '/'
-    raw = raw.slice(1)
-  }
-
-  const out: string[] = []
-  for (const part of raw.split('/')) {
-    if (!part || part === '.') continue
-    if (part === '..') {
-      if (out.length > 0 && out[out.length - 1] !== '..') out.pop()
-      else if (!prefix) out.push('..')
-      continue
-    }
-    out.push(part)
-  }
-
-  let result = ''
-  if (prefix === '/') {
-    result = '/' + out.join('/')
-  } else if (prefix === '//') {
-    result = '//' + out.join('/')
-  } else if (prefix.startsWith('//')) {
-    result = out.length > 0 ? `${prefix}/${out.join('/')}` : prefix
-  } else if (prefix) {
-    result = out.length > 0 ? `${prefix}/${out.join('/')}` : `${prefix}/`
-  } else {
-    result = out.join('/')
-  }
-
-  if (preferBackslash && (/^[A-Za-z]:/.test(result) || result.startsWith('//'))) {
-    return result.replace(/\//g, '\\')
-  }
-  return result
-}
-
-function fileUrlToPreviewPath(input: string): string | null {
-  try {
-    const url = new URL(input)
-    if (url.protocol !== 'file:') return null
-    let pathname = decodePreviewHrefPath(url.pathname || '')
-    if (/^\/[A-Za-z]:\//.test(pathname)) pathname = pathname.slice(1)
-    if (url.host) pathname = `//${url.host}${pathname}`
-    return normalizePreviewFsPath(pathname)
-  } catch {
-    return null
-  }
-}
 
 function normalizePreviewAnchorText(input: string): string {
   try { return decodeURIComponent(String(input || '')) } catch { return String(input || '') }
@@ -1626,38 +1556,6 @@ function scrollPreviewAnchorIntoView(hashHref: string): boolean {
   return true
 }
 
-function resolvePreviewLocalDocPath(href: string): string | null {
-  const rawHref = String(href || '').trim()
-  if (!rawHref || rawHref.startsWith('#')) return null
-
-  const bareHref = stripPreviewHrefSuffix(rawHref)
-  if (!bareHref) return null
-
-  const decodedHref = decodePreviewHrefPath(bareHref)
-  if (!PREVIEW_LOCAL_DOC_EXT_RE.test(decodedHref)) return null
-
-  if (/^file:/i.test(decodedHref)) {
-    return fileUrlToPreviewPath(decodedHref)
-  }
-  if (/^[A-Za-z]:[\\/]/.test(decodedHref) || /^\\\\/.test(decodedHref)) {
-    return normalizePreviewFsPath(decodedHref)
-  }
-  if (/^[A-Za-z][A-Za-z\d+.-]*:/.test(decodedHref)) {
-    return null
-  }
-  if (decodedHref.startsWith('//')) {
-    return null
-  }
-  if (decodedHref.startsWith('/')) {
-    if (currentFilePath && currentFilePath.includes('\\')) return null
-    return normalizePreviewFsPath(decodedHref)
-  }
-  if (!currentFilePath) return null
-
-  const baseDir = currentFilePath.replace(/[\\/][^\\/]*$/, '')
-  const sep = baseDir.includes('\\') ? '\\' : '/'
-  return normalizePreviewFsPath(`${baseDir}${sep}${decodedHref}`)
-}
 
 async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Promise<void> {
   const win = window as any
@@ -1698,7 +1596,7 @@ function ensurePreviewLinkHandlingBound(): void {
           return
         }
 
-        const resolvedPath = resolvePreviewLocalDocPath(href)
+        const resolvedPath = resolvePreviewLocalDocPath(href, currentFilePath)
         if (!resolvedPath) return
 
         ev.preventDefault()
@@ -2160,49 +2058,6 @@ function scheduleWysiwygRender() {
 }
 
 // YAML Front Matter 解析：仅检测文首形如
-// ---
-// key: value
-// ---
-// 的块；否则一律视为普通 Markdown，避免误伤旧文档
-function splitYamlFrontMatter(raw: string): { frontMatter: string | null; body: string } {
-  try {
-    if (!raw) return { frontMatter: null, body: '' }
-    let text = String(raw)
-    // 处理 UTF-8 BOM，保留给正文
-    let bom = ''
-    if (text.charCodeAt(0) === 0xfeff) {
-      bom = '\uFEFF'
-      text = text.slice(1)
-    }
-    const lines = text.split('\n')
-    if (lines.length < 3) return { frontMatter: null, body: raw }
-    if (lines[0].trim() !== '---') return { frontMatter: null, body: raw }
-    let end = -1
-    for (let i = 1; i < lines.length; i++) {
-      if (lines[i].trim() === '---') { end = i; break }
-    }
-    if (end < 0) return { frontMatter: null, body: raw }
-    // 至少有一行看起来像 "key: value" 才认为是 YAML
-    let looksYaml = false
-    for (let i = 1; i < end; i++) {
-      const s = lines[i].trim()
-      if (!s || s.startsWith('#')) continue
-      if (/^[A-Za-z0-9_.-]+\s*:/.test(s)) { looksYaml = true; break }
-    }
-    if (!looksYaml) return { frontMatter: null, body: raw }
-    const fmLines = lines.slice(0, end + 1)
-    const bodyLines = lines.slice(end + 1)
-    let fmText = fmLines.join('\n')
-    let bodyText = bodyLines.join('\n')
-    // 常见写法：头部后空一行，渲染时剥掉这行
-    bodyText = bodyText.replace(/^\r?\n/, '')
-    if (bom) bodyText = bom + bodyText
-    if (!fmText.endsWith('\n')) fmText += '\n'
-    return { frontMatter: fmText, body: bodyText }
-  } catch {
-    return { frontMatter: null, body: raw }
-  }
-}
 
 // 阅读模式元数据：预览顶部的 Front Matter 简要视图与开关
 let previewMetaVisible = true
@@ -2216,19 +2071,6 @@ function setPreviewMetaVisible(v: boolean) {
   try { localStorage.setItem('flymd:preview:showMeta', v ? '1' : '0') } catch {}
 }
 
-function parseFrontMatterMeta(fm: string | null): any | null {
-  if (!fm) return null
-  try {
-    let s = String(fm)
-    s = s.replace(/^\uFEFF?---\s*\r?\n?/, '')
-    s = s.replace(/\r?\n---\s*$/, '')
-    const doc = yamlLoad(s)
-    if (!doc || typeof doc !== 'object') return null
-    return doc
-  } catch {
-    return null
-  }
-}
 // 暴露到全局，供所见模式在粘贴 URL 时复用同一套抓取标题逻辑
 try { (window as any).flymdFetchPageTitle = fetchPageTitle } catch {}
 
@@ -2814,37 +2656,9 @@ function measureCharWidth(): number {
     return _caretCharWidth || 8
   } catch { return _caretCharWidth || 8 }
 }
-
-// ����ģʽ������Ҫ�����滬���ƶ���꣬�������ƶ����еļ�����λ���ĳߴ硣
-function advanceVisualColumn(column: number, code: number): number {
-  if (code === 13 /* \r */) return column
-  if (code === 9 /* \t */) {
-    const modulo = column % 4
-    const step = modulo === 0 ? 4 : 4 - modulo
-    return column + step
-  }
-  return column + 1
-}
-
-function calcVisualColumn(segment: string): number {
-  let col = 0
-  for (let i = 0; i < segment.length; i++) {
-    col = advanceVisualColumn(col, segment.charCodeAt(i))
-  }
-  return col
-}
-
-function offsetForVisualColumn(line: string, column: number): number {
-  if (!Number.isFinite(column) || column <= 0) return 0
-  let col = 0
-  for (let i = 0; i < line.length; i++) {
-    const code = line.charCodeAt(i)
-    const next = advanceVisualColumn(col, code)
-    if (next >= column) return i + 1
-    col = next
-  }
-  return line.length
-}
+// WYSIWYG 可视列号换算工具已抽离到 src/utils/visualColumn.ts(无 main.ts 闭包依赖的纯函数)。
+// 此处保留:moveWysiwygCaretByLines(强耦合 editor state)、updateWysiwygCaretDot(强耦合 DOM)。
+// 抽离自 main.ts:2818-2847(byte-identical)。
 
 function moveWysiwygCaretByLines(deltaLines: number, preferredColumn?: number): number {
   try {
@@ -3920,7 +3734,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       el.removeAttribute('rel')
       return
     }
-    if (resolvePreviewLocalDocPath(href)) {
+    if (resolvePreviewLocalDocPath(href, currentFilePath)) {
       el.removeAttribute('target')
       el.removeAttribute('rel')
       return
