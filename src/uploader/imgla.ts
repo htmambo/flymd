@@ -22,7 +22,6 @@ function sizeOfInput(input: any): number | undefined {
 
 function isTauriRuntime(): boolean {
   try {
-    // @ts-ignore
     return typeof window !== 'undefined' && (!!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__)
   } catch { return false }
 }

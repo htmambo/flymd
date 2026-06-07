@@ -62,8 +62,7 @@ export async function appendLog(level: LogLevel, message: string, details?: unkn
 
     // 优先尝试 AppLog / AppLocalData，成功则返回
     try {
-      // @ts-ignore
-      const base1: BaseDirectory = (BaseDirectory as any).AppLog ?? BaseDirectory.AppLocalData
+      const base1: BaseDirectory = BaseDirectory.AppLog ?? BaseDirectory.AppLocalData
       const f1 = await openFileHandle(LOG_NAME, { write: true, append: true, create: true, baseDir: base1 })
       try { await f1.write(data) } finally { await f1.close() }
       return
@@ -74,8 +73,7 @@ export async function appendLog(level: LogLevel, message: string, details?: unkn
 
     if (!success) {
       // 备选：AppData 或 AppLog
-      // @ts-ignore
-      success = await tryWrite((BaseDirectory as any).AppLog ?? BaseDirectory.AppData)
+      success = await tryWrite(BaseDirectory.AppLog ?? BaseDirectory.AppData)
     }
   } catch (e) {
     // 文件写入失败也不影响应用运行

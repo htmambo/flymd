@@ -301,7 +301,6 @@ async function svgToPngDataUrl(svgEl: SVGElement): Promise<string> {
 
       try {
         // 尝试使用html2canvas（通过html2pdf.js获取）
-        // @ts-ignore - 动态加载，运行时可用
         const html2pdfMod: any = await import('html2pdf.js/dist/html2pdf.bundle.min.js')
         const html2pdf: any = (html2pdfMod && (html2pdfMod.default || html2pdfMod)) || html2pdfMod
 
