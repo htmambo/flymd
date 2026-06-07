@@ -15,6 +15,12 @@ export type ProgressOverlayApi = {
   setProgress(done: number, total: number): void
   appendLog(line: string): void
   markCancelled(): void
+  markSuccess(): void
+  /**
+   * 替换底部按钮区。传空数组则只保留默认的"关闭"按钮。
+   * 切到非 working 阶段后才显示。
+   */
+  setActions(buttons: Array<{ label: string; onClick: () => void; danger?: boolean; primary?: boolean }>): void
   fail(msg: string, detail?: string): void
   close(): void
 }
@@ -49,6 +55,7 @@ export function openProgressOverlay(opt?: {
     stage: 'working' as OverlayStage,
     closed: false,
     startedAt: Date.now(),
+    endedAt: 0,
     timer: 0 as any,
     closable: false,
     progressDone: 0,
@@ -56,6 +63,7 @@ export function openProgressOverlay(opt?: {
     logs: [] as string[],
     maxLogLines: 200,
     cancelRequested: false,
+    customActions: null as null | Array<{ label: string; onClick: () => void; danger?: boolean; primary?: boolean }>,
   }
 
   const overlay = document.createElement('div')
@@ -113,7 +121,9 @@ export function openProgressOverlay(opt?: {
   actions.appendChild(btnClose)
 
   const fmtElapsed = () => {
-    const ms = Math.max(0, Date.now() - state.startedAt)
+    // 终态：冻结在 endedAt；working：实时累加
+    const endAt = state.endedAt || Date.now()
+    const ms = Math.max(0, endAt - state.startedAt)
     const s = Math.floor(ms / 1000)
     const mm = Math.floor(s / 60)
     const ss = s % 60
@@ -144,8 +154,24 @@ export function openProgressOverlay(opt?: {
     } else {
       actions.classList.add('closable')
       btnCancel.style.display = 'none'
-      btnClose.style.display = ''
       bars.style.display = 'none'
+      // 渲染底部按钮：有自定义按钮时全部展示，否则只显示默认"关闭"
+      const custom = state.customActions
+      // 先把内置"关闭"隐藏（自定义按钮负责关闭）
+      btnClose.style.display = custom && custom.length > 0 ? 'none' : ''
+      // 清理之前动态插入的自定义按钮
+      const stale = actions.querySelectorAll('button[data-flymd-custom-action]')
+      stale.forEach((n) => n.parentNode?.removeChild(n))
+      if (custom && custom.length > 0) {
+        for (const a of custom) {
+          const b = document.createElement('button')
+          b.setAttribute('data-flymd-custom-action', '1')
+          b.className = 'flymd-progress-btn' + (a.danger ? ' danger' : '') + (a.primary ? ' primary' : '')
+          b.textContent = String(a.label || '')
+          b.onclick = () => { try { a.onClick() } catch (e) { console.error('[progressOverlay] 自定义按钮回调失败:', e) } }
+          actions.appendChild(b)
+        }
+      }
     }
 
     // 日志渲染：只展示最后 N 行
@@ -208,6 +234,13 @@ export function openProgressOverlay(opt?: {
   btnClose.onclick = () => safeCleanup()
 
   document.body.appendChild(overlay)
+
+  // 终态后停止 setInterval：避免计时器继续触发 render()，也省 CPU
+  const stopTimer = () => {
+    try { if (state.timer) clearInterval(state.timer) } catch {}
+    state.timer = 0 as any
+  }
+
   state.timer = setInterval(() => render(), 250)
   render()
 
@@ -240,19 +273,37 @@ export function openProgressOverlay(opt?: {
     markCancelled() {
       if (state.closed) return
       state.stage = 'cancelled'
+      state.endedAt = Date.now()
       title.textContent = '已终止'
       sub.textContent = `已用时 ${fmtElapsed()}`
+      stopTimer()
+      render()
+    },
+    markSuccess() {
+      if (state.closed) return
+      state.stage = 'success'
+      state.endedAt = Date.now()
+      title.textContent = '导出完成'
+      sub.textContent = sub.textContent || `已用时 ${fmtElapsed()}`
+      stopTimer()
+      render()
+    },
+    setActions(buttons) {
+      if (state.closed) return
+      state.customActions = Array.isArray(buttons) ? buttons.slice() : []
       render()
     },
     fail(msg, detail) {
       if (state.closed) return
       state.stage = 'failed'
+      state.endedAt = Date.now()
       title.textContent = '导出失败'
       sub.textContent = `已用时 ${fmtElapsed()}`
       error.classList.add('show')
       const m = String(msg || '未知错误')
       const d = String(detail || '').trim()
       error.textContent = d ? (m + '\n' + d) : m
+      stopTimer()
       render()
     },
     close() {
@@ -347,6 +398,11 @@ function ensureStyle(): void {
     .flymd-progress-btn.danger:hover{
       background:linear-gradient(135deg,#fecaca 0%,#fca5a5 100%);
     }
+    .flymd-progress-btn.primary{
+      background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);
+      color:#fff;border-color:rgba(37,99,235,.55);
+    }
+    .flymd-progress-btn.primary:hover{ background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%); }
 
     /* 暗色主题：弱化遮罩并让对话框整体协调，避免白屏刺眼 */
     body.dark-mode .flymd-progress-overlay{ background:rgba(0,0,0,.42); }
