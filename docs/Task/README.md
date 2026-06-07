@@ -199,3 +199,13 @@ docs/Task/
   - **pre-existing 保留**:`ok = true` in finally(Codex R2 已确认非本批范围)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 369/369 通过(原 346 + 新增 23)、main.ts 净 -130 行(10874→10744)
   - 提交:`c757f9b`(已推送 origin)
+- ✅ [2026-06-08-callout-copy-text-button.md](Archive/2026-06/2026-06-08-callout-copy-text-button.md) — callout 复制按钮改文字式 + 已复制/1.2s 还原(完成 2026-06-08,经 codex R2 复审 2 轮 APPROVED)
+  - **T1 ✅** markdownItCallout.ts: 删除 getCopyIcon,line 279 改为"复制"文字
+  - **T2 ✅** calloutPreviewEvents.ts: async IIFE,成功改"已复制"+ 1.2s 还原
+  - **T3 ✅** wysiwyg/v2/plugins/callout.ts: 同步 WYSIWYG NodeView 路径(innerHTML → textContent)
+  - **T4 ✅** callout-copy-icon.css: 适配文字按钮(去 svg 规则,加 padding/font-size)
+  - **T5 ✅** 新增 2 测试(成功改文案+还原、失败不改文案)
+  - **设计取舍**: callout 失败时静默(不写"复制失败"),与 codeCopyEvents 略有差异
+  - **Codex R1 REJECTED**: P1 抓 WYSIWYG 路径未修(已修);R2 APPROVED
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 371/371 通过(原 369 + 新增 2)
+  - 提交:`52a3eef`(已推送 origin)
