@@ -1436,18 +1436,6 @@ function buildContextMenuContextForPalette(): ContextMenuContext {
   }
 }
 
-function escapeAttrValue(input: string): string {
-  try {
-    return String(input)
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-  } catch {
-    return ''
-  }
-}
-
 // 初始化右键菜单监听
 function initContextMenuListener() {
   try {
