@@ -1,0 +1,230 @@
+/* ============ 右键菜单样式 ============ */
+.flymd-context-menu {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 160px;
+  max-width: 280px;
+  font-size: 13px;
+  overflow: visible;
+  animation: context-menu-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes context-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: background-color 0.15s ease;
+  position: relative;
+  user-select: none;
+}
+
+.context-menu-item:hover:not(.disabled) {
+    background: var(--chrome-panel-bg, var(--panel-bg));
+  }
+
+.context-menu-item:active:not(.disabled) {
+  background: var(--border);
+}
+
+.context-menu-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.context-menu-icon {
+  margin-right: 8px;
+  font-size: 14px;
+  min-width: 16px;
+  text-align: center;
+}
+
+.context-menu-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-menu-note {
+  margin-left: 12px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.context-menu-arrow {
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.context-menu-divider {
+  height: 1px;
+  min-height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.context-menu-tip {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding: 6px 12px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  user-select: none;
+}
+
+.context-menu-group {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+  min-height: 20px;
+}
+
+/* 确保子菜单内的分组和分隔线也能正常显示 */
+.context-menu-submenu .context-menu-group {
+  /* 继承父级样式 */
+}
+
+.context-menu-submenu .context-menu-divider {
+  /* 继承父级样式 */
+}
+
+/* 子菜单样式 */
+.context-menu-item.has-children {
+  position: relative;
+}
+
+.context-menu-item.has-children > .context-menu-arrow {
+  opacity: 0.6;
+}
+
+.context-menu-submenu {
+  display: none;
+  position: absolute;
+  left: calc(100% - 4px);
+  top: -4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 4px 0;
+  min-width: 160px;
+  min-height: 40px;
+  max-width: 280px;
+  z-index: 10001;
+  pointer-events: auto;
+  /* 默认不裁剪：避免三级菜单被父级子菜单裁掉 */
+  overflow: visible;
+}
+
+/* 子菜单滚动（仅在不会出现三级菜单时启用，见 contextMenus.ts） */
+.context-menu-submenu.scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 右键子菜单滚动条样式 */
+.context-menu-submenu::-webkit-scrollbar {
+  width: 6px;
+}
+.context-menu-submenu::-webkit-scrollbar-track {
+  background: transparent;
+}
+.context-menu-submenu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.context-menu-submenu::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted, #64748b);
+}
+
+/* 向左展开的子菜单 */
+.context-menu-submenu.expand-left {
+  left: auto;
+  right: calc(100% - 4px);
+}
+
+/* 父菜单项悬停时显示子菜单 */
+.context-menu-item.has-children:hover > .context-menu-submenu {
+  display: block;
+  animation: context-menu-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 确保子菜单本身悬停时保持显示 */
+.context-menu-submenu:hover {
+  display: block;
+}
+
+/* 深色模式增强 */
+@media (prefers-color-scheme: dark) {
+  .flymd-context-menu {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  .context-menu-item:hover:not(.disabled) {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .context-menu-item:active:not(.disabled) {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .context-menu-submenu {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* 拖拽排序样式 */
+.flymd-context-menu .context-menu-item.draggable-item {
+  cursor: grab;
+  transition: background 0.15s ease, opacity 0.15s ease, transform 0.1s ease;
+}
+
+.flymd-context-menu .context-menu-item.draggable-item:active {
+  cursor: grabbing;
+}
+
+/* 拖拽中的菜单项 */
+.flymd-context-menu .context-menu-item.dragging {
+  opacity: 0.5;
+  background: var(--accent-light, rgba(59, 130, 246, 0.15)) !important;
+  transform: scale(0.98);
+}
+
+/* 拖拽指示器：上方插入 */
+.flymd-context-menu .context-menu-item.drag-over-top {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+/* 拖拽指示器：下方插入 */
+.flymd-context-menu .context-menu-item.drag-over-bottom {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
+/* 拖拽时禁用子菜单展开动画，避免干扰 */
+.flymd-context-menu:has(.dragging) .context-menu-submenu {
+  transition: none !important;
+}
+
+/* ============ 右键菜单样式结束 ============ */
