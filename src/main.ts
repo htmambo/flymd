@@ -1131,62 +1131,14 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
 // ============ 右键菜单系统 ============
 
 // 构建右键菜单上下文
-function buildContextMenuContext(e: MouseEvent): ContextMenuContext {
-  try {
-    const sel = editor.selectionStart || 0
-    const end = editor.selectionEnd || 0
-    let text = editor.value.slice(Math.min(sel, end), Math.max(sel, end))
-    if (wysiwygV2Active) {
-      try {
-        const wysSel = String(wysiwygV2GetSelectedText() || '')
-        text = wysSel
-      } catch {}
-    }
-    return {
-      selectedText: text,
-      cursorPosition: sel,
-      mode: wysiwygV2Active ? 'wysiwyg' : mode,
-      filePath: currentFilePath,
-      targetElement: (e.target as HTMLElement | null) || null,
-    }
-  } catch {
-    return {
-      selectedText: '',
-      cursorPosition: 0,
-      mode: mode,
-      filePath: currentFilePath,
-      targetElement: (e.target as HTMLElement | null) || null,
-    }
-  }
-}
-
-// 命令面板使用的右键上下文：不依赖鼠标命中节点（targetElement 为空）
-function buildContextMenuContextForPalette(): ContextMenuContext {
-  try {
-    const sel = editor.selectionStart || 0
-    const end = editor.selectionEnd || 0
-    let text = editor.value.slice(Math.min(sel, end), Math.max(sel, end))
-    if (wysiwygV2Active) {
-      try {
-        const wysSel = String(wysiwygV2GetSelectedText() || '')
-        text = wysSel
-      } catch {}
-    }
-    return {
-      selectedText: text,
-      cursorPosition: sel,
-      mode: wysiwygV2Active ? 'wysiwyg' : mode,
-      filePath: currentFilePath,
-      targetElement: null,
-    }
-  } catch {
-    return {
-      selectedText: '',
-      cursorPosition: 0,
-      mode: wysiwygV2Active ? 'wysiwyg' : mode,
-      filePath: currentFilePath,
-      targetElement: null,
-    }
+function getContextMenuDeps(): ContextMenuDeps {
+  return {
+    editor,
+    // main.ts 顶层 mode 是 Mode 联合类型,这里窄化到 ContextMenuMode 三个字面量
+    mode: mode as ContextMenuMode,
+    currentFilePath,
+    wysiwygV2Active,
+    wysiwygV2GetSelectedText,
   }
 }
 
@@ -1197,7 +1149,7 @@ function initContextMenuListener() {
     editor.addEventListener('contextmenu', (e) => {
       if (e.shiftKey) return
       try { e.preventDefault() } catch {}
-      const ctx = buildContextMenuContext(e)
+      const ctx = buildContextMenuContext(e, getContextMenuDeps())
       void showContextMenu(e.clientX, e.clientY, ctx, {
         pluginItems: pluginContextMenuItems,
         buildBuiltinItems: buildBuiltinContextMenuItems,
@@ -1210,7 +1162,7 @@ function initContextMenuListener() {
       preview.addEventListener('contextmenu', (e) => {
         if (e.shiftKey) return
         try { e.preventDefault() } catch {}
-        const ctx = buildContextMenuContext(e)
+        const ctx = buildContextMenuContext(e, getContextMenuDeps())
         void showContextMenu(e.clientX, e.clientY, ctx, {
           pluginItems: pluginContextMenuItems,
           buildBuiltinItems: buildBuiltinContextMenuItems,
@@ -1224,7 +1176,7 @@ function initContextMenuListener() {
       const root = document.getElementById('md-wysiwyg-root') as HTMLElement | null
       if (!root || !root.contains(e.target as Node)) return
       try { e.preventDefault() } catch {}
-      const ctx = buildContextMenuContext(e)
+      const ctx = buildContextMenuContext(e, getContextMenuDeps())
       void showContextMenu(e.clientX, e.clientY, ctx, {
         pluginItems: pluginContextMenuItems,
         buildBuiltinItems: buildBuiltinContextMenuItems,
@@ -1339,6 +1291,13 @@ import {
   resolvePreviewLocalDocPath,
 } from './utils/previewPath'
 import { scanTaskList, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
+import { onCalloutFoldClick, onCalloutCopyClick } from './plugins/calloutPreviewEvents'
+import {
+  buildContextMenuContext,
+  buildContextMenuContextForPalette,
+  type ContextMenuDeps,
+  type ContextMenuMode,
+} from './ui/contextMenuContext'
 import { getRecentFiles as getRecent, pushRecentFile as pushRecent } from './core/recentFiles'
 import {
   clearOutlineHeadsCache,
@@ -1940,46 +1899,7 @@ try {
 } catch {}
 
 
-function onCalloutFoldClick(ev: Event) {
-  try {
-    const target = ev.target as HTMLElement | null
-    const foldBtn = target?.closest?.('.callout-fold-icon') as HTMLElement | null
-    if (!foldBtn) return
-    const callout = foldBtn.closest('.callout') as HTMLElement | null
-    if (!callout) return
-    const content = callout.querySelector('.callout-content') as HTMLElement | null
-    if (!content) return
-    const isFolded = callout.classList.toggle('folded')
-    callout.dataset.folded = String(isFolded)
-    content.style.display = isFolded ? 'none' : ''
-    const svg = foldBtn.querySelector('svg')
-    if (svg) {
-      svg.style.transform = isFolded ? 'rotate(-90deg)' : ''
-    }
-  } catch {}
-}
 
-function onCalloutCopyClick(ev: Event) {
-  try {
-    const target = ev.target as HTMLElement | null
-    const copyBtn = target?.closest?.('.callout-copy-icon') as HTMLElement | null
-    if (!copyBtn) return
-    const callout = copyBtn.closest('.callout') as HTMLElement | null
-    if (!callout) return
-    const content = callout.querySelector('.callout-content') as HTMLElement | null
-    if (!content) return
-    const texts: string[] = []
-    content.querySelectorAll(':scope > *').forEach((el) => {
-      const text = (el as HTMLElement).innerText || ''
-      const trimmed = text.trim()
-      if (trimmed) texts.push(trimmed)
-    })
-    const result = texts.join('\n\n')
-    if (result) {
-      navigator.clipboard.writeText(result).catch(() => {})
-    }
-  } catch {}
-}
 
 function onTaskCheckboxChange(ev: Event) {
   try {
@@ -11034,7 +10954,7 @@ setCommandPaletteProvider(async () => {
         try { return pluginContextMenuItems || [] } catch { return [] }
       },
       buildBuiltinContextMenuItems: (ctx) => buildBuiltinContextMenuItems(ctx),
-      getContextMenuContext: () => buildContextMenuContextForPalette(),
+      getContextMenuContext: () => buildContextMenuContextForPalette(getContextMenuDeps()),
     })
   } catch {
     return []
