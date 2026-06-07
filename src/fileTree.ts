@@ -733,8 +733,8 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
       row.appendChild(ico); row.appendChild(label)
       const kids = document.createElement('div')
       kids.className = 'lib-children';
-      // kids 的 data-scheme 继承父行(rail 颜色跟随父行)
-      (kids as any).dataset.scheme = String((level % 5) + 1)
+      // kids 不再写 data-scheme — rail 颜色由 CSS 用 :has(> .lib-node[data-scheme=N]) 取第一个子节点 scheme,
+      // 视觉上"那一列 rail 属于那一列子级",与 stub(横线)同色连贯
       kids.style.display = 'none'
       parent.appendChild(row)
       parent.appendChild(kids)
@@ -1235,7 +1235,8 @@ async function renderRoot(root: string) {
     topRow.appendChild(ico); topRow.appendChild(label)
     const kids = document.createElement('div')
     kids.className = 'lib-children'
-    ;(kids as any).dataset.scheme = '1'  // 根的 children = scheme 1(rail 跟根行同色)
+    // 根 kids 不再写 data-scheme — rail 颜色由 CSS 用 :has(> .lib-node[data-scheme=N]) 取首个子节点 scheme,
+    // 与非根层保持一致策略。根行本身的 scheme=1 仍写在 topRow(图标颜色用)。
     const rootExpanded = state.expanded.has(root)
     topRow.classList.toggle('expanded', rootExpanded)
     kids.style.display = rootExpanded ? '' : 'none'

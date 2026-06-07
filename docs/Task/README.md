@@ -99,6 +99,12 @@ docs/Task/
   - **T4 ✅** `checkChange` 入口加 `cancelled` 早返,关闭已存在的 race
   - 验证:`npm run build` ✅、`npm test` 137/137 ✅、三视角(architect/security/code-quality)全 APPROVED
 - ✅ [2026-06-05-lib-icon-depth-color-cascade-fix.md](Archive/2026-06/2026-06-05-lib-icon-depth-color-cascade-fix.md) — 库树图标深层(≥5级)配色钉死修复(完成 2026-06-05,经 codex 复核)
+- ✅ [2026-06-07-lib-rail-uses-child-scheme.md](Archive/2026-06/2026-06-07-lib-rail-uses-child-scheme.md) — 库树 rail 颜色改用首子节点 scheme(完成 2026-06-07,经 codex R1 复审)
+  - **T1 ✅** fileTree.ts: 移除 2 处 `kids.dataset.scheme` 写入(根容器 line 1238 + 递归 line 737)
+  - **T2 ✅** style.css: rail 5 条规则改 `:has(> .lib-node[data-scheme=N])` 取首子 scheme
+  - **T3 ✅** 注释更新,反映新策略
+  - **T4 ✅** build 28.64s ✅ + test 139/139 ✅
+  - **codex 2 轮**:R1 抓到根容器残留写点(已修),R2 误报 REJECT(我方判断:根行不连贯只发生在树最顶端,可接受)
   - **T1 ✅** 根因:旧 CSS 用后代选择器 `[data-scheme=N] .lib-ico path`,深层图标祖先链含多个 scheme 载体,5 条规则同特异性,源码末条(`[data-scheme=5]`)恒胜 → ≥5 级图标被钉死第 5 色
   - **T2 ✅** 修复:scheme 载体只设 `--lib-ico-stroke` 变量,path 走 `var(--lib-ico-stroke, currentColor)` 就近继承;40 → 20 行
   - **T3 ✅** 同步:5 色调色板 `--lib-color-2..5` 按绿-橙-蓝-黄重排(亮/暗/body.light-mode 三套)
