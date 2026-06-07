@@ -217,3 +217,12 @@ docs/Task/
   - **R2 REJECTED** P0 修复: `require()` 改静态 import + 误删 `ensurePreviewLinkHandlingBound` 调用已回填
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 390/390 通过(原 371 + 新增 19)、main.ts 净 -269 行(10744→10475)
   - 提交:`c6e5b54`(已推送 origin)
+- ✅ [2026-06-08-batch10-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-08-batch10-main-ts-extract-2-modules.md) — Batch 10:抽离 windowsCompositorPoke/windowResize(完成 2026-06-08,经 codex R3 复审 3 轮 APPROVED)
+  - **T1 ✅** `src/windows/windowsCompositorPoke.ts` 新建:createWindowsCompositorPoke factory(140 行,7 tests);Windows 透明无边框拖动残影/白条兜底
+  - **T2 ✅** `src/windows/windowResize.ts` 新建:createWindowResize factory(240 行,10 tests);8 边/角 handle + DPI 感知 `computeResize` 纯函数
+  - **T3 ✅** main.ts 接线:import + factory 实例化 + 调用站点替换
+  - **Codex 3 轮**:R1 REJECTED(mock 嵌套层次不一致 + stop() 未清 listener)/R2 REJECTED(bind 返回 `{dispose}` 对象非函数)/R3 APPROVED
+  - **关键修复**: type 签名 `Promise<{ dispose: () => void } | null>` + `maximizedBinding?.dispose()` 调清理
+  - **pre-existing 保留**: computeResize 左/上拖动数学(负 delta 反而让窗口变宽,与原 main.ts 一致)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 407/407 通过(原 390 + 新增 17)、main.ts 净 -319 行(10475→10156)
+  - 提交:`d011364`(已推送 origin)
