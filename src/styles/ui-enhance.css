@@ -1,0 +1,202 @@
+/* === UI 美化补充（库侧栏与图床设置）=== */
+/* 库侧栏：紧凑模式 */
+.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 8px 2px 14px; }
+.library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; font-size: 13px; }
+.library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); opacity: 0.3; }
+.library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--muted); opacity: 0.5; }
+/* 悬浮态 */
+.library .lib-node:hover { background: var(--hover-bg); }
+.library .lib-node:hover .lib-name { color: var(--fg); }
+.library .lib-node .lib-name { color: var(--muted); transition: color 0.15s ease; }
+/* 选中态 */
+.library .lib-node.selected { background: rgba(37, 99, 235, 0.1); }
+.library .lib-node.selected .lib-name { color: var(--fg); font-weight: 500; }
+
+/* 文件夹名称微微加粗 */
+.library .lib-dir .lib-name { font-weight: 450; }
+
+/* 树形缩进：已由上方 .library .lib-children 统一定义 */
+
+/* 不按扩展名上色：保持一致性 */
+
+/* 图床设置弹窗：分组与描述、开关样式、提示文案 */
+.upl-desc {
+  margin: 0 0 12px 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(127,127,127,0.03);
+  border-radius: var(--radius-lg);
+  border-left: 2px solid rgba(37,99,235,0.5);
+  line-height: 1.5;
+}
+
+.upl-section-title {
+  grid-column: 1 / -1;
+  margin: 20px 0 12px 0;
+  padding-bottom: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--border);
+  opacity: 0.95;
+}
+
+.upl-section-title:first-of-type {
+  margin-top: 0;
+}
+
+.upl-hint {
+  grid-column: 2 / -1;
+  margin: -8px 0 4px 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* 简约开关（复用 checkbox）*/
+.switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  display: inline-block;
+}
+
+.switch input { display: none; }
+
+.switch .trk {
+  position: absolute;
+  inset: 0;
+  background: rgba(127,127,127,0.25);
+  border-radius: 999px;
+  transition: all var(--transition-normal);
+  cursor: pointer;
+}
+
+.switch .kn {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 2px 4px rgba(0,0,0,.2);
+  transition: all var(--transition-normal);
+}
+
+.switch input:checked + .trk {
+  background: var(--accent);
+}
+
+.switch input:checked + .trk + .kn {
+  transform: translateX(18px);
+}
+
+.switch:hover .trk {
+  opacity: 0.9;
+}
+
+/* 操作区按钮语义色 */
+.upl-actions .btn-secondary {
+  border-color: var(--border);
+  background: rgba(127,127,127,0.08);
+}
+
+.upl-actions .btn-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.upl-actions .btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+}
+
+/* 测试结果 */
+#upl-test-result {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-normal);
+}
+
+#upl-test-result.ok {
+  color: #16a34a;
+  background: rgba(22,163,74,0.1);
+}
+
+#upl-test-result.err {
+  color: #dc2626;
+  background: rgba(220,38,38,0.1);
+}
+
+/* 响应式设计 - 图床和同步窗口 */
+@media (max-width: 640px) {
+  .upl-dialog {
+    width: 100%;
+    max-width: calc(100% - 20px);
+    border-radius: var(--radius-xl);
+  }
+
+  .upl-header {
+    padding: 14px 16px;
+    font-size: 14px;
+  }
+
+  .upl-body {
+    padding: 16px;
+  }
+
+  .upl-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .upl-grid label {
+    font-weight: 600;
+  }
+
+  .upl-section-title {
+    font-size: 12px;
+    margin: 16px 0 8px 0;
+  }
+
+  .upl-hint {
+    margin: 0 0 8px 0;
+  }
+
+  .upl-actions {
+    flex-direction: column-reverse;
+  }
+
+  .upl-actions button {
+    width: 100%;
+  }
+}
+
+/* 暗色模式优化 - 图床和同步窗口 */
+@media (prefers-color-scheme: dark) {
+  .upl-overlay {
+    background: rgba(0,0,0,.65);
+  }
+
+  .upl-dialog {
+    box-shadow: 0 20px 60px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.05);
+  }
+
+  .upl-desc {
+    background: rgba(127,127,127,0.05);
+    border-left-color: rgba(59,130,246,0.5);
+  }
+
+  .switch .kn {
+    box-shadow: 0 2px 4px rgba(0,0,0,.4);
+  }
+}
