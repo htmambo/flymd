@@ -141,6 +141,7 @@ import {
 } from './modes/stickyNoteUi'
 import { createStickyAutoSaver } from './modes/stickyAutoSave'
 import { createStickyTodoActions } from './modes/stickyTodoActions'
+import { createWysiwygCaret } from './modes/wysiwygCaret'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -648,10 +649,8 @@ let wysiwygLineEl: HTMLDivElement | null = null
 // 点状光标元素与度量缓存
 let wysiwygCaretEl: HTMLDivElement | null = null
 let wysiwygStatusEl: HTMLDivElement | null = null
-let _wysiwygCaretLineIndex = 0
-let _wysiwygCaretVisualColumn = 0
-let _caretCharWidth = 0
-let _caretFontKey = ''
+// _wysiwygCaretLineIndex / _wysiwygCaretVisualColumn / _caretCharWidth / _caretFontKey
+// 已闭包到 src/modes/wysiwygCaret.ts 工厂内,main.ts 不再持有。
 // 点状“光标”闪烁控制（仅所见模式预览中的点）
 let _dotBlinkTimer: number | null = null
 let _dotBlinkOn = true
@@ -1225,7 +1224,8 @@ async function restoreDocPosIfAny(path?: string) { await _docPos.restore(path) }
 
 // 日志系统（已拆分到 core/logger.ts）
 import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
-import { advanceVisualColumn, calcVisualColumn, offsetForVisualColumn } from './utils/visualColumn'
+// 视觉列号工具(calcVisualColumn/offsetForVisualColumn/advanceVisualColumn)
+// 已抽离到 src/utils/visualColumn.ts,仅 src/modes/wysiwygCaret.ts 复用,main.ts 无引用。
 import { splitYamlFrontMatter, parseFrontMatterMeta } from './core/frontMatter'
 import {
   decodePreviewHrefPath,
@@ -2099,9 +2099,9 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       try { preview.classList.remove('hidden') } catch {}
       try { if (wysiwygStatusEl) wysiwygStatusEl.classList.add('show') } catch {}
       await renderPreview()
-      try { updateWysiwygVirtualPadding() } catch {}
+      try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
       syncScrollEditorToPreview()
-      updateWysiwygLineHighlight(); updateWysiwygCaretDot(); startDotBlink()
+      wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); startDotBlink()
     } else {
       if (wysiwygV2Active) {
         try { await disableWysiwygV2() } catch {}
@@ -2152,162 +2152,12 @@ async function toggleWysiwyg() {
   try { notifyModeChange() } catch {}
 }
 
-function updateWysiwygLineHighlight() {
-  try {
-    if (!wysiwyg || !wysiwygLineEl) return
-    const st = editor.selectionStart >>> 0
-    const before = editor.value.slice(0, st)
-    const lineIdx = before.split('\n').length - 1
-    _wysiwygCaretLineIndex = lineIdx
-    const style = window.getComputedStyle(editor)
-    let lh = parseFloat(style.lineHeight || '')
-    if (!lh || Number.isNaN(lh)) {
-      const fs = parseFloat(style.fontSize || '16') || 16
-      lh = fs * 1.6
-    }
-    const padTop = parseFloat(style.paddingTop || '0') || 0
-    const top = Math.max(0, Math.round(padTop + lineIdx * lh - editor.scrollTop))
-    wysiwygLineEl.style.top = `${top}px`
-    wysiwygLineEl.style.height = `${lh}px`
-    // 不再显示高亮行，只更新位置（如需恢复，改为添加 show 类）
-  } catch {}
-}
-
-function measureCharWidth(): number {
-  try {
-    const style = window.getComputedStyle(editor)
-    const font = `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${style.fontSize} / ${style.lineHeight} ${style.fontFamily}`
-    if (_caretCharWidth > 0 && _caretFontKey === font) return _caretCharWidth
-    const canvas = (measureCharWidth as any)._c || document.createElement('canvas')
-    ;(measureCharWidth as any)._c = canvas
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return _caretCharWidth || 8
-    ctx.font = font
-    // 使用 '0' 作为等宽参考字符
-    const w = ctx.measureText('0').width
-    if (w && w > 0) { _caretCharWidth = w; _caretFontKey = font }
-    return _caretCharWidth || 8
-  } catch { return _caretCharWidth || 8 }
-}
-// WYSIWYG 可视列号换算工具已抽离到 src/utils/visualColumn.ts(无 main.ts 闭包依赖的纯函数)。
-// 此处保留:moveWysiwygCaretByLines(强耦合 editor state)、updateWysiwygCaretDot(强耦合 DOM)。
-// 抽离自 main.ts:2818-2847(byte-identical)。
-
-function moveWysiwygCaretByLines(deltaLines: number, preferredColumn?: number): number {
-  try {
-    if (!wysiwyg) return 0
-    if (!Number.isFinite(deltaLines) || deltaLines === 0) return 0
-    if (editor.selectionStart !== editor.selectionEnd) return 0
-    const value = editor.value
-    if (!value) return 0
-    const len = value.length
-    let pos = editor.selectionStart >>> 0
-    let lineStart = pos
-    while (lineStart > 0 && value.charCodeAt(lineStart - 1) !== 10) lineStart--
-    const currentSegment = value.slice(lineStart, pos)
-    let column = Number.isFinite(preferredColumn) ? Number(preferredColumn) : calcVisualColumn(currentSegment)
-    if (!Number.isFinite(column) || column < 0) column = 0
-    const steps = deltaLines > 0 ? Math.floor(deltaLines) : Math.ceil(deltaLines)
-    if (steps === 0) return 0
-    let moved = 0
-    if (steps > 0) {
-      let remaining = steps
-      while (remaining > 0) {
-        const nextNl = value.indexOf('\n', lineStart)
-        if (nextNl < 0) { lineStart = len; break }
-        lineStart = nextNl + 1
-        moved++
-        remaining--
-      }
-    } else {
-      let remaining = steps
-      while (remaining < 0) {
-        if (lineStart <= 0) { lineStart = 0; break }
-        const prevNl = value.lastIndexOf('\n', Math.max(0, lineStart - 2))
-        lineStart = prevNl >= 0 ? prevNl + 1 : 0
-        moved--
-        remaining++
-      }
-    }
-    if (moved === 0) return 0
-    let lineEnd = value.indexOf('\n', lineStart)
-    if (lineEnd < 0) lineEnd = len
-    const targetLine = value.slice(lineStart, lineEnd)
-    const offset = offsetForVisualColumn(targetLine, column)
-    const newPos = lineStart + offset
-    editor.selectionStart = editor.selectionEnd = newPos
-    return moved
-  } catch { return 0 }
-}
-
-function updateWysiwygCaretDot() {
-  try {
-    if (!wysiwyg || !wysiwygCaretEl) return
-    // 方案A：使用原生系统光标，禁用自定义覆盖光标
-    try { wysiwygCaretEl.classList.remove('show') } catch {}
-    const st = editor.selectionStart >>> 0
-    const before = editor.value.slice(0, st)
-    const style = window.getComputedStyle(editor)
-    // 行高
-    let lh = parseFloat(style.lineHeight || '')
-    if (!lh || Number.isNaN(lh)) { const fs = parseFloat(style.fontSize || '16') || 16; lh = fs * 1.6 }
-    const padTop = parseFloat(style.paddingTop || '0') || 0
-    const padLeft = parseFloat(style.paddingLeft || '0') || 0
-    // 计算当前行与列
-    const lastNl = before.lastIndexOf('\n')
-    const colStr = lastNl >= 0 ? before.slice(lastNl + 1) : before
-    const lineIdx = before.split('\n').length - 1
-    // 制表符按 4 个空格估算
-    const tab4 = (s: string) => s.replace(/\t/g, '    ')
-    const colLen = tab4(colStr).length
-    _wysiwygCaretVisualColumn = colLen
-    const ch = measureCharWidth()
-    const top = Math.max(0, Math.round(padTop + lineIdx * lh - editor.scrollTop))
-    const left = Math.max(0, Math.round(padLeft + colLen * ch - editor.scrollLeft))
-    // 将光标放在当前行底部，并略微向下微调
-    const caretH = (() => { try { return parseFloat(window.getComputedStyle(wysiwygCaretEl).height || '2') || 2 } catch { return 2 } })()
-    const baseNudge = 1 // 像素级微调，使光标更贴近底部
-    wysiwygCaretEl.style.top = `${Math.max(0, Math.round(top + lh - caretH + baseNudge))}px`
-    wysiwygCaretEl.style.left = `${left}px`
-    wysiwygCaretEl.classList.add('show')
-  } catch {}
-}
-
-function updateWysiwygVirtualPadding() {
-  try {
-    // 基线与 CSS 对齐（包含文末留白）；仅旧所见模式需要“动态补齐”滚动空间
-    if (!wysiwyg) {
-      try { (editor as any).style.paddingBottom = '' } catch {}
-      try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || _editorPadBottomBasePx } catch {}
-      return
-    }
-    const base = _editorPadBottomBasePx || 40
-    const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
-    const pr = Math.max(0, preview.scrollHeight - preview.clientHeight)
-    const need = Math.max(0, pr - er)
-    const pb = Math.min(100000, Math.round(base + need))
-    try { (editor as any).style.paddingBottom = pb + "px" } catch {}
-  } catch {}
-}
-
-// 所见模式：输入 ``` 后自动补一个换行，避免预览代码块遮挡模拟光标
-// WYSIWYG 
-// 在所见模式下，确保预览中的“模拟光标 _”可见
-function ensureWysiwygCaretDotInView() {
-  try {
-    if (!wysiwyg) return
-    const dot = preview.querySelector('.caret-dot') as HTMLElement | null
-    if (!dot) return
-    const pv = preview.getBoundingClientRect()
-    const dr = dot.getBoundingClientRect()
-    const margin = 10
-    if (dr.top < pv.top + margin) {
-      preview.scrollTop += dr.top - (pv.top + margin)
-    } else if (dr.bottom > pv.bottom - margin) {
-      preview.scrollTop += dr.bottom - (pv.bottom - margin)
-    }
-  } catch {}
-}
+// WYSIWYG caret 反馈 5 个函数(updateWysiwygLineHighlight / measureCharWidth /
+// moveWysiwygCaretByLines / updateWysiwygCaretDot / updateWysiwygVirtualPadding /
+// ensureWysiwygCaretDotInView)已抽离到 src/modes/wysiwygCaret.ts。
+// 4 个模块级缓存(_wysiwygCaretLineIndex / _wysiwygCaretVisualColumn / _caretCharWidth /
+// _caretFontKey)闭包到工厂内部。_editorPadBottomBasePx 因 main.ts 还有 2 处外部写入,
+// 走 wysiwygCaretApi.getPadBottomBasePx/setPadBottomBasePx 保持共享。
 
 function autoNewlineAfterBackticksInWysiwyg() {
   try {
@@ -3182,7 +3032,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       try {
         const el = img as HTMLImageElement
         const maybeNudge = () => {
-          try { updateWysiwygVirtualPadding() } catch {}
+          try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
           // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
           try { if (_nudgedCaretForThisRender) return; if (!wysiwyg) return } catch { return }
           try {
@@ -3195,9 +3045,9 @@ async function renderPreview(opts?: RenderPreviewOptions) {
               const lh = (Number.isFinite(v) && v > 0 ? v : fs * 1.6)
               const approx = Math.round(((el.clientHeight || 0) / (lh || 16)) * 0.3)
               const lines = Math.max(4, Math.min(12, approx || 0))
-              const moved = moveWysiwygCaretByLines(lines, _wysiwygCaretVisualColumn)
+              const moved = wysiwygCaretApi.moveWysiwygCaretByLines(lines, wysiwygCaretApi.getVisualColumn())
               if (moved !== 0) { // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
-                _nudgedCaretForThisRender = true; updateWysiwygLineHighlight(); updateWysiwygCaretDot(); startDotBlink(); try { ensureWysiwygCaretDotInView() } catch {} }
+                _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); startDotBlink(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
             }
           } catch {}
         }
@@ -3808,7 +3658,7 @@ async function toggleMode() {
   titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
   mode = mode === 'edit' ? 'preview' : 'edit'
   if (mode === 'preview') {
-    try { updateWysiwygVirtualPadding() } catch {}
+    try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
     try { preview.classList.remove('hidden') } catch {}
     try { await renderPreview() } catch {}
     titlebarStatusApi?.restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
@@ -6229,6 +6079,17 @@ const stickyTodoActionsApi = createStickyTodoActions({
   getPluginAPI: (id) => pluginHost.getPluginAPI(id),
   pluginNotice,
   alert: (msg) => { try { alert(msg) } catch {} },
+})
+
+// WYSIWYG caret 反馈工厂(行高亮 + caret dot + 虚拟 padding)
+const wysiwygCaretApi = createWysiwygCaret({
+  getWysiwyg: () => wysiwyg,
+  getEditor: () => editor,
+  getPreview: () => preview,
+  getLineEl: () => wysiwygLineEl,
+  getCaretEl: () => wysiwygCaretEl,
+  getPadBottomBasePx: () => _editorPadBottomBasePx,
+  setPadBottomBasePx: (n) => { _editorPadBottomBasePx = n },
 })
 
 // 进入便签模式
