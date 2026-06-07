@@ -52,6 +52,7 @@ import { bindWindowMaximizedState } from './windows/maximizedState'
 import { createWindowPlacement } from './windows/windowPlacement'
 import { createWindowsCompositorPoke } from './windows/windowsCompositorPoke'
 import { createWindowResize } from './windows/windowResize'
+import { createTitlebarStatus } from './ui/titlebarStatus'
 import {
   copySelectionAsRichHtmlWithEmbeddedImages,
   hasSelectionInside,
@@ -96,6 +97,8 @@ const windowPlacementApi = createWindowPlacement({ getCurrentWindow, currentMoni
 const windowsCompositorPokeApi = createWindowsCompositorPoke({ isTauriRuntime, getCurrentWindow })
 // 窗口边缘 resize 工厂(decorations: false 时启用)
 const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximizedState, getWindowScaleFactorSafe: windowPlacementApi.getWindowScaleFactorSafe, isTauriRuntime })
+// 顶栏标题/状态栏/滚动位置同步层(DOM 引用延后到查询完成后再注入,这里先占位)
+let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -1211,7 +1214,7 @@ const _docPos = createDocPositionStore({
   getEditor: () => editor,
   getPreview: () => preview,
   getMode: () => (wysiwyg ? 'wysiwyg' : mode),
-  refreshStatus: () => { try { refreshStatus() } catch {} },
+  refreshStatus: () => { try { titlebarStatusApi?.refreshStatus() } catch {} },
 })
 async function saveCurrentDocPosNow() { await _docPos.saveNow() }
 function scheduleSaveDocPos() { _docPos.scheduleSave() }
@@ -1686,7 +1689,7 @@ function onTaskCheckboxChange(ev: Event) {
     lines[m.line] = before + nextCh + after
     ;(editor as HTMLTextAreaElement).value = lines.join('\n')
     try { (window as any).dirty = true } catch {}
-    try { refreshTitle(); refreshStatus() } catch {}
+    try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
     // 立即更新删除线样式（无需等待 renderPreview）
     try {
       const listItem = el.closest('li.task-list-item') as HTMLElement | null
@@ -1705,6 +1708,25 @@ function onTaskCheckboxChange(ev: Event) {
   } catch {}
 }
 const status = document.getElementById('status') as HTMLDivElement
+
+// 顶栏标题/状态栏/滚动位置同步层(DOM 就绪后实例化)
+titlebarStatusApi = createTitlebarStatus({
+  getCurrentFilePath: () => currentFilePath,
+  getDirty: () => dirty,
+  filenameLabel,
+  status,
+  editor,
+  preview,
+  getMode: () => mode,
+  getWysiwyg: () => wysiwyg,
+  getLastScrollPercent: () => lastScrollPercent,
+  setLastScrollPercent: (p) => { lastScrollPercent = p },
+  flymdGetSourceEditorPositionInfo: (pos) => (window as any).flymdGetSourceEditorPositionInfo?.(pos) || null,
+  getCurrentWindow,
+  t: t as (key: string) => string,
+  fmtStatus,
+  scheduleOutlineUpdate,
+})
 
 // 所见模式：输入即渲染 + 覆盖式同窗显示
 function syncScrollEditorToPreview() { /* overlay removed */ }
@@ -1889,8 +1911,8 @@ async function saveImageToLocalAndGetPath(file: File, fname: string, force?: boo
       insertAtCursor: (text: string) => insertAtCursor(text),
       markDirtyAndRefresh: () => {
         dirty = true
-        refreshTitle()
-        refreshStatus()
+        titlebarStatusApi?.refreshTitle()
+        titlebarStatusApi?.refreshStatus()
       },
       getCurrentFilePath: () => currentFilePath,
       ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
@@ -1954,8 +1976,8 @@ async function buildWysiwygV2FromTextarea(): Promise<HTMLDivElement | null> {
       if (combined !== editor.value) {
         editor.value = combined
         dirty = true
-        refreshTitle()
-        refreshStatus()
+        titlebarStatusApi?.refreshTitle()
+        titlebarStatusApi?.refreshStatus()
         // 通用“内容变更钩子”：供插件在所见模式内容落盘后执行额外逻辑
         try {
           const hook = (window as any).flymdPiclistAutoUpload
@@ -1980,7 +2002,7 @@ type SetWysiwygOptions = {
 async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
   try {
     if (wysiwyg === enable) return
-    saveScrollPosition()  // 保存当前滚动位置到全局缓存
+    titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
     const container = document.querySelector('.container') as HTMLDivElement | null
     // 旧所见模式已移除：不要再添加 .wysiwyg，否则容器会被隐藏
     if (container) container.classList.remove('wysiwyg')
@@ -2053,7 +2075,7 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
             bindOutlineScrollSync()
           }
         } catch {}
-        restoreScrollPosition(3, 100)  // 带重试机制恢复滚动位置
+        titlebarStatusApi?.restoreScrollPosition(3, 100)  // 带重试机制恢复滚动位置
         // 重新扫描滚动容器（确保 WYSIWYG 的 .scrollView 滚动监听器生效）
         try { rescanScrollContainers() } catch {}
         return
@@ -2112,7 +2134,7 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       // 退出所见：清掉动态 padding，让 CSS 负责底部留白
       try { (editor as any).style.paddingBottom = '' } catch {}
       try { _editorPadBottomBasePx = parseFloat(window.getComputedStyle(editor).paddingBottom || '40') || _editorPadBottomBasePx } catch {}
-      restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
+      titlebarStatusApi?.restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
     }
     // 更新按钮提示（统一为简单说明，移除无用快捷键提示）
     try {
@@ -2318,7 +2340,7 @@ function autoNewlineAfterBackticksInWysiwyg() {
       editor.value = v.slice(0, pos) + '\n' + v.slice(pos)
       editor.selectionStart = editor.selectionEnd = pos
       dirty = true
-      refreshTitle()
+      titlebarStatusApi?.refreshTitle()
 
       // 若检测到闭合，则开启“需回车再渲染”的围栏延迟
       if (isClosing) {
@@ -2392,8 +2414,8 @@ function autoNewlineAfterInlineDollarInWysiwyg() {
         const newPos = pos + ins.length
         editor.selectionStart = editor.selectionEnd = newPos
         dirty = true
-        refreshTitle()
-        refreshStatus()
+        titlebarStatusApi?.refreshTitle()
+        titlebarStatusApi?.refreshStatus()
       }
     }
   } catch {}
@@ -2846,59 +2868,6 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
   }
 
 // 插入链接 / 重命名 对话框逻辑已拆分到 ./ui/linkDialogs
-let _lastRenderedTitleLabel = ''
-let _lastRenderedTitleTooltip = ''
-let _lastRenderedOsTitle = ''
-// 更新标题和未保存标记
-function refreshTitle() {
-  // 以文件名为主；未保存附加 *；悬浮显示完整路径；同步 OS 窗口标题
-  const full = currentFilePath || ''
-  const name = full ? (full.split(/[/\\]/).pop() || t('filename.untitled')) : t('filename.untitled')
-  const label = name + (dirty ? ' *' : '')
-  const titleTip = full || name
-  if (_lastRenderedTitleLabel !== label) {
-    filenameLabel.textContent = label
-    document.title = label
-    _lastRenderedTitleLabel = label
-  }
-  if (_lastRenderedTitleTooltip !== titleTip) {
-    try { filenameLabel.title = titleTip } catch {}
-    _lastRenderedTitleTooltip = titleTip
-  }
-  const osTitle = `${label} - 飞速MarkDown`
-  if (_lastRenderedOsTitle !== osTitle) {
-    try { void getCurrentWindow().setTitle(osTitle).catch(() => {}) } catch {}
-    _lastRenderedOsTitle = osTitle
-  }
-  // 内容变化时刷新大纲（包括所见模式）
-  try { scheduleOutlineUpdate() } catch {}
-}
-
-// 更新状态栏（行列字）
-function refreshStatus() {
-  const pos = editor.selectionStart >>> 0
-  const fastInfo = (() => {
-    try {
-      return (window as any).flymdGetSourceEditorPositionInfo?.(pos) || null
-    } catch {
-      return null
-    }
-  })()
-  let row = fastInfo?.row ?? 0
-  let col = fastInfo?.col ?? 0
-  if (!fastInfo) {
-    const until = editor.value.slice(0, pos)
-    const parts = until.split('\n')
-    row = parts.length
-    col = (parts[parts.length - 1]?.length ?? 0) + 1
-  }
-  if (row < 1) row = 1
-  if (col < 1) col = 1
-  const chars = fastInfo?.chars ?? editor.value.length
-  status.textContent = fmtStatus(row, col) + `, 字 ${chars}`
-}
-
-// 初始化存储（Tauri Store），失败则退化为内存模式
 async function initStore() {
   try {
     // Tauri v2 使用 Store.load，在应用数据目录下持久化
@@ -3439,8 +3408,8 @@ function insertAtCursor(text: string) {
   const pos = start + text.length
   editor.selectionStart = editor.selectionEnd = pos
   dirty = true
-  refreshTitle()
-  refreshStatus()
+  titlebarStatusApi?.refreshTitle()
+  titlebarStatusApi?.refreshStatus()
 }
 
 // 文本格式化与插入工具
@@ -3456,8 +3425,8 @@ function wrapSelection(before: string, after: string, placeholder = '') {
   editor.selectionStart = selStart
   editor.selectionEnd = selEnd
   dirty = true
-  refreshTitle()
-  refreshStatus()
+  titlebarStatusApi?.refreshTitle()
+  titlebarStatusApi?.refreshStatus()
 }
 
 async function formatBold() {
@@ -3501,8 +3470,8 @@ async function insertLink() {
   const pos = start + insert.length
   editor.selectionStart = editor.selectionEnd = pos
   dirty = true
-  refreshTitle()
-  refreshStatus()
+  titlebarStatusApi?.refreshTitle()
+  titlebarStatusApi?.refreshStatus()
 }
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -3529,8 +3498,8 @@ const _imageUploader = createImageUploader({
   scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
   markDirtyAndRefresh: () => {
     dirty = true
-    refreshTitle()
-    refreshStatus()
+    titlebarStatusApi?.refreshTitle()
+    titlebarStatusApi?.refreshStatus()
   },
   insertAtCursor: (text: string) => insertAtCursor(text),
   getCurrentFilePath: () => currentFilePath,
@@ -3614,19 +3583,6 @@ async function revealMainWindowOnce(): Promise<void> {
   } catch {}
 }
 
-function setUpdateBadge(on: boolean, tip?: string) {
-  try {
-    const btn = document.getElementById('btn-update') as HTMLDivElement | null
-    if (!btn) return
-    if (on) {
-      btn.classList.add('has-update')
-      if (tip) btn.title = tip
-    } else {
-      btn.classList.remove('has-update')
-    }
-  } catch {}
-}
-
 async function checkUpdateInteractive() {
   try {
     // 使用通知系统显示检查进度
@@ -3637,13 +3593,13 @@ async function checkUpdateInteractive() {
     NotificationManager.hide(checkingId)
 
     if (!resp || !resp.hasUpdate) {
-      setUpdateBadge(false)
+      titlebarStatusApi?.setUpdateBadge(false)
       // 显示"已是最新版本"通知（5秒后消失）
       NotificationManager.show('appUpdate', `已是最新版本 v${APP_VERSION}`, 5000)
       return
     }
 
-    setUpdateBadge(true, `发现新版本 v${resp.latest}`)
+    titlebarStatusApi?.setUpdateBadge(true, `发现新版本 v${resp.latest}`)
     const USE_OVERLAY_UPDATE = true; if (USE_OVERLAY_UPDATE) { await showUpdateOverlay(resp); return }
     // Windows：自动下载并运行；Linux：展示两个下载链接（依据后端返回的资产类型判断）
     if (resp.assetWin) {
@@ -3833,7 +3789,7 @@ function checkUpdateSilentOnceAfterStartup() {
       try {
         const resp = await invoke('check_update', { force: false, include_prerelease: false }) as any as CheckUpdateResp
         if (resp && resp.hasUpdate) {
-          setUpdateBadge(true, `发现新版本 v${resp.latest}`)
+          titlebarStatusApi?.setUpdateBadge(true, `发现新版本 v${resp.latest}`)
           // 显示应用更新通知（10秒后自动消失，点击打开更新对话框）
           NotificationManager.show('appUpdate', `发现新版本 v${resp.latest}，点击查看详情`, 10000, () => {
             showUpdateOverlay(resp)
@@ -3846,74 +3802,19 @@ function checkUpdateSilentOnceAfterStartup() {
   } catch {}
 }
 
-// 获取当前模式的滚动百分比
-function getScrollPercent(): number {
-  try {
-    if (wysiwyg) {
-      const el = (document.querySelector('#md-wysiwyg-root .scrollView') || document.getElementById('md-wysiwyg-root')) as HTMLElement | null
-      if (!el) return 0
-      const max = el.scrollHeight - el.clientHeight
-      return max > 0 ? el.scrollTop / max : 0
-    }
-    if (mode === 'preview') {
-      const max = preview.scrollHeight - preview.clientHeight
-      return max > 0 ? preview.scrollTop / max : 0
-    }
-    const max = editor.scrollHeight - editor.clientHeight
-    return max > 0 ? editor.scrollTop / max : 0
-  } catch {
-    return 0
-  }
-}
-
-// 设置当前模式的滚动百分比
-function setScrollPercent(percent: number) {
-  try {
-    const p = Math.max(0, Math.min(1, percent))
-    if (wysiwyg) {
-      const el = (document.querySelector('#md-wysiwyg-root .scrollView') || document.getElementById('md-wysiwyg-root')) as HTMLElement | null
-      if (el) el.scrollTop = p * (el.scrollHeight - el.clientHeight)
-    } else if (mode === 'preview') {
-      preview.scrollTop = p * (preview.scrollHeight - preview.clientHeight)
-    } else {
-      editor.scrollTop = p * (editor.scrollHeight - editor.clientHeight)
-    }
-    // 防御性修复：确保页面本身不会被滚动（长文本时可能出现异常）
-    try { document.documentElement.scrollTop = 0 } catch {}
-    try { document.body.scrollTop = 0 } catch {}
-  } catch {}
-}
-
-// 保存当前滚动位置到全局缓存
-function saveScrollPosition() {
-  lastScrollPercent = getScrollPercent()
-}
-
-// 恢复滚动位置（带重试机制确保DOM就绪）
-function restoreScrollPosition(retries = 3, delay = 50) {
-  const apply = () => setScrollPercent(lastScrollPercent)
-  apply()  // 立即尝试一次
-  if (retries > 0) {
-    // 延迟重试，应对DOM未完全就绪的情况
-    setTimeout(() => apply(), delay)
-    if (retries > 1) setTimeout(() => apply(), delay * 2)
-    if (retries > 2) setTimeout(() => apply(), delay * 4)
-  }
-}
-
 // 切换模式
 async function toggleMode() {
-  saveScrollPosition()  // 保存当前滚动位置到全局缓存
+  titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
   mode = mode === 'edit' ? 'preview' : 'edit'
   if (mode === 'preview') {
     try { updateWysiwygVirtualPadding() } catch {}
     try { preview.classList.remove('hidden') } catch {}
     try { await renderPreview() } catch {}
-    restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
+    titlebarStatusApi?.restoreScrollPosition(2, 50)  // 带重试机制恢复滚动位置
   } else {
     if (!wysiwyg) try { preview.classList.add('hidden') } catch {}
     try { editor.focus() } catch {}
-    restoreScrollPosition()  // 带重试机制恢复滚动位置
+    titlebarStatusApi?.restoreScrollPosition()  // 带重试机制恢复滚动位置
   }
   ;(document.getElementById('btn-toggle') as HTMLButtonElement).textContent = mode === 'edit' ? '阅读' : '源码'
   // 模式切换后，如大纲面板可见，强制按当前模式重建一次大纲
@@ -3988,8 +3889,8 @@ async function openFile(preset?: string) {
     editor.value = content
     currentFilePath = selectedPath
     dirty = false
-    refreshTitle()
-    refreshStatus()
+    titlebarStatusApi?.refreshTitle()
+    titlebarStatusApi?.refreshStatus()
     await switchToPreviewAfterOpen()
     // 打开后恢复上次阅读/编辑位置
     await restoreDocPosIfAny(selectedPath as any)
@@ -4015,12 +3916,12 @@ async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boole
   // 基础状态：路径/标题/模式
   currentFilePath = filePath as any
   dirty = false
-  refreshTitle()
+  titlebarStatusApi?.refreshTitle()
   try { editor.value = '' } catch {}
 
   mode = 'preview'
   try { preview.classList.remove('hidden') } catch {}
-  try { syncToggleButton() } catch {}
+  try { titlebarStatusApi?.syncToggleButton() } catch {}
   try { notifyModeChange() } catch {}
 
   // PDF 视图：复用 iframe，避免切回标签反复重载
@@ -4273,8 +4174,8 @@ async function openFile2(preset?: unknown) {
     editor.value = content
     currentFilePath = selectedPath
     dirty = false
-    refreshTitle()
-    refreshStatus()
+    titlebarStatusApi?.refreshTitle()
+    titlebarStatusApi?.refreshStatus()
 
     // 注册激活标签到外部变更监听
     try { extWatcherIntegration?.registerFor(currentFilePath) } catch (e) { console.warn('[extWatcher] registerFor failed', e) }
@@ -4291,7 +4192,7 @@ async function openFile2(preset?: unknown) {
       mode = 'preview'
       try { preview.classList.remove('hidden') } catch {}
       try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
-      try { syncToggleButton() } catch {}
+      try { titlebarStatusApi?.syncToggleButton() } catch {}
     } else {
       // 打开后默认进入预览/源码（尊重“默认源码模式”设置）
       await switchToPreviewAfterOpen()
@@ -4359,14 +4260,14 @@ async function saveFile() {
     // 写入完成,标记为"自写入"以避免 2s 内的 modify 事件被当作外部变更
     try { extWatcherIntegration?.finishSelfWriteCurrent() } catch (e) { console.warn('[extWatcher] finishSelfWrite failed', e) }
     dirty = false
-    refreshTitle()
+    titlebarStatusApi?.refreshTitle()
     // 通知标签系统文件已保存
     window.dispatchEvent(new CustomEvent('flymd-file-saved'))
     await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件保存成功', { path: currentFilePath, size: editor.value.length })
     status.textContent = '文件已保存'
-    setTimeout(() => refreshStatus(), 2000)
+    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.includes('invoke') || msg.includes('Tauri')) {
@@ -4427,13 +4328,13 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
     overlay.setTitle('导出完成')
     overlay.setSub('已写入：' + out)
     try { status.textContent = '已导出' } catch {}
-    setTimeout(() => refreshStatus(), 2000)
+    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
     setTimeout(() => { try { overlay.close() } catch {} }, 800)
   } catch (e: any) {
     if (e && typeof e === 'object' && (e as any)._flymdCancelled === true) {
       overlay.markCancelled()
       try { status.textContent = '已取消导出' } catch {}
-      setTimeout(() => refreshStatus(), 2000)
+      setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
       return
     }
     const msg = (e && (e.message || e.toString?.())) ? String(e.message || e.toString()) : String(e || '')
@@ -4463,7 +4364,7 @@ async function printCurrentDoc(): Promise<void> {
     })()
     await printElement(el, { title })
     try { status.textContent = '已打开打印' } catch {}
-    setTimeout(() => refreshStatus(), 2000)
+    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
   } catch (e) {
     showError('打印失败', e)
   }
@@ -4532,7 +4433,7 @@ async function saveAs() {
             if (e && typeof e === 'object' && (e as any)._flymdCancelled === true) {
               overlay.markCancelled()
               status.textContent = '已取消导出'
-              setTimeout(() => refreshStatus(), 2000)
+              setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
               return
             }
             const msg = (e && (e.message || e.toString?.())) ? String(e.message || e.toString()) : String(e || '')
@@ -4562,7 +4463,7 @@ async function saveAs() {
         const oldPath = currentFilePath;
         currentFilePath = target;
         dirty = false;
-        refreshTitle();
+        titlebarStatusApi?.refreshTitle();
         // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register
         try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
         try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs export) failed', e) }
@@ -4571,7 +4472,7 @@ async function saveAs() {
         await renderRecentPanel(false);
         logInfo('文件导出成功', { path: target, ext });
         status.textContent = '已导出';
-        setTimeout(() => refreshStatus(), 2000);
+        setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000);
         return;
       } catch (e) {
         showError('导出失败', e);
@@ -4593,7 +4494,7 @@ async function saveAs() {
     const oldPath = currentFilePath
     currentFilePath = target
     dirty = false
-    refreshTitle()
+    titlebarStatusApi?.refreshTitle()
     // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register + markSelfWrite
     try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
     try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
@@ -4602,7 +4503,7 @@ async function saveAs() {
     await renderRecentPanel(false)
     logInfo('文件另存为成功', { path: target, size: editor.value.length })
     status.textContent = '文件已保存'
-    setTimeout(() => refreshStatus(), 2000)
+    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.includes('invoke') || msg.includes('Tauri')) {
@@ -4624,8 +4525,8 @@ async function newFile() {
   try { if (currentFilePath) extWatcherIntegration?.unregisterFor(currentFilePath) } catch {}
   currentFilePath = null
   dirty = false
-  refreshTitle()
-  refreshStatus()
+  titlebarStatusApi?.refreshTitle()
+  titlebarStatusApi?.refreshStatus()
   if (mode === 'preview') {
           await renderPreview()
   } else if (wysiwyg) {
@@ -4666,12 +4567,6 @@ async function renderRecentPanel(toggle = true) {
 }
 
 // 同步预览/编辑按钮文案，避免编码问题
-function syncToggleButton() {
-  try {
-    const btn = document.getElementById('btn-toggle') as HTMLButtonElement | null
-    if (btn) btn.textContent = mode === 'edit' ? '\u9884\u89c8' : '\u7f16\u8f91'
-  } catch {}
-}
 
 // 打开文件后强制切换为预览模式
 async function switchToPreviewAfterOpen() {
@@ -4686,7 +4581,7 @@ async function switchToPreviewAfterOpen() {
       if (sourcemodeDefault) {
         mode = 'edit'
         try { preview.classList.add('hidden') } catch {}
-        try { syncToggleButton() } catch {}
+        try { titlebarStatusApi?.syncToggleButton() } catch {}
         try { notifyModeChange() } catch {}
         return
       }
@@ -4695,7 +4590,7 @@ async function switchToPreviewAfterOpen() {
     mode = 'preview'
     try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
     try { preview.classList.remove('hidden') } catch {}
-    try { syncToggleButton() } catch {}
+    try { titlebarStatusApi?.syncToggleButton() } catch {}
   } catch {}
 }
 
@@ -5376,7 +5271,7 @@ try {
         if (path) extWatcherIntegration?.registerFor(path)
       } catch (e) { console.warn('[extWatcher] flymdSetCurrentFilePath hook failed', e) }
     }
-    ;(window as any).flymdSetDirty = (d: boolean) => { dirty = d; refreshTitle() }
+    ;(window as any).flymdSetDirty = (d: boolean) => { dirty = d; titlebarStatusApi?.refreshTitle() }
     ;(window as any).flymdGetMode = () => mode
     ;(window as any).flymdSetMode = (m: Mode) => {
       mode = m
@@ -5392,7 +5287,7 @@ try {
     ;(window as any).flymdGetWysiwygEnabled = () => wysiwyg
     ;(window as any).flymdGetEditorContent = () => editor?.value ?? ''
     // UI 刷新
-    ;(window as any).flymdRefreshTitle = () => refreshTitle()
+    ;(window as any).flymdRefreshTitle = () => titlebarStatusApi?.refreshTitle()
     ;(window as any).flymdRefreshPreview = () => { try { renderPreview() } catch {} }
     ;(window as any).flymdRefreshFileTree = async () => {
       try {
@@ -5410,7 +5305,7 @@ try {
             getRoot: getLibraryRoot,
             onOpenFile: async (p: string) => { await openFile2(p) },
             onOpenNewFile: async (p: string) => { await openFile2(p); mode = 'edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-            onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} },
+            onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} },
           })
           fileTreeReady = true
         }
@@ -5446,7 +5341,7 @@ try {
         const newName = core + ext
         const newPath = await renameFileSafe(currentFilePath, newName)
         currentFilePath = newPath as any
-        refreshTitle()
+        titlebarStatusApi?.refreshTitle()
         const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
         if (treeEl && fileTreeReady) {
           try { await fileTree.refresh() } catch {}
@@ -6085,7 +5980,7 @@ function initFocusModeEvents() {
     setWysiwygEnabled,
     getStickyNoteMode: () => stickyNoteMode,
     getPreviewElement: () => preview,
-    syncToggleButton: () => { try { syncToggleButton() } catch {} },
+    syncToggleButton: () => { try { titlebarStatusApi?.syncToggleButton() } catch {} },
     notifyModeChange: () => { try { notifyModeChange() } catch {} },
     updateFocusSidebarBg: () => { try { updateFocusSidebarBg() } catch {} },
   })
@@ -6239,14 +6134,14 @@ const stickyNoteUi: StickyNoteUiHandles = createStickyNoteUi({
   markDirtyAndRefresh: () => {
     try {
       dirty = true
-      refreshTitle()
-      refreshStatus()
+      titlebarStatusApi?.refreshTitle()
+      titlebarStatusApi?.refreshStatus()
       _stickyAutoSaver.schedule()
     } catch {}
   },
   flushAutoSave: () => _stickyAutoSaver.flush(),
   renderPreview: () => renderPreview(),
-  syncToggleButton: () => { try { syncToggleButton() } catch {} },
+  syncToggleButton: () => { try { titlebarStatusApi?.syncToggleButton() } catch {} },
   notifyModeChange: () => { try { notifyModeChange() } catch {} },
   getStickyNoteLocked: () => stickyNoteLocked,
   setStickyNoteLocked: (v) => { stickyNoteLocked = v },
@@ -6465,7 +6360,7 @@ const stickyNoteModeDeps: StickyNoteModeDeps = {
     } catch {}
   },
   syncToggleButton: () => {
-    try { syncToggleButton() } catch {}
+    try { titlebarStatusApi?.syncToggleButton() } catch {}
   },
   openFile: (filePath) => openFile2(filePath),
   toggleFocusMode: (enable) => toggleFocusMode(enable, store),
@@ -6557,7 +6452,7 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
     await moveFileSafe(path, dst)
     if (currentFilePath === path) {
       currentFilePath = dst as any
-      refreshTitle()
+      titlebarStatusApi?.refreshTitle()
     }
     // 通知其他模块：某个文件已从 path 重命名/移动到 dst
     try {
@@ -6578,7 +6473,7 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
           try {
             if (currentFilePath === src) {
               currentFilePath = dst2 as any
-              refreshTitle()
+              titlebarStatusApi?.refreshTitle()
             }
           } catch {}
         }
@@ -6618,7 +6513,7 @@ async function renderDir(container: HTMLDivElement, dir: string) {
         row.classList.add('selected')
       })
       row.addEventListener('dragleave', () => { row.classList.remove('selected') })
-      row.addEventListener('drop', async (ev) => { try { ev.preventDefault(); row.classList.remove('selected'); const src = ev.dataTransfer?.getData('text/plain') || ''; if (!src) return; const base = e.path; const sep = base.includes('\\\\') ? '\\\\' : '/'; const dst = base + sep + (src.split(/[\\\\/]+/).pop() || ''); if (src === dst) return; const root = await getLibraryRoot(); if (!root || !isInside(root, src) || !isInside(root, dst)) { alert('仅允许在库目录内移动'); return } if (await exists(dst)) { const ok = await ask('目标已存在，是否覆盖？'); if (!ok) return } await moveFileSafe(src, dst); if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } } catch (e) { showError('移动失败', e) } })
+      row.addEventListener('drop', async (ev) => { try { ev.preventDefault(); row.classList.remove('selected'); const src = ev.dataTransfer?.getData('text/plain') || ''; if (!src) return; const base = e.path; const sep = base.includes('\\\\') ? '\\\\' : '/'; const dst = base + sep + (src.split(/[\\\\/]+/).pop() || ''); if (src === dst) return; const root = await getLibraryRoot(); if (!root || !isInside(root, src) || !isInside(root, dst)) { alert('仅允许在库目录内移动'); return } if (await exists(dst)) { const ok = await ask('目标已存在，是否覆盖？'); if (!ok) return } await moveFileSafe(src, dst); if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } } catch (e) { showError('移动失败', e) } })
       container.appendChild(kids)
       let expanded = false
       row.addEventListener('click', async () => {
@@ -6672,11 +6567,11 @@ mainTopMenusApi = createMainTopMenus({
   handleImportConfigFromMenu,
   togglePortableModeFromMenu,
   openFileWatchPrefsDialog,
-  saveScrollPosition,
-  restoreScrollPosition,
+  saveScrollPosition: () => { try { titlebarStatusApi?.saveScrollPosition() } catch {} },
+  restoreScrollPosition: (retries?: number, delay?: number) => { try { titlebarStatusApi?.restoreScrollPosition(retries, delay) } catch {} },
   setWysiwygEnabled,
   notifyModeChange,
-  syncToggleButton,
+  syncToggleButton: () => { try { titlebarStatusApi?.syncToggleButton() } catch {} },
   updateChromeColorsForMode,
   renderPreview,
   preview,
@@ -6777,7 +6672,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
         getRoot: getLibraryRoot,
         onOpenFile: async (p: string) => { await openFile2(p) },
         onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} }
+        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} }
       })
       fileTreeReady = true
     } else if (treeEl) {
@@ -6880,8 +6775,8 @@ function applyI18nUi() {
     } catch {}
     // 文件名/状态/编辑器占位
     try { (document.getElementById('editor') as HTMLTextAreaElement | null)?.setAttribute('placeholder', t('editor.placeholder')) } catch {}
-    try { refreshTitle() } catch {}
-    try { refreshStatus() } catch {}
+    try { titlebarStatusApi?.refreshTitle() } catch {}
+    try { titlebarStatusApi?.refreshStatus() } catch {}
     // 库页签/按钮（图标模式，仅更新 title）
     try {
       const elF = document.getElementById('lib-tab-files') as HTMLButtonElement | null
@@ -7106,7 +7001,7 @@ function bindEvents() {
           ta.value = before + e.key + close + after
           ta.selectionStart = ta.selectionEnd = s + 1
         }
-        try { dirty = true; refreshTitle(); refreshStatus() } catch {}
+        try { dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
 
@@ -7129,7 +7024,7 @@ function bindEvents() {
         }
         ta.selectionStart = result.selectionStart
         ta.selectionEnd = result.selectionEnd
-        try { dirty = true; refreshTitle(); refreshStatus() } catch {}
+        try { dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
 
@@ -7550,7 +7445,7 @@ function bindEvents() {
       }
       const pos = s + rep.length
       setSel(pos, pos)
-      dirty = true; refreshTitle(); refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+      dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
       findNext(false)
       updateFindCountLabel()
     }
@@ -7597,7 +7492,7 @@ function bindEvents() {
         }
         const caret = Math.min(editor.value.length, editor.selectionEnd + rep.length)
         setSel(caret, caret)
-        dirty = true; refreshTitle(); refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+        dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
       }
       updateFindCountLabel()
     }
@@ -7672,7 +7567,7 @@ function bindEvents() {
   }
   function refreshEditorAfterAutoWrap() {
     dirty = true
-    try { refreshTitle(); refreshStatus() } catch {}
+    try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
     if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
   }
   function replaceEditorRange(ta: HTMLTextAreaElement, start: number, end: number, text: string, selStart: number, selEnd: number) {
@@ -7827,7 +7722,7 @@ function bindEvents() {
         const caret = quotePrefix ? prefixStart : lineStart
         try { ta.selectionStart = ta.selectionEnd = caret } catch {}
         dirty = true
-        try { refreshTitle(); refreshStatus() } catch {}
+        try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
         return true
       }
@@ -7850,7 +7745,7 @@ function bindEvents() {
       ta.selectionEnd = s
       insertUndoable(ta, '\n' + nextPrefix)
       dirty = true
-      try { refreshTitle(); refreshStatus() } catch {}
+      try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
       if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       return true
     } catch {
@@ -7888,7 +7783,7 @@ function bindEvents() {
           ta.value = val.slice(0, s0) + ins + val.slice(e0)
         }
         if (e0 > s0) { ta.selectionStart = s0 + 2; ta.selectionEnd = s0 + 2 + mid.length } else { ta.selectionStart = ta.selectionEnd = s0 + 2 }
-        dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+        dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
         return
       }
@@ -7918,7 +7813,7 @@ function bindEvents() {
           } else {
             ta.selectionStart = ta.selectionEnd = s - 2
           }
-          dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+          dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
           if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
           return
         }
@@ -7931,7 +7826,7 @@ function bindEvents() {
           } else {
             ta.selectionStart = ta.selectionEnd = s - 1
           }
-          dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+          dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
           if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
           return
         }
@@ -7964,7 +7859,7 @@ function bindEvents() {
         ta.value = before + e.key + close + after
         ta.selectionStart = ta.selectionEnd = s + 1
       }
-      dirty = true; try { refreshTitle(); refreshStatus() } catch {}
+      dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
       if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
     })
   } catch {}  // 源码模式：Tab/Shift+Tab 段落缩进/反缩进
@@ -7986,7 +7881,7 @@ function bindEvents() {
         ta.selectionStart = result.selectionStart
         ta.selectionEnd = result.selectionEnd
         dirty = true
-        try { refreshTitle(); refreshStatus() } catch {}
+        try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
         if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       } catch {}
     })
@@ -8010,7 +7905,7 @@ function bindEvents() {
           onOpenFile: async (p: string) => { await openFile2(p) },
           onOpenNewFile: async (p: string) => { await openFile2(p) },
           onMoved: async (src: string, dst: string) => {
-            try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {}
+            try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {}
           },
         })
         fileTreeReady = true
@@ -8024,7 +7919,7 @@ function bindEvents() {
           onOpenFile: async (p: string) => { await openFile2(p) },
           onOpenNewFile: async (p: string) => { await openFile2(p) },
           onMoved: async (src: string, dst: string) => {
-            try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {}
+            try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {}
           },
         })
         fileTreeReady = true
@@ -8032,7 +7927,7 @@ function bindEvents() {
         await fileTree.refresh()
       }
     },
-    updateTitle: () => { refreshTitle() },
+    updateTitle: () => { titlebarStatusApi?.refreshTitle() },
     confirmNative: async (msg: string) => { return await confirmNative(msg) },
     exists: async (p: string) => { return await exists(p as any) },
     askOverwrite: async (msg: string) => { return await ask(msg) },
@@ -8056,7 +7951,7 @@ function bindEvents() {
           mdHost.innerHTML = ''
           setPreviewKind('md')
         } catch {}
-        refreshTitle()
+        titlebarStatusApi?.refreshTitle()
       }
     },
   })
@@ -8180,7 +8075,7 @@ function bindEvents() {
       e.preventDefault();
       try { e.stopPropagation(); /* 防止编辑器内部再次处理 */ } catch {}
       try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
-      saveScrollPosition()  // 保存当前滚动位置
+      titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置
       try {
         if (wysiwyg) {
           // 先确定进入"阅读"(预览)状态，再退出所见，避免退出所见时根据旧 mode 隐藏预览
@@ -8188,12 +8083,12 @@ function bindEvents() {
           try { preview.classList.remove('hidden') } catch {}
           try { await renderPreview() } catch {}
           try { await setWysiwygEnabled(false) } catch {}
-          try { syncToggleButton() } catch {}
+          try { titlebarStatusApi?.syncToggleButton() } catch {}
           // 更新专注模式侧栏背景色
           setTimeout(() => updateFocusSidebarBg(), 100);
           // 更新外圈UI颜色
           try { updateChromeColorsForMode('preview') } catch {}
-          restoreScrollPosition()  // 恢复滚动位置
+          titlebarStatusApi?.restoreScrollPosition()  // 恢复滚动位置
           try { notifyModeChange() } catch {}
           return
         }
@@ -8202,12 +8097,12 @@ function bindEvents() {
         mode = 'preview'
         try { preview.classList.remove('hidden') } catch {}
         try { await renderPreview() } catch {}
-        try { syncToggleButton() } catch {}
+        try { titlebarStatusApi?.syncToggleButton() } catch {}
         // 更新专注模式侧栏背景色
         setTimeout(() => updateFocusSidebarBg(), 100);
         // 更新外圈UI颜色
         try { updateChromeColorsForMode('preview') } catch {}
-        restoreScrollPosition()  // 恢复滚动位置
+        titlebarStatusApi?.restoreScrollPosition()  // 恢复滚动位置
         try { notifyModeChange() } catch {}
       }
       return
@@ -8353,7 +8248,7 @@ function bindEvents() {
       await openFile2(p)
       mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {}
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
-      if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (q: string) => { await openFile2(q) }, onOpenNewFile: async (q: string) => { await openFile2(q); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() }
+      if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (q: string) => { await openFile2(q) }, onOpenNewFile: async (q: string) => { await openFile2(q); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() }
       try { const tree = document.getElementById('lib-tree') as HTMLDivElement | null; const nodes = Array.from(tree?.querySelectorAll('.lib-node.lib-dir') || []) as HTMLElement[]; const target = nodes.find(n => (n as any).dataset?.path === dir); if (target) target.dispatchEvent(new MouseEvent('click', { bubbles: true })) } catch {}
       return
     } catch (e) { showError('新建文件失败', e) }
@@ -8383,7 +8278,7 @@ function bindEvents() {
         getRoot: getLibraryRoot,
         onOpenFile: async (p: string) => { await openFile2(p) },
         onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} }
+        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} }
       })
       fileTreeReady = true
     } else if (treeEl) {
@@ -8544,7 +8439,7 @@ function bindEvents() {
   editor.addEventListener('input', () => {
     const wasDirty = dirty
     dirty = true
-    if (!wasDirty) refreshTitle()
+    if (!wasDirty) titlebarStatusApi?.refreshTitle()
     else {
       try { scheduleOutlineUpdateFromSource() } catch {}
     }
@@ -8560,7 +8455,7 @@ function bindEvents() {
       if (_statusRaf) return
       _statusRaf = requestAnimationFrame(() => {
         _statusRaf = 0
-        try { (refreshStatus as any)(_lastStatusEv) } catch {}
+        try { (titlebarStatusApi as any)?.refreshStatus?.(_lastStatusEv) } catch {}
         // @ts-ignore — notifySelectionChangeForPlugins 在文件下方声明
         try { notifySelectionChangeForPlugins() } catch {}
         _lastStatusEv = undefined
@@ -8766,8 +8661,8 @@ function bindEvents() {
                 ;(editor as HTMLTextAreaElement).selectionStart = caret
                 ;(editor as HTMLTextAreaElement).selectionEnd = caret
                 dirty = true
-                refreshTitle()
-                refreshStatus()
+                titlebarStatusApi?.refreshTitle()
+                titlebarStatusApi?.refreshStatus()
               } else {
                 // 占位符已被用户编辑删除，退回为在当前位置插入最终文本
                 insertAtCursor(finalText)
@@ -8924,8 +8819,8 @@ function bindEvents() {
                 editor.value = content
                 currentFilePath = null
                 dirty = false
-                refreshTitle()
-                refreshStatus()
+                titlebarStatusApi?.refreshTitle()
+                titlebarStatusApi?.refreshStatus()
                 if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                 // 拖入 MD 文件后默认预览
                 await switchToPreviewAfterOpen()
@@ -9167,7 +9062,7 @@ function bindEvents() {
     const chooseBtn = document.getElementById('lib-choose') as HTMLButtonElement | null
     const refreshBtn = document.getElementById('lib-refresh') as HTMLButtonElement | null
     if (chooseBtn) chooseBtn.addEventListener('click', guard(async () => { await showLibraryMenu() }))
-  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
+  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
   } catch {}
   // 监听 Tauri 文件拖放（用于直接打开 .md/.markdown/.txt 文件）
   ;(async () => {
@@ -9372,8 +9267,8 @@ function bindEvents() {
     // 开发模式：不再自动打开 DevTools，改为快捷键触发，避免干扰首屏
     // 快捷键见下方全局 keydown（F12 或 Ctrl+Shift+I）
     // 核心功能：必须执行
-    refreshTitle()
-    refreshStatus()
+    titlebarStatusApi?.refreshTitle()
+    titlebarStatusApi?.refreshStatus()
     bindEvents()  // 🔧 关键：无论存储是否成功，都要绑定事件
     initContextMenuListener()  // 初始化右键菜单监听
     // 注意：专注模式状态恢复移至便签模式检测之后，见下方
@@ -9416,7 +9311,7 @@ function bindEvents() {
               isWysiwyg: () => !!wysiwyg || !!wysiwygV2Active,
               renderPreview: () => { void renderPreview() },
               scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
-              markDirtyAndRefresh: () => { try { dirty = true; refreshTitle(); refreshStatus() } catch {} },
+              markDirtyAndRefresh: () => { try { dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {} },
               pluginNotice: (msg: string, level?: 'ok' | 'err', ms?: number) => { try { pluginNotice(msg, level, ms) } catch {} },
               openInBrowser: (url: string) => { try { void openInBrowser(url) } catch {} },
             })
@@ -9744,8 +9639,8 @@ const pluginRuntime: PluginRuntimeHandles = initPluginRuntime({
   markDirtyAndRefresh: () => {
     try {
       dirty = true
-      refreshTitle()
-      refreshStatus()
+      titlebarStatusApi?.refreshTitle()
+      titlebarStatusApi?.refreshStatus()
     } catch {}
   },
   splitYamlFrontMatter: (raw: string) => splitYamlFrontMatter(raw),
@@ -9959,7 +9854,7 @@ async function openFileWatchPrefsDialog(): Promise<void> {
  *   4) 设 __flymdExternalReloadInProgress = true(让 wysiwyg onChange 进入"程序性更新"模式)
  *   5) 根据模式重渲染(wysiwyg / preview / edit)
  *   6) await 两帧(等 wysiwyg 同步 + 异步 onChange 全部进守卫窗口)
- *   7) **守卫仍开启时** dirty = false + refreshTitle/refreshStatus(防 wysiwyg 异步 onChange 覆盖)
+ *   7) **守卫仍开启时** dirty = false + titlebarStatusApi?.refreshTitle() / titlebarStatusApi?.refreshStatus()(防 wysiwyg 异步 onChange 覆盖)
  *   8) 清守卫
  *   9) 派发 flymd-file-reloaded
  *
@@ -10013,12 +9908,12 @@ async function applyExternalContentToEditor(content: string): Promise<void> {
     // 在守卫仍开启的窗口内设 dirty:此时任何后续触发的 wysiwyg onChange 都会被守卫挡掉,
     // 不会把 dirty=false 覆盖回 true。即使上面渲染抛了异常,守卫也必须复位(否则全局卡死)。
     try { dirty = false } catch {}
-    try { refreshTitle() } catch (e) { logFile('refreshTitle failed (post-render)', { err: String(e) }) }
-    try { refreshStatus() } catch (e) { logFile('refreshStatus failed (post-render)', { err: String(e) }) }
+    try { titlebarStatusApi?.refreshTitle() } catch (e) { logFile('refreshTitle failed (post-render)', { err: String(e) }) }
+    try { titlebarStatusApi?.refreshStatus() } catch (e) { logFile('refreshStatus failed (post-render)', { err: String(e) }) }
     try { (window as any).__flymdExternalReloadInProgress = false } catch {}
   }
   logFile('done')
-  try { refreshTitle() } catch {}  // 再次刷新一次,确保 dirty=false 反映到标题
+  try { titlebarStatusApi?.refreshTitle() } catch {}  // 再次刷新一次,确保 dirty=false 反映到标题
   // 通知 tab 系统:reloaded 后需要把 tab.content 同步到 ed.value、tab.dirty=false
   try { window.dispatchEvent(new CustomEvent('flymd-file-reloaded')) } catch {}
 }
