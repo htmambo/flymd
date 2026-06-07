@@ -180,6 +180,8 @@ import { initLibraryContextMenu } from './ui/libraryContextMenu'
 import { initLibraryVaultList } from './ui/libraryVaultList'
 import { openLibrarySettingsDialog } from './ui/librarySettingsDialog'
 import { showTopMenu, type TopMenuItemSpec } from './ui/topMenu'
+import { createMainTopMenus } from './ui/mainTopMenus'
+import { initCodeCopyEvents } from './ui/codeCopyEvents'
 import {
   removeContextMenu,
   showContextMenu,
@@ -7235,109 +7237,40 @@ async function renderDir(container: HTMLDivElement, dir: string) {
 }
 
 function showFileMenu() {
-  const anchor = document.getElementById('btn-open') as HTMLDivElement | null
-  if (!anchor) return
-  void (async () => {
-    const autoSave = getAutoSave()
-    const autoSaveEnabled = autoSave.isEnabled()
-    let portableEnabled = false
-    try {
-      portableEnabled = await isPortableModeEnabled()
-    } catch {}
-    const items: TopMenuItemSpec[] = [
-      { label: t('file.open'), accel: 'Ctrl+O', action: () => { void openFile2() } },
-      // “最近文件”入口移入 文件 菜单
-      { label: t('menu.recent'), accel: 'Ctrl+Shift+R', action: () => { void renderRecentPanel(true) } },
-      {
-        // 启用时在前面加上对勾
-        label: `${autoSaveEnabled ? '✔ ' : ''}${t('file.autosave')}`,
-        accel: '60s',
-        action: () => { autoSave.toggle() },
-      },
-      { label: t('file.save'), accel: 'Ctrl+S', action: () => { void saveFile() } },
-      { label: t('file.saveas'), accel: 'Ctrl+Shift+S', action: () => { void saveAs() } },
-    ]
-    // 配置相关操作移动到“文件”菜单
-    items.push({
-      label: t('menu.exportConfig') || '导出配置',
-      accel: '',
-      action: () => { void handleExportConfigFromMenu() },
-    })
-    items.push({
-      label: t('menu.importConfig') || '导入配置',
-      accel: '',
-      action: () => { void handleImportConfigFromMenu() },
-    })
-    items.push({
-      label: `${portableEnabled ? '✔ ' : ''}${t('menu.portableMode') || '便携模式'}`,
-      accel: '',
-      action: () => { void togglePortableModeFromMenu() },
-    })
-    items.push({
-      label: t('menu.filewatchPrefs') || '文件监听设置…',
-      accel: '',
-      action: () => { void openFileWatchPrefsDialog() },
-    })
-    showTopMenu(anchor, items)
-  })()
+  mainTopMenusApi.showFileMenu()
 }
 
 function showModeMenu() {
-  const anchor = document.getElementById('btn-mode') as HTMLDivElement | null
-  if (!anchor) return
-  const flymd = (window as any)
-  const splitEnabled = !!flymd.flymdGetSplitPreviewEnabled?.()
-  showTopMenu(anchor, [
-    { label: t('mode.edit'), accel: 'Ctrl+E', action: async () => {
-      saveScrollPosition()
-      if (wysiwyg) {
-        try { await setWysiwygEnabled(false) } catch {}
-        restoreScrollPosition()
-        try { notifyModeChange() } catch {}
-        return
-      }
-      if (mode !== 'edit') {
-        mode = 'edit'
-        try { preview.classList.add('hidden') } catch {}
-        try { editor.focus() } catch {}
-        try { syncToggleButton() } catch {}
-        try { updateChromeColorsForMode('edit') } catch {}
-        restoreScrollPosition()
-        try { notifyModeChange() } catch {}
-      }
-    } },
-    { label: t('mode.read'), accel: 'Ctrl+R', action: async () => {
-      saveScrollPosition()
-      const wasWysiwyg = wysiwyg
-      if (wasWysiwyg) { try { await setWysiwygEnabled(false) } catch {} }
-      mode = 'preview'
-      try { preview.classList.remove('hidden') } catch {}
-      try { await renderPreview() } catch {}
-      try { syncToggleButton() } catch {}
-      try { updateChromeColorsForMode('preview') } catch {}
-      restoreScrollPosition()
-      try { notifyModeChange() } catch {}
-    } },
-    { label: t('mode.wysiwyg'), accel: 'Ctrl+W', action: async () => {
-      try { await setWysiwygEnabled(true) } catch {}
-      try { notifyModeChange() } catch {}
-    } },
-    {
-      label: `${splitEnabled ? '✓ ' : ''}源码 + 阅读分屏`,
-      accel: 'Ctrl+Shift+E',
-      action: () => {
-        try {
-          const fm = (window as any)
-          if (typeof fm.flymdToggleSplitPreview === 'function') {
-            fm.flymdToggleSplitPreview()
-          } else {
-            alert('当前环境不支持分屏功能')
-          }
-        } catch {}
-      }
-    },
-  ])
+  mainTopMenusApi.showModeMenu()
 }
+
+let mainTopMenusApi: ReturnType<typeof createMainTopMenus>
+mainTopMenusApi = createMainTopMenus({
+  t: t as (key: string) => string,
+  getAutoSave,
+  isPortableModeEnabled,
+  openFile2,
+  saveFile,
+  saveAs,
+  renderRecentPanel,
+  handleExportConfigFromMenu,
+  handleImportConfigFromMenu,
+  togglePortableModeFromMenu,
+  openFileWatchPrefsDialog,
+  saveScrollPosition,
+  restoreScrollPosition,
+  setWysiwygEnabled,
+  notifyModeChange,
+  syncToggleButton,
+  updateChromeColorsForMode,
+  renderPreview,
+  preview,
+  editor,
+  getMode: () => mode,
+  setMode: (m) => { mode = m },
+  getWysiwyg: () => wysiwyg,
+  flymdGetSplitPreviewEnabled: () => !!(window as any).flymdGetSplitPreviewEnabled?.(),
+})
 
 function changeLocaleWithNotice(pref: LocalePref) {
   try {
@@ -8714,70 +8647,7 @@ function bindEvents() {
   })
 
   // 所见模式：右键打印（已去除，根据用户反馈移除该菜单）
-  document.addEventListener('click', async (ev) => {
-    const t = ev?.target as HTMLElement
-    if (t && t.classList.contains('code-copy')) {
-      ev.preventDefault()
-      let text: string | null = null
-      const direct = (t as any).__copyText
-      if (typeof direct === 'string') text = direct
-      if (text == null) {
-        const box = t.closest('.codebox') as HTMLElement | null
-        let pre = box?.querySelector('pre') as HTMLElement | null
-        if (!pre) {
-          const id = t.getAttribute('data-copy-target')
-          if (id) { pre = document.querySelector(`pre[data-code-copy-id="${id}"]`) as HTMLElement | null }
-        }
-        if (pre) {
-          // 默认只复制代码文本；按住 Alt 点击则复制为 Markdown 围栏（兼容旧行为）
-          const copyAsMarkdownFence = !!((ev as MouseEvent | undefined)?.altKey)
-          const codeEl = pre.querySelector('code') as HTMLElement | null
-          const raw = (() => {
-            if (codeEl) return codeEl.textContent || ''
-            try {
-              const cloned = pre.cloneNode(true) as HTMLElement
-              try { (cloned.querySelector('.code-lnums') as HTMLElement | null)?.remove() } catch {}
-              return cloned.textContent || ''
-            } catch {
-              return pre.textContent || ''
-            }
-          })()
-          if (!copyAsMarkdownFence) {
-            text = raw
-          } else {
-            let lang = ''
-            if (codeEl) {
-              const codeClasses = codeEl.className || ''
-              const preClasses = pre.className || ''
-              const langMatch = (codeClasses + ' ' + preClasses).match(/language-([a-z0-9_+-]+)/i)
-              if (langMatch && langMatch[1]) {
-                lang = langMatch[1]
-              }
-            }
-            text = lang ? ('```' + lang + '\n' + raw + '\n```') : ('```\n' + raw + '\n```')
-          }
-        } else {
-          text = ''
-        }
-      }
-      text = text || ''
-      let ok = false
-      try { await navigator.clipboard.writeText(text); ok = true } catch {}
-      if (!ok) {
-        try {
-          const ta = document.createElement('textarea')
-          ta.value = text
-          document.body.appendChild(ta)
-          ta.select()
-          document.execCommand('copy')
-          document.body.removeChild(ta)
-          ok = true
-        } catch {}
-      }
-      t.textContent = ok ? '已复制' : '复制失败'
-      setTimeout(() => { (t as HTMLButtonElement).textContent = '复制' }, 1200)
-    }
-  }, { capture: true })
+  initCodeCopyEvents()
 
   // 阅读模式：Ctrl/Cmd+A 只选择正文，避免把库名/侧栏/标题栏一起选中
   document.addEventListener('keydown', (e: KeyboardEvent) => {
