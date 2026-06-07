@@ -149,5 +149,5 @@ docs/Task/
   - **T1 ✅** `src/utils/scheduling.ts` 新建:nowMs + scheduleAfterFirstPaint(34 行,纯函数)
   - **T2 ✅** `src/utils/libraryPrefs.ts` 新建:2 常量 + LibrarySide type + 4 localStorage 工具(37 行)
   - **T3 ✅** main.ts 移除对应定义,改 import 引用(净 -42 行)
-  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、Codex 复审 APPROVED(沙箱 EROFS 无法跑 test 但验证语义等价/类型一致/无耦合)
   - 提交:`4d8bdc1`(已推送 origin)
