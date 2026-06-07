@@ -209,3 +209,11 @@ docs/Task/
   - **Codex R1 REJECTED**: P1 抓 WYSIWYG 路径未修(已修);R2 APPROVED
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 371/371 通过(原 369 + 新增 2)
   - 提交:`52a3eef`(已推送 origin)
+- ✅ [2026-06-08-batch9-main-ts-extract-2-modules.md](Archive/2026-06/2026-06-08-batch9-main-ts-extract-2-modules.md) — Batch 9:抽离 networkProxyFetchShim/windowPlacement(完成 2026-06-08,经 codex R3 复审 3 轮 APPROVED)
+  - **T1 ✅** `src/core/networkProxyFetchShim.ts` 新建:createNetworkProxyFetchShim factory(180 行,9 tests);fetch proxy 走 Tauri plugin-http
+  - **T2 ✅** `src/windows/windowPlacement.ts` 新建:createWindowPlacement factory(140 行,10 tests);3 个 Tauri 窗口几何函数
+  - **新建目录**: `src/windows/` 后续 Tauri 窗口工具归宿
+  - **设计要点**: windowPlacement deps 必填(避免 Vite ESM 不支持 require);factory 内部不调 Tauri(只捕获引用),TDZ 安全
+  - **R2 REJECTED** P0 修复: `require()` 改静态 import + 误删 `ensurePreviewLinkHandlingBound` 调用已回填
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 390/390 通过(原 371 + 新增 19)、main.ts 净 -269 行(10744→10475)
+  - 提交:`c6e5b54`(已推送 origin)
