@@ -136,3 +136,11 @@ docs/Task/
   - **T4 ✅** `exporters/docx.ts:304` 删 @ts-ignore(line 305 `const html2pdfMod: any` 已吸收属性类型)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、@ts-ignore 30→23
   - 提交:`b1c75c6`(已推送 origin)
+- ✅ [2026-06-07-phase-f-main-console-cleanup.md](Archive/2026-06/2026-06-07-phase-f-main-console-cleanup.md) — Phase F 第二步:main.ts console.log 降噪(完成 2026-06-07,经 codex 2 轮联合复审)
+  - **Codex R1**:31 个 console.log 逐行判定 20 REMOVE/1 GUARD/10 KEEP
+  - **Codex R2**:4/4 全部 APPROVED,采纳 5237 注释清理建议
+  - **T1 ✅** 删 21 行:启动日志 3 条 + Mermaid 12 条 + WYSIWYG 2 条 + deleteFileSafe 内部 2 条 + 浏览器模式兜底 1 条 + 4321 周围 setTimeout 死代码
+  - **T2 ✅** GUARD 1 条:11373 启动性能用 DEBUG_RENDER 守护(tsc 拒绝 import.meta.env.DEV,改用项目已有 DEBUG_RENDER 模式)
+  - **T3 ✅** KEEP 10 条:5 DEBUG_RENDER 守护 + 2 deleteFileSafe 留痕 + 1 降级 + 1 插件市场 URL
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、main.ts 净 -21 行
+  - 提交:`aaa84b4`(已推送 origin)
