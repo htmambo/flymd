@@ -50,6 +50,8 @@ import { isInputPendingCompat } from './utils/platform'
 import { readLibraryDockedFromLocalStorage, writeLibraryDockedToLocalStorage, readLibrarySideFromLocalStorage, writeLibrarySideToLocalStorage, type LibrarySide } from './utils/libraryPrefs'
 import { bindWindowMaximizedState } from './windows/maximizedState'
 import { createWindowPlacement } from './windows/windowPlacement'
+import { createWindowsCompositorPoke } from './windows/windowsCompositorPoke'
+import { createWindowResize } from './windows/windowResize'
 import {
   copySelectionAsRichHtmlWithEmbeddedImages,
   hasSelectionInside,
@@ -90,6 +92,10 @@ import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/library
 
 // 顶层 window 几何工厂(被 startScaleFactor / ensureMinWindowSize / centerWindow 调用)
 const windowPlacementApi = createWindowPlacement({ getCurrentWindow, currentMonitor, invoke })
+// Windows 透明无边框拖动后残影/白条兜底
+const windowsCompositorPokeApi = createWindowsCompositorPoke({ isTauriRuntime, getCurrentWindow })
+// 窗口边缘 resize 工厂(decorations: false 时启用)
+const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximizedState, getWindowScaleFactorSafe: windowPlacementApi.getWindowScaleFactorSafe, isTauriRuntime })
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -1213,8 +1219,6 @@ async function restoreDocPosIfAny(path?: string) { await _docPos.restore(path) }
 
 // ============ 右键菜单系统结束 ============
 
-
-
 // 日志系统（已拆分到 core/logger.ts）
 import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
 import { advanceVisualColumn, calcVisualColumn, offsetForVisualColumn } from './utils/visualColumn'
@@ -1358,7 +1362,7 @@ initPlatformIntegration().catch((e) => console.error('[Platform] Initialization 
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
 try { initPlatformClass() } catch {}
 // Windows 透明窗口拖动残影/白条兜底
-try { initWindowsCompositorPoke() } catch {}
+try { windowsCompositorPokeApi.start() } catch {}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
@@ -1382,17 +1386,13 @@ try { initFocusModeEvents() } catch {}
 // 初始化窗口拖拽（为 mac / Linux 上的紧凑标题栏补齐拖动支持）
 try { initWindowDrag() } catch {}
 // 初始化窗口边缘 resize（decorations: false 时提供窗口调整大小功能）
-try { initWindowResize() } catch {}
+try { windowResizeApi.init() } catch {}
 // 恢复专注模式状态（需要等 store 初始化后执行，见下方 store 初始化处）
 
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
 let _previewLinkEventsBound = false
-
-
-
-
 
 function normalizePreviewAnchorText(input: string): string {
   try { return decodeURIComponent(String(input || '')) } catch { return String(input || '') }
@@ -1458,7 +1458,6 @@ function scrollPreviewAnchorIntoView(hashHref: string): boolean {
   try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { target.scrollIntoView() }
   return true
 }
-
 
 async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Promise<void> {
   const win = window as any
@@ -1665,9 +1664,6 @@ try {
   })
 } catch {}
 
-
-
-
 function onTaskCheckboxChange(ev: Event) {
   try {
     if (wysiwyg) return
@@ -1729,8 +1725,6 @@ function scheduleWysiwygRender() {
 }
 
 // YAML Front Matter 解析：仅检测文首形如
-
-
 
 // 轻渲染：仅生成安全的 HTML，不执行 Mermaid/代码高亮等重块
 async function renderPreviewLight() {
@@ -2272,7 +2266,6 @@ function updateWysiwygVirtualPadding() {
     try { (editor as any).style.paddingBottom = pb + "px" } catch {}
   } catch {}
 }
-
 
 // 所见模式：输入 ``` 后自动补一个换行，避免预览代码块遮挡模拟光标
 // WYSIWYG 
@@ -3634,7 +3627,6 @@ function setUpdateBadge(on: boolean, tip?: string) {
   } catch {}
 }
 
-
 async function checkUpdateInteractive() {
   try {
     // 使用通知系统显示检查进度
@@ -3754,7 +3746,6 @@ async function checkUpdateInteractive() {
     upMsg('检查更新失败')
   }
 }
-
 
 // Windows：下载并尝试安装（直连/代理轮试），失败时弹出失败提示
 async function downloadAndInstallWin(asset: UpdateAssetInfo, resp: CheckUpdateResp) {
@@ -3976,11 +3967,6 @@ async function openFile(preset?: string) {
     const selectedPath = (typeof selected === 'string')
       ? selected
       : ((selected as any)?.path ?? (selected as any)?.filePath ?? String(selected))
-
-
-
-
-
 
     logInfo('���ļ�', { path: selectedPath })
     // 读取文件内容：优先使用 fs 插件；若因路径权限受限（forbidden path）则回退到自定义后端命令
@@ -4714,7 +4700,6 @@ async function switchToPreviewAfterOpen() {
 }
 
 // 绑定事件
-
 
 // 显示/隐藏 关于 弹窗
 async function getLibraryRoot(): Promise<string | null> {
@@ -5679,7 +5664,6 @@ async function getTranscodePrefs(): Promise<{ convertToWebp: boolean; webpQualit
   } catch { return { convertToWebp: false, webpQuality: 0.85, saveLocalAsWebp: false } }
 }
 
-
 // 抓取网页 <title>，用于将纯 URL 粘贴转换为 [标题](url)
 async function fetchPageTitle(url: string): Promise<string | null> {
   try {
@@ -6122,143 +6106,6 @@ function initPlatformClass() {
 // Windows：透明无边框窗口在拖动后偶发出现“顶部白条/残影”的兜底。
 // 原因本质是 WebView2/DWM 合成在某些 move 序列里没有及时刷新透明 surface。
 // 这里用“轻微改变 body 背景一帧”强制触发一次合成更新；不改窗口大小、不闪烁标题栏。
-function initWindowsCompositorPoke() {
-  const platform = (navigator.platform || '').toLowerCase()
-  if (!platform.includes('win')) return
-  if (!isTauriRuntime()) return
-
-  let settleTimer: any = null
-  let settling = false
-  let lastPokeAt = 0
-  let unfocusedTimer: any = null
-
-  const pokeCssOnce = () => {
-    try {
-      document.body.classList.add('win-compositor-poke')
-      // 多给一帧：有些机器上 1 帧不足以让 DWM 重新合成
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          try { document.body.classList.remove('win-compositor-poke') } catch {}
-        })
-      })
-    } catch {}
-  }
-
-  const settle = async () => {
-    if (settling) return
-    settling = true
-    try {
-      // 再 poke 一次，覆盖“拖动结束后一帧才漏出来”的情况
-      pokeCssOnce()
-      const win = getCurrentWindow()
-      // 只在“隐藏原生标题栏”的模式下做 WM_SIZE poke。
-      // 这里绝不能擅自 setDecorations(false)：那会直接破坏用户的窗口装饰设置（也会让双击标题栏最大化失效）。
-      let shouldPokeSize = false
-      try { shouldPokeSize = !!document?.body?.classList?.contains('no-native-decorations') } catch {}
-      if (!shouldPokeSize) return
-
-      // 最大化/全屏状态下，setSize 会导致窗口被系统还原并出现乱跳（包括移到右下角）。
-      // 这种“修复合成残影”的手段不该干扰窗口状态。
-      try {
-        const isMax = await win.isMaximized()
-        if (isMax) return
-      } catch {}
-      try {
-        const isFs = await win.isFullscreen()
-        if (isFs) return
-      } catch {}
-
-      // 某些机器上需要触发一次 WM_SIZE 才会把透明 surface 刷干净：同尺寸 setSize 当作无损 poke
-      try {
-        const s = await win.innerSize()
-        await win.setSize({ type: 'Physical', width: s.width, height: s.height } as any)
-      } catch {}
-    } catch {} finally {
-      // 避免 setSize 触发的 window 事件反复回调导致抖动
-      setTimeout(() => { settling = false }, 200)
-    }
-  }
-
-  const stopUnfocusedPoke = () => {
-    try { if (unfocusedTimer) clearInterval(unfocusedTimer) } catch {}
-    unfocusedTimer = null
-  }
-
-  const startUnfocusedPoke = () => {
-    // 只在便签模式启用：主窗口不需要这种“后台定时 poke”，否则就是在烧 CPU。
-    if (!document?.body?.classList?.contains('sticky-note-mode')) return
-    if (unfocusedTimer) return
-    let n = 0
-    unfocusedTimer = setInterval(() => {
-      n++
-      schedule()
-      // 兜底：最多跑 6 次（~3 秒），足够覆盖 DWM 延迟合成的窗口期
-      if (n >= 6) stopUnfocusedPoke()
-    }, 520)
-  }
-
-  const schedule = () => {
-    if (settling) return
-    // 1) 拖动过程中节流 poke，尽量不影响拖动手感
-    const now = Date.now()
-    if (now - lastPokeAt > 80) {
-      lastPokeAt = now
-      pokeCssOnce()
-    }
-
-    // 2) 拖动结束后做一次更强的 settle（包含 WM_SIZE poke）
-    try { if (settleTimer) clearTimeout(settleTimer) } catch {}
-    settleTimer = setTimeout(() => {
-      settleTimer = null
-      void settle()
-    }, 140)
-  }
-
-  ;(async () => {
-    try {
-      const win = getCurrentWindow()
-      try { await win.onMoved(() => schedule()) } catch {}
-      try { await win.onResized(() => schedule()) } catch {}
-      // 切换到其它程序再切回来/切走时，透明 surface 也可能没刷新（表现为顶部白条）
-      // 重点：便签窗口固定不动时，只能靠 focus 事件来触发刷新。
-      try {
-        await win.onFocusChanged(({ payload }) => {
-          // 获得焦点：正常 schedule 一次即可
-          if (payload) {
-            stopUnfocusedPoke()
-            return schedule()
-          }
-          // 失去焦点：DWM 往往在“失焦后的若干帧”才把那条丑东西画出来，所以做几次延迟 poke。
-          setTimeout(() => schedule(), 80)
-          setTimeout(() => schedule(), 260)
-          setTimeout(() => schedule(), 520)
-          startUnfocusedPoke()
-        })
-      } catch {}
-      // 跨屏/改缩放时同样可能触发合成残影
-      try { await win.onScaleChanged(() => schedule()) } catch {}
-    } catch {}
-  })()
-
-  // 兜底：某些情况下 Tauri focus 事件可能丢，浏览器侧 focus/visibility 仍能捕获
-  try {
-    window.addEventListener('focus', () => schedule(), { passive: true })
-    window.addEventListener('blur', () => {
-      // 同理：失焦后做几次延迟 poke
-      schedule()
-      setTimeout(() => schedule(), 120)
-      setTimeout(() => schedule(), 320)
-      startUnfocusedPoke()
-    }, { passive: true })
-    document.addEventListener('visibilitychange', () => {
-      try { if (!document.hidden) schedule() } catch {}
-    }, { passive: true } as any)
-  } catch {}
-
-  // 启动后做一次 settle：便签窗口固定不动时也需要靠它清掉“首次合成残影”
-  try { setTimeout(() => schedule(), 260) } catch {}
-}
-
 
 // 窗口拖拽初始化：为 mac / Linux 上的紧凑标题栏补齐拖动支持
 function initWindowDrag() {
@@ -6296,170 +6143,6 @@ function initWindowDrag() {
 }
 
 // 窗口边缘 resize 初始化：为 decorations: false 时提供窗口调整大小功能
-function initWindowResize() {
-  const platform = (navigator.platform || '').toLowerCase()
-  const isLinux = platform.includes('linux')
-  const resizeDirMap = {
-    top: 'North',
-    bottom: 'South',
-    left: 'West',
-    right: 'East',
-    'corner-nw': 'NorthWest',
-    'corner-ne': 'NorthEast',
-    'corner-sw': 'SouthWest',
-    'corner-se': 'SouthEast',
-  } as const
-
-  // 创建 resize handles 容器
-  const container = document.createElement('div')
-  container.className = 'window-resize-handles'
-
-  // 创建 8 个 resize handles（四边 + 四角）
-  const handles = ['top', 'bottom', 'left', 'right', 'corner-nw', 'corner-ne', 'corner-sw', 'corner-se']
-  handles.forEach(dir => {
-    const handle = document.createElement('div')
-    handle.className = `window-resize-handle ${dir}`
-    handle.dataset.resizeDir = dir
-    container.appendChild(handle)
-  })
-  document.body.appendChild(container)
-
-  // 最大化时禁用自定义 resize handles：顶部 5px 会抢事件，导致“下拉还原”变成“改窗口高度”。
-  // 只影响最大化状态，恢复后自动还原，不碰其它交互。
-  const setMaximizedClass = (isMax: boolean) => {
-    if (isMax) document.body.classList.add('window-maximized')
-    else document.body.classList.remove('window-maximized')
-  }
-  ;(async () => {
-    if (!isTauriRuntime()) return
-    try {
-      await bindWindowMaximizedState(getCurrentWindow, setMaximizedClass)
-    } catch {}
-  })()
-
-  // resize 状态
-  let resizing = false
-  let ready = false
-  let startX = 0
-  let startY = 0
-  let startWidth = 0
-  let startHeight = 0
-  let startPosX = 0
-  let startPosY = 0
-  let startScaleFactor = 1
-  let direction = ''
-  const MIN_WIDTH = 600
-  const MIN_HEIGHT = 400
-
-  // mousedown：开始 resize
-  container.addEventListener('mousedown', async (e: MouseEvent) => {
-    const target = e.target as HTMLElement
-    if (!target.classList.contains('window-resize-handle')) return
-    if (!document.body.classList.contains('no-native-decorations')) return
-
-    e.preventDefault()
-    e.stopPropagation()
-
-    direction = target.dataset.resizeDir || ''
-
-    // Linux：使用 Tauri 原生 resize dragging，避免自己算尺寸/位置导致的各种边界 bug。
-    if (isLinux && direction in resizeDirMap) {
-      try {
-        const win = getCurrentWindow()
-        await win.startResizeDragging(resizeDirMap[direction as keyof typeof resizeDirMap])
-        return
-      } catch {}
-    }
-
-    // MouseEvent.screenX/screenY 是“逻辑像素”（DIP）；而 innerSize/outerPosition 是“物理像素”。
-    // 单位混用会导致高 DPI 下 resize 时窗口乱跳/位置漂移（尤其是从左/上/四角拖拽）。
-    startScaleFactor = await windowPlacementApi.getWindowScaleFactorSafe()
-    startX = e.screenX * startScaleFactor
-    startY = e.screenY * startScaleFactor
-
-    ready = false
-    resizing = false
-
-    try {
-      const win = getCurrentWindow()
-      const size = await win.innerSize()
-      const pos = await win.outerPosition()
-      startWidth = size.width
-      startHeight = size.height
-      startPosX = pos.x
-      startPosY = pos.y
-      ready = true
-      resizing = true
-    } catch {
-      resizing = false
-      direction = ''
-      ready = false
-    }
-  })
-
-  // mousemove：执行 resize
-  document.addEventListener('mousemove', async (e: MouseEvent) => {
-    if (!resizing || !ready) return
-    // mouseup 可能发生在窗口外（Linux 上更常见），用 buttons 状态兜底，避免“松开鼠标还在 resize”
-    if ((e.buttons & 1) === 0) {
-      resizing = false
-      direction = ''
-      ready = false
-      return
-    }
-
-    const deltaX = (e.screenX * startScaleFactor) - startX
-    const deltaY = (e.screenY * startScaleFactor) - startY
-
-    let newWidth = startWidth
-    let newHeight = startHeight
-    let newX = startPosX
-    let newY = startPosY
-
-    // 根据方向计算新尺寸和位置
-    const minW = Math.round(MIN_WIDTH * startScaleFactor)
-    const minH = Math.round(MIN_HEIGHT * startScaleFactor)
-    if (direction.includes('right') || direction === 'corner-ne' || direction === 'corner-se') {
-      newWidth = Math.max(minW, startWidth + deltaX)
-    }
-    if (direction.includes('left') || direction === 'corner-nw' || direction === 'corner-sw') {
-      const widthDelta = Math.min(deltaX, startWidth - minW)
-      newWidth = startWidth - widthDelta
-      newX = startPosX + widthDelta
-    }
-    if (direction.includes('bottom') || direction === 'corner-sw' || direction === 'corner-se') {
-      newHeight = Math.max(minH, startHeight + deltaY)
-    }
-    if (direction.includes('top') || direction === 'corner-nw' || direction === 'corner-ne') {
-      const heightDelta = Math.min(deltaY, startHeight - minH)
-      newHeight = startHeight - heightDelta
-      newY = startPosY + heightDelta
-    }
-
-    try {
-      const win = getCurrentWindow()
-      // 先设置位置（如果需要），再设置尺寸
-      if (newX !== startPosX || newY !== startPosY) {
-        await win.setPosition({ type: 'Physical', x: Math.round(newX), y: Math.round(newY) } as any)
-      }
-      await win.setSize({ type: 'Physical', width: Math.round(newWidth), height: Math.round(newHeight) } as any)
-    } catch {}
-  })
-
-  // mouseup：结束 resize
-  document.addEventListener('mouseup', () => {
-    resizing = false
-    direction = ''
-    ready = false
-  })
-
-  // 失焦/隐藏时强制结束 resize，避免状态卡死
-  window.addEventListener('blur', () => {
-    resizing = false
-    direction = ''
-    ready = false
-  })
-}
 
 // 更新专注模式下侧栏背景色：跟随编辑区背景色和网格设置
 function updateFocusSidebarBg() {
@@ -6915,7 +6598,6 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
     return null
   }
 }
-
 
 async function renderDir(container: HTMLDivElement, dir: string) {
   container.innerHTML = ''
@@ -8857,7 +8539,6 @@ function bindEvents() {
       }
     }
   })
-
 
   // 文本变化
   editor.addEventListener('input', () => {
