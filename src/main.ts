@@ -59,7 +59,9 @@ import {
 import { saveImageToLocalAndGetPathCore, toggleUploaderEnabledFromMenuCore } from './core/imagePaste'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
 import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition, getActiveLibrary } from './utils/library'
-import { resolveMetadataLabel, type MetadataLabelMap } from './core/metadataLabels'
+import { type MetadataLabelMap } from './core/metadataLabels'
+import { injectPreviewMeta } from './ui/previewMeta'
+import { createDocPositionStore } from './core/docPosition'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
 import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 import { initRibbonLibraryList, type RibbonLibraryListApi } from './ui/ribbonLibraryList'
@@ -1187,97 +1189,23 @@ function initContextMenuListener() {
   }
 }
 
+// 文档阅读/编辑位置持久化（最小实现）
+// 实现已抽离到 core/docPosition.ts；此处仅做依赖注入与 call site 包装
+const _docPos = createDocPositionStore({
+  getStore: () => store,
+  getCurrentFilePath: () => currentFilePath,
+  getEditor: () => editor,
+  getPreview: () => preview,
+  getMode: () => (wysiwyg ? 'wysiwyg' : mode),
+  refreshStatus: () => { try { refreshStatus() } catch {} },
+})
+async function saveCurrentDocPosNow() { await _docPos.saveNow() }
+function scheduleSaveDocPos() { _docPos.scheduleSave() }
+async function restoreDocPosIfAny(path?: string) { await _docPos.restore(path) }
+
 // ============ 右键菜单系统结束 ============
 
-// 文档阅读/编辑位置持久化（最小实现）
-type DocPos = {
-  pos: number
-  end?: number
-  scroll: number
-  pscroll: number
-  mode: Mode | 'wysiwyg'
-  ts: number
-}
-let _docPosSaveTimer: number | null = null
-let _docPosMapCache: Record<string, DocPos> | null = null
-let _docPosMapLoading: Promise<Record<string, DocPos>> | null = null
-async function getDocPosMap(): Promise<Record<string, DocPos>> {
-  try {
-    if (!store) return {}
-    if (_docPosMapCache) return _docPosMapCache
-    if (_docPosMapLoading) return await _docPosMapLoading
-    _docPosMapLoading = (async () => {
-      try {
-        const m = await store.get('docPos')
-        const map = (m && typeof m === 'object') ? (m as Record<string, DocPos>) : {}
-        _docPosMapCache = map
-        return map
-      } catch {
-        _docPosMapCache = {}
-        return {}
-      } finally {
-        _docPosMapLoading = null
-      }
-    })()
-    return await _docPosMapLoading
-  } catch { return {} }
-}
-async function saveCurrentDocPosNow() {
-  try {
-    if (!currentFilePath) return
-    const map = await getDocPosMap()
-    map[currentFilePath] = {
-      pos: editor.selectionStart >>> 0,
-      end: editor.selectionEnd >>> 0,
-      scroll: editor.scrollTop >>> 0,
-      pscroll: preview.scrollTop >>> 0,
-      mode: (wysiwyg ? 'wysiwyg' : mode),
-      ts: Date.now(),
-    }
-    if (store) {
-      await store.set('docPos', map)
-      await store.save()
-    }
-  } catch {}
-}
-function scheduleSaveDocPos() {
-  try {
-    if (_docPosSaveTimer != null) { clearTimeout(_docPosSaveTimer); _docPosSaveTimer = null }
-    _docPosSaveTimer = window.setTimeout(() => {
-      // 这个保存会触发 store 序列化/IO，放到空闲时做，避免滚动/大文档场景偶发卡顿。
-      try {
-        const ric: any = (globalThis as any).requestIdleCallback
-        if (typeof ric === 'function') {
-          ric(() => { void saveCurrentDocPosNow() }, { timeout: 2000 })
-        } else {
-          setTimeout(() => { void saveCurrentDocPosNow() }, 0)
-        }
-      } catch {
-        void saveCurrentDocPosNow()
-      }
-    }, 400)
-  } catch {}
-}
-async function restoreDocPosIfAny(path?: string) {
-  try {
-    const p = (path || currentFilePath || '') as string
-    if (!p) return
-    const map = await getDocPosMap()
-    const s = map[p]
-    if (!s) return
-    // 恢复编辑器光标与滚动
-    try {
-      const st = Math.max(0, Math.min(editor.value.length, s.pos >>> 0))
-      const ed = Math.max(0, Math.min(editor.value.length, (s.end ?? st) >>> 0))
-      editor.selectionStart = st
-      editor.selectionEnd = ed
-      editor.scrollTop = Math.max(0, s.scroll >>> 0)
-      refreshStatus()
-    } catch {}
-    // 恢复预览滚动（需在预览渲染后调用）
-    try { preview.scrollTop = Math.max(0, s.pscroll >>> 0) } catch {}
-  } catch {}
-}
+
 
 // 日志系统（已拆分到 core/logger.ts）
 import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
@@ -1963,162 +1891,7 @@ function scheduleWysiwygRender() {
 
 // YAML Front Matter 解析：仅检测文首形如
 
-// 阅读模式元数据：预览顶部的 Front Matter 简要视图与开关
-let previewMetaVisible = true
-try {
-  const v = localStorage.getItem('flymd:preview:showMeta')
-  if (v === '0' || (v && v.toLowerCase() === 'false')) previewMetaVisible = false
-} catch {}
 
-function setPreviewMetaVisible(v: boolean) {
-  previewMetaVisible = v
-  try { localStorage.setItem('flymd:preview:showMeta', v ? '1' : '0') } catch {}
-}
-
-// 暴露到全局，供所见模式在粘贴 URL 时复用同一套抓取标题逻辑
-try { (window as any).flymdFetchPageTitle = fetchPageTitle } catch {}
-
-function injectPreviewMeta(container: HTMLDivElement, meta: any | null, metadataLabels?: MetadataLabelMap | null) {
-  if (!meta || typeof meta !== 'object') return
-  const m: any = meta
-
-  const title = (typeof m.title === 'string' && m.title.trim())
-    || (currentFilePath ? (currentFilePath.split(/[\\/]+/).pop() || '') : '')
-  const cats = Array.isArray(m.categories)
-    ? m.categories.map((x: any) => String(x || '').trim()).filter(Boolean)
-    : (m.category ? [String(m.category || '').trim()] : [])
-  const catsKey = Array.isArray(m.categories) ? 'categories' : (m.category ? 'category' : 'categories')
-  const tags = Array.isArray(m.tags)
-    ? m.tags.map((x: any) => String(x || '').trim()).filter(Boolean)
-    : []
-  const statusKey = typeof m.status === 'string' ? 'status' : (m.draft === true ? 'draft' : 'status')
-  const status = typeof m.status === 'string' ? m.status : (m.draft === true ? 'draft' : '')
-  const slugKey = m.slug ? 'slug' : (m.typechoSlug ? 'typechoSlug' : 'slug')
-  const slug = (m.slug || m.typechoSlug) ? String(m.slug || m.typechoSlug || '') : ''
-  const idKey = m.typechoId ? 'typechoId' : (m.id ? 'id' : (m.cid ? 'cid' : 'id'))
-  const id = (m.typechoId || m.id || m.cid) ? String(m.typechoId || m.id || m.cid || '') : ''
-  const dateKey = m.date ? 'date' : (m.dateCreated ? 'dateCreated' : (m.created ? 'created' : (m.typechoUpdatedAt ? 'typechoUpdatedAt' : 'date')))
-  const dateRaw = m.date || m.dateCreated || m.created || m.typechoUpdatedAt || ''
-  const source = typeof m.source === 'string' ? m.source : ''
-
-  const isMetaEmpty = (value: any): boolean => {
-    if (value == null) return true
-    if (typeof value === 'string') return !value.trim()
-    if (Array.isArray(value)) return value.every((item) => isMetaEmpty(item))
-    if (value instanceof Date) return Number.isNaN(value.getTime())
-    if (typeof value === 'object') return Object.keys(value).length === 0
-    return false
-  }
-
-  const formatMetaValue = (value: any): string => {
-    if (value == null) return ''
-    if (value instanceof Date) return Number.isNaN(value.getTime()) ? '' : value.toISOString()
-    if (typeof value === 'string') return value.trim()
-    if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value)
-    try { return JSON.stringify(value) || '' } catch {}
-    return String(value || '').trim()
-  }
-
-  const metaRoot = document.createElement('div')
-  metaRoot.className = 'preview-meta'
-  if (!previewMetaVisible) metaRoot.classList.add('collapsed')
-
-  const header = document.createElement('div')
-  header.className = 'preview-meta-header'
-
-  const titleEl = document.createElement('div')
-  titleEl.className = 'preview-meta-title'
-  if (title) titleEl.textContent = title
-
-  const toggleBtn = document.createElement('button')
-  toggleBtn.type = 'button'
-  toggleBtn.className = 'preview-meta-toggle'
-  const syncToggleText = () => {
-    toggleBtn.textContent = previewMetaVisible ? '隐藏元数据' : '显示元数据'
-  }
-  syncToggleText()
-  toggleBtn.addEventListener('click', () => {
-    const now = !previewMetaVisible
-    setPreviewMetaVisible(now)
-    if (now) metaRoot.classList.remove('collapsed')
-    else metaRoot.classList.add('collapsed')
-    syncToggleText()
-  })
-
-  header.appendChild(titleEl)
-  header.appendChild(toggleBtn)
-  metaRoot.appendChild(header)
-
-  const body = document.createElement('div')
-  body.className = 'preview-meta-body'
-
-  const addRow = (label: string, value: any) => {
-    if (isMetaEmpty(value)) return
-    const row = document.createElement('div')
-    row.className = 'preview-meta-row'
-    const lab = document.createElement('span')
-    lab.className = 'preview-meta-label'
-    lab.textContent = label
-    row.appendChild(lab)
-    const val = document.createElement('span')
-    val.className = 'preview-meta-value'
-    if (Array.isArray(value)) {
-      for (const it of value) {
-        const chipText = formatMetaValue(it)
-        if (!chipText) continue
-        const chip = document.createElement('span')
-        chip.className = 'preview-meta-chip'
-        chip.textContent = chipText
-        val.appendChild(chip)
-      }
-      if (val.children.length === 0) return
-    } else {
-      const text = formatMetaValue(value)
-      if (!text) return
-      val.textContent = text
-    }
-    row.appendChild(val)
-    body.appendChild(row)
-  }
-  const addRowForKey = (key: string, value: any) => addRow(resolveMetadataLabel(key, metadataLabels), value)
-
-  if (cats.length) addRowForKey(catsKey, cats)
-  if (tags.length) addRowForKey('tags', tags)
-  if (status) addRowForKey(statusKey, status)
-  if (slug) addRowForKey(slugKey, slug)
-  if (id) addRowForKey(idKey, id)
-  if (dateRaw) addRowForKey(dateKey, String(dateRaw))
-  if (source) addRowForKey('source', source)
-
-  const handledKeys = new Set([
-    'title',
-    'categories',
-    'category',
-    'tags',
-    'status',
-    'draft',
-    'slug',
-    'typechoSlug',
-    'typechoId',
-    'id',
-    'cid',
-    'date',
-    'dateCreated',
-    'created',
-    'typechoUpdatedAt',
-    'source',
-  ])
-  for (const [key, value] of Object.entries(m)) {
-    if (!key || handledKeys.has(key)) continue
-    addRowForKey(key, value)
-  }
-
-  if (body.children.length > 0) {
-    metaRoot.appendChild(body)
-  }
-
-  container.insertBefore(metaRoot, container.firstChild)
-}
 
 // 轻渲染：仅生成安全的 HTML，不执行 Mermaid/代码高亮等重块
 async function renderPreviewLight() {
@@ -3555,7 +3328,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     try { await renderMermaidIn(buf) } catch {}
     // 一次性替换预览 DOM
     try {
-      try { injectPreviewMeta(buf, previewMeta, previewMetaLabels) } catch {}
+      try { injectPreviewMeta(buf, previewMeta, { metadataLabels: previewMetaLabels, currentFilePath }) } catch {}
       if (seq !== _renderPreviewSeq) return
       mdHost.innerHTML = ''
       mdHost.appendChild(buf)
@@ -6084,6 +5857,9 @@ async function fetchPageTitle(url: string): Promise<string | null> {
     return null
   }
 }
+
+// 暴露到全局，供所见模式在粘贴 URL 时复用同一套抓取标题逻辑
+try { (window as any).flymdFetchPageTitle = fetchPageTitle } catch {}
 
 // 图床设置对话框入口：委托给独立 UI 模块，减少 main.ts 体积
 async function openUploaderDialog(): Promise<void> {
