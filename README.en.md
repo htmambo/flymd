@@ -185,6 +185,48 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 
 </details>
 
+### Build from Source
+
+#### Prerequisites
+
+- [Node.js](https://nodejs.org/) ≥ 18
+- [Rust](https://www.rust-lang.org/) ≥ 1.70
+- **Linux users**: system dependencies such as WebKitGTK are required. See [Tauri Linux Prerequisites](https://tauri.app/start/prerequisites/#linux)
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+#### Development
+
+FlyMD is a desktop app built on [Tauri](https://tauri.app/). **Features like the Library (file management) rely on desktop APIs** and cannot work in a browser alone. For full development, run:
+
+```bash
+npm run tauri:dev
+```
+
+#### Front-end Preview (Limited)
+
+```bash
+npm run dev
+```
+
+Starts the front-end dev server only (browser at `http://127.0.0.1:5173`). Useful for UI debugging, but file system, dialogs, and storage features are unavailable in the browser.
+
+#### Packaging
+
+```bash
+# Build desktop installer (all platforms)
+npm run tauri:build
+
+# Build front-end assets only
+npm run build
+```
+
+Built artifacts are placed in `src-tauri/target/release/bundle/`.
+
 ### Core Operations
 
 | Action | Shortcut | Action | Shortcut |

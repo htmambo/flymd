@@ -202,6 +202,48 @@ sudo xattr -r -d com.apple.quarantine /Applications/flymd.app
 
 </details>
 
+### 从源码构建
+
+#### 前置依赖
+
+- [Node.js](https://nodejs.org/) ≥ 18
+- [Rust](https://www.rust-lang.org/) ≥ 1.70
+- **Linux 用户**：需安装 WebKitGTK 等系统依赖，详见 [Tauri Linux 依赖文档](https://tauri.app/start/prerequisites/#linux)
+
+安装依赖：
+
+```bash
+npm install
+```
+
+#### 开发运行
+
+FlyMD 是基于 [Tauri](https://tauri.app/) 的桌面应用，**库（文件管理）等功能依赖桌面端 API**，仅在浏览器中无法使用。完整开发运行请使用：
+
+```bash
+npm run tauri:dev
+```
+
+#### 前端预览（受限）
+
+```bash
+npm run dev
+```
+
+仅启动前端开发服务器（浏览器访问 `http://127.0.0.1:5173`），可用于 UI 调试。但涉及文件系统、对话框、存储等 Tauri 功能在浏览器中不可用。
+
+#### 打包构建
+
+```bash
+# 构建桌面安装包（所有平台）
+npm run tauri:build
+
+# 仅构建前端产物
+npm run build
+```
+
+构建产物位于 `src-tauri/target/release/bundle/` 目录下。
+
 ### 核心操作
 
 | 操作 | 快捷键 | 操作 | 快捷键 |
