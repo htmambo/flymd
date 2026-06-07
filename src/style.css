@@ -7,6 +7,7 @@
 @import "./styles/context-menu.css";
 @import "./styles/tabbar.css";
 @import "./styles/callout-copy-icon.css";
+@import "./styles/lib-tree-connector.css";
 
 /*
   flymd 样式（中文注释）
@@ -2299,63 +2300,6 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node {
   position: relative;
 }
-/* === 库树连接线 — 5 阶 scheme 循环(JS 算 (level%5)+1 写入 data-scheme,深树自动循环) === */
-
-/* 竖线 rail:位于本层缩进区中部(left:8px),高度由 JS 量算。
-   rail 颜色 = 第一个子节点 scheme(用 :has() 就近取),视觉上"那一列 rail 属于那一列子级",
-   与 stub(横线)同色连贯。关闭"彩色库树"开关时,body 不带 lib-color-depth class,
-   5 条 :has 规则全不生效,默认 background: rgba(127,127,127, 0.4) 接管,呈原配色。 */
-.library .lib-children::before {
-  content: '';
-  position: absolute;
-  left: 8px;
-  top: 0;
-  height: var(--tree-line-height, 0);
-  width: 1px;
-  background: rgba(127, 127, 127, 0.4);
-}
-body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="1"])::before { background: var(--lib-color-1); }
-body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="2"])::before { background: var(--lib-color-2); }
-body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="3"])::before { background: var(--lib-color-3); }
-body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="4"])::before { background: var(--lib-color-4); }
-body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="5"])::before { background: var(--lib-color-5); }
-
-/* 横线 stub:从竖线连到子节点图标左缘。 */
-.library .lib-children > .lib-node::before {
-  content: '';
-  position: absolute;
-  left: -6px;
-  top: 13px;
-  width: 20px;
-  height: 1px;
-  background: rgba(127, 127, 127, 0.4);
-  z-index: 1;
-}
-body.lib-color-depth .lib-children > .lib-node[data-scheme="1"]::before { background: var(--lib-color-1); }
-body.lib-color-depth .lib-children > .lib-node[data-scheme="2"]::before { background: var(--lib-color-2); }
-body.lib-color-depth .lib-children > .lib-node[data-scheme="3"]::before { background: var(--lib-color-3); }
-body.lib-color-depth .lib-children > .lib-node[data-scheme="4"]::before { background: var(--lib-color-4); }
-body.lib-color-depth .lib-children > .lib-node[data-scheme="5"]::before { background: var(--lib-color-5); }
-
-/* 展开的目录:从横线中点向下延伸一小段竖线,连到子级 rail。
-   颜色与该父级"自己的 rail 颜色"一致 —— 用 :has(+ .lib-children > .lib-node[data-scheme=N])
-   取父级 kids 容器首子 scheme,与 rail 5 条规则保持同一取色策略,避免根行(红)::after 覆盖到子级 rail(绿)的视觉跳色。 */
-.library .lib-node.expanded::after {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 13px;
-  bottom: -2px;
-  width: 1px;
-  background: rgba(127, 127, 127, 0.4);
-  z-index: 1;
-}
-body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="1"])::after { background: var(--lib-color-1); }
-body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="2"])::after { background: var(--lib-color-2); }
-body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="3"])::after { background: var(--lib-color-3); }
-body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="4"])::after { background: var(--lib-color-4); }
-body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="5"])::after { background: var(--lib-color-5); }
-
 /* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
 .lib-ico { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: 0 0 auto; }
 .lib-ico-svg {
