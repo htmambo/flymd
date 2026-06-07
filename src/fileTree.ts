@@ -264,6 +264,9 @@ function base(p: string): string { return p.split(/[\\/]+/).slice(0, -1).join(se
 function nameOf(p: string): string { const n = p.split(/[\\/]+/).pop() || p; return n }
 function isInside(root: string, p: string): boolean { const r = norm(root).toLowerCase(); const q = norm(p).toLowerCase(); const s = r.endsWith(sep(r)) ? r : r + sep(r); return q.startsWith(s) }
 
+// 暴露给单元测试使用(不改变内部调用,仅为可测性)
+export const pathUtils = { sep, norm, join, base, nameOf, isInside }
+
 async function ensureDir(dir: string) { try { await mkdir(dir, { recursive: true } as any) } catch {} }
 
 async function moveFileSafe(src: string, dst: string): Promise<void> {
