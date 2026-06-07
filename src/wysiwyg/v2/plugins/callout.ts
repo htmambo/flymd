@@ -34,8 +34,10 @@ function normalizeType(type: string): string {
   return TYPE_ALIASES[t] || t
 }
 
+// 名称保留(用于 diff 收敛):实际上返回的是文字 label 而非 SVG。
+// 沿用 .code-copy 的"复制"按钮文案 + 1.2s 还原反馈(对齐 codeCopyEvents)。
 function getCopyIconSvg(): string {
-  return '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+  return '复制'
 }
 
 function getFoldIconSvg(folded: boolean): string {
@@ -250,7 +252,7 @@ class CalloutNodeView implements NodeView {
     const copyBtn = document.createElement('div')
     copyBtn.className = 'callout-copy-icon'
     copyBtn.title = '复制内容'
-    copyBtn.innerHTML = getCopyIconSvg()
+    copyBtn.textContent = getCopyIconSvg()
     copyBtn.contentEditable = 'false'
     copyBtn.addEventListener('mousedown', (e) => {
       e.preventDefault()
@@ -288,9 +290,16 @@ class CalloutNodeView implements NodeView {
         if (trimmed) texts.push(trimmed)
       })
       const result = texts.join('\n\n')
-      if (result) {
-        navigator.clipboard.writeText(result).catch(() => {})
-      }
+      if (!result) return
+      void (async () => {
+        let ok = false
+        try { await navigator.clipboard.writeText(result); ok = true } catch {}
+        if (!ok) return
+        const btn = this.dom.querySelector('.callout-copy-icon') as HTMLElement | null
+        if (!btn) return
+        btn.textContent = '已复制'
+        setTimeout(() => { btn.textContent = '复制' }, 1200)
+      })()
     } catch {}
   }
 

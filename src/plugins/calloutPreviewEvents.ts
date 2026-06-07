@@ -2,7 +2,14 @@
 // 抽离自 main.ts:1943-1982。
 // 抽离理由:两个 handler 只依赖 ev.target / DOM / navigator.clipboard,完全无 main.ts 闭包依赖;
 // 与 src/plugins/markdownItCallout.ts(产生 .callout DOM 的插件)同级。
-// 复制行为用 navigator.clipboard.writeText,失败静默(无 catch handler)。
+// 复制按钮文案沿用 .code-copy 的"已复制"反馈,1.2s 还原。
+// 与 codeCopyEvents 行为差异(本块设计):
+//   - 失败时静默,不写"复制失败"(callout 标题栏空间有限)
+//   - 无 clipboard API 兜底(textarea + execCommand);失败时直接放弃反馈
+
+const COPIED_TEXT = '已复制'
+const RESET_TEXT = '复制'
+const RESET_DELAY_MS = 1200
 
 /**
  * 处理 .callout-fold-icon 上的点击:toggle .folded class + 隐藏内容 + 旋转 SVG。
@@ -29,7 +36,7 @@ export function onCalloutFoldClick(ev: Event): void {
 
 /**
  * 处理 .callout-copy-icon 上的点击:把 callout-content 的直接子元素文本用空行拼起来,
- * 写入剪贴板。
+ * 写入剪贴板。复制成功后按钮文案临时改"已复制",1.2s 后还原"复制"。
  */
 export function onCalloutCopyClick(ev: Event): void {
   try {
@@ -47,8 +54,13 @@ export function onCalloutCopyClick(ev: Event): void {
       if (trimmed) texts.push(trimmed)
     })
     const result = texts.join('\n\n')
-    if (result) {
-      navigator.clipboard.writeText(result).catch(() => {})
-    }
+    if (!result) return
+    void (async () => {
+      let ok = false
+      try { await navigator.clipboard.writeText(result); ok = true } catch {}
+      if (!ok) return
+      copyBtn.textContent = COPIED_TEXT
+      setTimeout(() => { copyBtn.textContent = RESET_TEXT }, RESET_DELAY_MS)
+    })()
   } catch {}
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { onCalloutFoldClick, onCalloutCopyClick } from './calloutPreviewEvents'
 
 function makeCallout(opts: { folded?: boolean } = {}) {
@@ -111,6 +111,32 @@ describe('onCalloutCopyClick', () => {
     ;(navigator as any).clipboard = { writeText: (s: string) => { called = s; return Promise.resolve() } }
     onCalloutCopyClick({ target: copyIcon } as any)
     expect(called).toBe('')
+    ;(navigator as any).clipboard = { writeText }
+  })
+
+  it('changes button text to "已复制" after successful copy and resets after 1.2s', async () => {
+    vi.useFakeTimers()
+    const { copyIcon } = makeCallout()
+    copyIcon.textContent = '复制'
+    ;(navigator as any).clipboard = { writeText: () => Promise.resolve() }
+    onCalloutCopyClick({ target: copyIcon } as any)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(copyIcon.textContent).toBe('已复制')
+    vi.advanceTimersByTime(1200)
+    expect(copyIcon.textContent).toBe('复制')
+    vi.useRealTimers()
+    ;(navigator as any).clipboard = { writeText }
+  })
+
+  it('does not change button text when clipboard write fails', async () => {
+    const { copyIcon } = makeCallout()
+    copyIcon.textContent = '复制'
+    ;(navigator as any).clipboard = { writeText: () => Promise.reject(new Error('denied')) }
+    onCalloutCopyClick({ target: copyIcon } as any)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(copyIcon.textContent).toBe('复制')
     ;(navigator as any).clipboard = { writeText }
   })
 })

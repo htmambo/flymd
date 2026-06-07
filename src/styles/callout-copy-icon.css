@@ -1,11 +1,16 @@
-/* ---- Callout 复制按钮 ---- */
+/* ---- Callout 复制按钮(文字式) ---- */
 .callout-copy-icon {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
+  min-width: 28px;
   height: 20px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: inherit;
   cursor: pointer;
+  user-select: none;
   border-radius: var(--radius-sm, 4px);
   transition: background 0.15s ease;
   flex-shrink: 0;
@@ -16,11 +21,6 @@
 .callout-copy-icon:hover {
   background: rgba(var(--callout-accent-rgb), 0.12);
   opacity: 1;
-}
-
-.callout-copy-icon svg {
-  width: 14px;
-  height: 14px;
 }
 
 /* 标题栏hover时显示复制按钮（可选，当前保持始终可见但半透明） */
