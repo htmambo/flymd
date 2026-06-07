@@ -33,7 +33,7 @@
 | 6610 | 查找替换 | ~137 | `dialog.css` |
 | 6747 | 夜间模式 | ~654 | `theme-dark.css` + `body.dark-mode` 分散到各主题 |
 | 7401 | 右键菜单 | ~229 | `dialog.css` |
-| 7632 | 专注模式 | ~132 | `focus-mode.css` |
+| 7086 | 专注模式 | ~160 | `focus-mode.css` |
 | 7766 | 自定义标题栏 | ~160 | `window.css` (新增) |
 | 8261 | 便签模式控制 | ~121 | `sticky-note.css` |
 | 8382 | 便签透明窗口 | ~267 | `sticky-note.css` |
