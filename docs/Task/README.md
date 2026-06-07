@@ -144,3 +144,10 @@ docs/Task/
   - **T3 ✅** KEEP 10 条:5 DEBUG_RENDER 守护 + 2 deleteFileSafe 留痕 + 1 降级 + 1 插件市场 URL
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、main.ts 净 -21 行
   - 提交:`aaa84b4`(已推送 origin)
+- ✅ [2026-06-07-batch2-contextmenu-extract.md](Archive/2026-06/2026-06-07-batch2-contextmenu-extract.md) — Batch 2 修订:搬真无状态小工具(完成 2026-06-07,经 codex 联合复审)
+  - **决策修订**:原计划搬 `buildBuiltinContextMenuItems`(162 行),因与 main.ts 12 个函数耦合过深放弃,改为搬真无状态工具
+  - **T1 ✅** `src/utils/scheduling.ts` 新建:nowMs + scheduleAfterFirstPaint(34 行,纯函数)
+  - **T2 ✅** `src/utils/libraryPrefs.ts` 新建:2 常量 + LibrarySide type + 4 localStorage 工具(37 行)
+  - **T3 ✅** main.ts 移除对应定义,改 import 引用(净 -42 行)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过
+  - 提交:`4d8bdc1`(已推送 origin)
