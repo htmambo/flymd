@@ -151,3 +151,16 @@ docs/Task/
   - **T3 ✅** main.ts 移除对应定义,改 import 引用(净 -42 行)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、Codex 复审 APPROVED(沙箱 EROFS 无法跑 test 但验证语义等价/类型一致/无耦合)
   - 提交:`4d8bdc1`(已推送 origin)
+- ✅ [2026-06-07-phase-f-main-ts-ignore-removal.md](Archive/2026-06/2026-06-07-phase-f-main-ts-ignore-removal.md) — Phase F 第三步:main.ts 死代码删除 + @ts-ignore 清理(完成 2026-06-07,经 codex 2 轮联合复审)
+  - **Codex R1**:发现 main.ts:557-701 嵌套 145 行死代码(3 个函数声明被包进 `hashMermaidCode` 循环块作用域,不可达)+ 2 个无效 listener 注册
+  - **Codex R2**:APPROVED 0 blocker/0 important/0 nit,验证结构边界完整 + imePatch 行为覆盖
+  - **T1 ✅** 删 main.ts:557-701 共 145 行死代码(Python 精确范围删除)
+  - **T2 ✅** 删 main.ts:8606-8609 共 4 行(2 listener + 2 @ts-ignore)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 188/188 通过、@ts-ignore 21→10(-11)
+  - 提交:`08b144c`(已推送 origin)
+- ✅ [2026-06-07-batch3-main-ts-extract-3-modules.md](Archive/2026-06/2026-06-07-batch3-main-ts-extract-3-modules.md) — Batch 3:抽离 visualColumn/frontMatter/previewPath(完成 2026-06-07,经 codex R2 联合复审 APPROVED)
+  - **T1 ✅** `src/utils/visualColumn.ts` 新建:advanceVisualColumn/calcVisualColumn/offsetForVisualColumn(35 行,纯函数,12 tests)
+  - **T2 ✅** `src/core/frontMatter.ts` 新建:splitYamlFrontMatter/parseFrontMatterMeta(80 行,17 tests,plugin runtime 仍 re-export)
+  - **T3 ✅** `src/utils/previewPath.ts` 新建:5 个预览路径工具 + 常量(132 行,32 tests);参数化改造(显式 second arg currentFilePath 替代闭包全局)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 249/249 通过(原 188 + 新增 61)、main.ts 净 -186 行(11692→11506)
+  - 提交:`75ef51a`(已推送 origin)
