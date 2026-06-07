@@ -3,6 +3,7 @@
 
 import { readTextFile, writeFile } from '@tauri-apps/plugin-fs'
 import { save } from '@tauri-apps/plugin-dialog'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { exportPdf } from './pdf'
 
 export interface PdfExportOptions {
@@ -142,12 +143,34 @@ export async function exportFileToPdf(options: PdfExportOptions): Promise<void> 
       throw new Error(`文件保存失败: ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    // 9. 成功提示：仅用进度遮罩展示（与主菜单导出一致），不再额外弹窗
+    // 9. 成功提示：用进度遮罩展示，提供"打开 PDF / 在文件夹中查看 / 关闭"三个按钮
     console.log('[PDF导出] 成功:', savePath)
     try {
       overlay?.setTitle?.('导出完成')
       overlay?.setSub?.('已写入：' + String(savePath))
-      setTimeout(() => { try { overlay?.close?.() } catch {} }, 1200)
+      // 提取父目录，用于"在文件夹中查看"
+      let parentDir = ''
+      try {
+        const s = String(savePath || '')
+        const m = s.match(/^(.*)[\/\\][^\/\\]+$/)
+        if (m) parentDir = m[1] || ''
+      } catch {}
+      overlay?.markSuccess?.()
+      overlay?.setActions?.([
+        {
+          label: '打开 PDF',
+          primary: true,
+          onClick: () => { try { void openPath(savePath) } catch (e) { console.error('[PDF导出] 打开 PDF 失败:', e) } },
+        },
+        {
+          label: '在文件夹中查看',
+          onClick: () => { try { if (parentDir) void openPath(parentDir) } catch (e) { console.error('[PDF导出] 打开文件夹失败:', e) } },
+        },
+        {
+          label: '关闭',
+          onClick: () => { try { overlay?.close?.() } catch {} },
+        },
+      ])
     } catch {}
   } catch (error) {
     console.error('[PDF导出] 失败:', error)
