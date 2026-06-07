@@ -2327,7 +2327,9 @@ body.lib-color-depth .lib-children > .lib-node[data-scheme="3"]::before { backgr
 body.lib-color-depth .lib-children > .lib-node[data-scheme="4"]::before { background: var(--lib-color-4); }
 body.lib-color-depth .lib-children > .lib-node[data-scheme="5"]::before { background: var(--lib-color-5); }
 
-/* 展开的目录:从横线中点向下延伸一小段竖线,连到子级 rail。 */
+/* 展开的目录:从横线中点向下延伸一小段竖线,连到子级 rail。
+   颜色与该父级"自己的 rail 颜色"一致 —— 用 :has(+ .lib-children > .lib-node[data-scheme=N])
+   取父级 kids 容器首子 scheme,与 rail 5 条规则保持同一取色策略,避免根行(红)::after 覆盖到子级 rail(绿)的视觉跳色。 */
 .library .lib-node.expanded::after {
   content: '';
   position: absolute;
@@ -2338,11 +2340,11 @@ body.lib-color-depth .lib-children > .lib-node[data-scheme="5"]::before { backgr
   background: rgba(127, 127, 127, 0.4);
   z-index: 1;
 }
-body.lib-color-depth .lib-node[data-scheme="1"].expanded::after { background: var(--lib-color-1); }
-body.lib-color-depth .lib-node[data-scheme="2"].expanded::after { background: var(--lib-color-2); }
-body.lib-color-depth .lib-node[data-scheme="3"].expanded::after { background: var(--lib-color-3); }
-body.lib-color-depth .lib-node[data-scheme="4"].expanded::after { background: var(--lib-color-4); }
-body.lib-color-depth .lib-node[data-scheme="5"].expanded::after { background: var(--lib-color-5); }
+body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="1"])::after { background: var(--lib-color-1); }
+body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="2"])::after { background: var(--lib-color-2); }
+body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="3"])::after { background: var(--lib-color-3); }
+body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="4"])::after { background: var(--lib-color-4); }
+body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="5"])::after { background: var(--lib-color-5); }
 
 /* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
 .lib-ico { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: 0 0 auto; }
