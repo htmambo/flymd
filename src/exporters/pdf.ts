@@ -1,6 +1,9 @@
 // src/exporters/pdf.ts
 // 使用 html2canvas + jsPDF 将指定 DOM 元素导出为 PDF 字节
 
+import { resolveLocalImageAbsPathFromSrc } from '../utils/localImageSrcResolve'
+import { guessSyncedDocImageAbsPath } from '../utils/localImagePath'
+
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -21,6 +24,7 @@ async function waitForFonts(doc: Document, timeoutMs = 8000): Promise<void> {
 const EXPORT_WAIT_ORIG_IMAGES_MS = 1200
 const EXPORT_WAIT_CLONE_IMAGES_MS = 2500
 const EXPORT_FETCH_REMOTE_IMAGE_MS = 6000
+const EXPORT_READ_LOCAL_IMAGE_MS = 6000
 
 async function waitForImagesIn(root: ParentNode, timeoutMs = 20000): Promise<void> {
   const imgs = Array.from(root.querySelectorAll?.('img') || []) as HTMLImageElement[]
@@ -56,14 +60,14 @@ async function waitForImagesIn(root: ParentNode, timeoutMs = 20000): Promise<voi
   await Promise.race([Promise.all(tasks), waitMs(timeoutMs)])
 }
 
-async function getHttpClient(): Promise<{ fetch: any } | null> {
+async function getHttpClient(): Promise<{ fetch: any; kind: 'tauri' | 'browser' } | null> {
   // 优先使用 tauri plugin-http（可绕过浏览器 CORS），否则回退到 window.fetch（仍会受 CORS 限制）
   try {
     const mod: any = await import('@tauri-apps/plugin-http')
-    if (typeof mod?.fetch === 'function') return { fetch: mod.fetch }
+    if (typeof mod?.fetch === 'function') return { fetch: mod.fetch, kind: 'tauri' }
   } catch {}
   try {
-    if (typeof fetch === 'function') return { fetch: (input: string, init: any) => fetch(input, init) }
+    if (typeof fetch === 'function') return { fetch: (input: string, init: any) => fetch(input, init), kind: 'browser' }
   } catch {}
   return null
 }
@@ -88,25 +92,95 @@ async function fetchRemoteAsObjectUrl(url: string, timeoutMs = 20000): Promise<s
   const client = await getHttpClient()
   if (!client?.fetch) return ''
 
+  let timedOut = false
   const p = (async () => {
-    const resp = await client.fetch(url, {
-      method: 'GET',
-      headers: { 'Accept': 'image/*;q=0.9,*/*;q=0.1' },
-    })
-    const ok = resp && (resp.ok === true || (typeof resp.status === 'number' && resp.status >= 200 && resp.status < 300))
-    if (!ok) return ''
-    const ab: ArrayBuffer = await resp.arrayBuffer()
-    let mime = ''
     try {
-      const ct = resp.headers?.get?.('content-type') || resp.headers?.get?.('Content-Type')
-      if (ct) mime = String(ct).split(';')[0].trim()
-    } catch {}
-    if (!/^image\//i.test(mime)) mime = inferMimeByUrl(url)
-    const blob = new Blob([ab], { type: mime || 'application/octet-stream' })
-    return URL.createObjectURL(blob)
+      const resp = await client.fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'image/*;q=0.9,*/*;q=0.1' },
+      })
+      const ok = resp && (resp.ok === true || (typeof resp.status === 'number' && resp.status >= 200 && resp.status < 300))
+      if (!ok) return ''
+      const ab: ArrayBuffer = await resp.arrayBuffer()
+      let mime = ''
+      try {
+        const ct = resp.headers?.get?.('content-type') || resp.headers?.get?.('Content-Type')
+        if (ct) mime = String(ct).split(';')[0].trim()
+      } catch {}
+      if (!/^image\//i.test(mime)) mime = inferMimeByUrl(url)
+      const blob = new Blob([ab], { type: mime || 'application/octet-stream' })
+      const objUrl = URL.createObjectURL(blob)
+      // 竞态已超时：避免泄漏，立即 revoke
+      if (timedOut) { try { URL.revokeObjectURL(objUrl) } catch {} ; return '' }
+      return objUrl
+    } catch {
+      // 兜底走 Tauri 代理：结果同样受 timedOut 守卫
+      if (client.kind === 'tauri') {
+        const fallback = await fetchUrlAsObjectUrl(url, timeoutMs)
+        if (timedOut && fallback) { try { URL.revokeObjectURL(fallback) } catch {} ; return '' }
+        return fallback
+      }
+      return ''
+    }
   })()
 
-  return await Promise.race([p, waitMs(timeoutMs).then(() => '')])
+  try {
+    return await Promise.race([
+      p,
+      waitMs(timeoutMs).then(() => { timedOut = true; return '' }),
+    ])
+  } catch {
+    return ''
+  }
+}
+
+async function readLocalAsObjectUrl(absPath: string, timeoutMs = 20000): Promise<string> {
+  let timedOut = false
+  const p = (async () => {
+    try {
+      const mod: any = await import('@tauri-apps/plugin-fs')
+      const readFile = mod?.readFile
+      if (typeof readFile !== 'function') return ''
+      const bytes = await readFile(absPath as any)
+      const mime = inferMimeByUrl(absPath)
+      const blob = new Blob([bytes], { type: /^image\//i.test(mime) ? mime : 'application/octet-stream' })
+      const objUrl = URL.createObjectURL(blob)
+      if (timedOut) { try { URL.revokeObjectURL(objUrl) } catch {} ; return '' }
+      return objUrl
+    } catch {
+      return ''
+    }
+  })()
+  return await Promise.race([
+    p,
+    waitMs(timeoutMs).then(() => { timedOut = true; return '' }),
+  ])
+}
+
+async function fetchUrlAsObjectUrl(url: string, timeoutMs = 20000): Promise<string> {
+  let timedOut = false
+  const p = (async () => {
+    try {
+      const resp = await fetch(url)
+      if (!resp?.ok) return ''
+      const blob = await resp.blob()
+      const objUrl = URL.createObjectURL(blob)
+      if (timedOut) { try { URL.revokeObjectURL(objUrl) } catch {} ; return '' }
+      return objUrl
+    } catch {
+      return ''
+    }
+  })()
+  return await Promise.race([
+    p,
+    waitMs(timeoutMs).then(() => { timedOut = true; return '' }),
+  ])
+}
+
+function setImageSource(img: HTMLImageElement, url: string) {
+  try { img.removeAttribute('srcset') } catch {}
+  try { img.removeAttribute('sizes') } catch {}
+  try { img.setAttribute('src', url) } catch { try { (img as any).src = url } catch {} }
 }
 
 async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -122,33 +196,77 @@ async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
   await Promise.all(workers)
 }
 
-async function inlineCrossOriginImages(root: ParentNode, timeoutMs = 20000): Promise<string[]> {
-  // html2canvas 对“无 CORS 头的跨域图片”只能放弃，结果就是导出的 PDF 没图。
-  // 解决办法：用 tauri plugin-http 把图片抓下来，替换成 blob: URL（同源），再让 html2canvas 渲染。
+async function inlineImagesForPdf(root: ParentNode, opt?: {
+  sourceFilePath?: string | null
+  remoteTimeoutMs?: number
+  localTimeoutMs?: number
+  onLog?: (msg: string, data?: any) => void
+}): Promise<{ objectUrls: string[]; total: number; inlined: number; failed: number }> {
+  // html2canvas 对 file/asset/无 CORS 远程图都不稳定；导出前统一替换成当前页面可读的 blob: URL。
   const imgs = Array.from(root.querySelectorAll?.('img') || []) as HTMLImageElement[]
-  if (!imgs.length) return []
-
-  const origin = (() => { try { return new URL(document.baseURI || location.href).origin } catch { return '' } })()
-  const targets = imgs.map((img) => {
-    const src = String((img as any).currentSrc || img.getAttribute('src') || img.src || '').trim()
-    return { img, src }
-  }).filter(({ src }) => {
-    if (!/^https?:\/\//i.test(src)) return false
-    try { return origin ? (new URL(src).origin !== origin) : true } catch { return true }
-  })
-  if (!targets.length) return []
+  if (!imgs.length) return { objectUrls: [], total: 0, inlined: 0, failed: 0 }
 
   const objectUrls: string[] = []
   const cache = new Map<string, string>()
-  await runWithConcurrency(targets, 4, async ({ img, src }) => {
-    const cached = cache.get(src)
-    const u = cached != null ? cached : await fetchRemoteAsObjectUrl(src, timeoutMs)
-    if (cached == null) cache.set(src, u || '')
-    if (!u) return
-    try { img.setAttribute('src', u) } catch { try { (img as any).src = u } catch {} }
+  let inlined = 0
+  let failed = 0
+  const sourceFilePath = String(opt?.sourceFilePath || '').trim()
+  const remoteTimeoutMs = Math.max(0, Number(opt?.remoteTimeoutMs ?? EXPORT_FETCH_REMOTE_IMAGE_MS) || 0)
+  const localTimeoutMs = Math.max(0, Number(opt?.localTimeoutMs ?? EXPORT_READ_LOCAL_IMAGE_MS) || 0)
+
+  const targets = imgs.map((img) => {
+    const dataAbs = String(img.getAttribute('data-abs-path') || '').trim()
+    const dataRaw = String(img.getAttribute('data-raw-src') || '').trim()
+    const attrSrc = String(img.getAttribute('src') || '').trim()
+    const currentSrc = String((img as any).currentSrc || '').trim()
+    const src = dataAbs || dataRaw || attrSrc || currentSrc || String((img as any).src || '').trim()
+    return { img, src, attrSrc, dataAbs }
+  }).filter(({ src }) => !!src && !/^data:image\//i.test(src))
+
+  await runWithConcurrency(targets, 4, async ({ img, src, attrSrc, dataAbs }) => {
+    const key = dataAbs ? `local:${dataAbs}` : src
+    const cached = cache.get(key)
+    if (cached != null) {
+      if (cached) {
+        setImageSource(img, cached)
+        inlined++
+      } else {
+        failed++
+      }
+      return
+    }
+
+    let u = ''
+
+    try {
+      const localAbs = dataAbs || resolveLocalImageAbsPathFromSrc(src, sourceFilePath) || resolveLocalImageAbsPathFromSrc(attrSrc, sourceFilePath)
+      if (localAbs) {
+        u = await readLocalAsObjectUrl(localAbs, localTimeoutMs)
+        if (!u && sourceFilePath) {
+          const remapped = guessSyncedDocImageAbsPath(sourceFilePath, localAbs)
+          if (remapped && remapped !== localAbs) u = await readLocalAsObjectUrl(remapped, localTimeoutMs)
+        }
+      }
+    } catch {}
+
+    if (!u && /^https?:\/\//i.test(src)) u = await fetchRemoteAsObjectUrl(src, remoteTimeoutMs)
+    if (!u && /^(blob:|asset:)/i.test(src)) u = await fetchUrlAsObjectUrl(src, localTimeoutMs)
+
+    cache.set(key, u || '')
+    if (!u) {
+      failed++
+      return
+    }
+
+    setImageSource(img, u)
     objectUrls.push(u)
+    inlined++
   })
-  return objectUrls
+
+  try {
+    if (targets.length && opt?.onLog) opt.onLog('图片预处理完成', { total: targets.length, inlined, failed })
+  } catch {}
+  return { objectUrls, total: targets.length, inlined, failed }
 }
 
 function normalizeSvgSize(svgEl: SVGElement, targetWidth: number) {
@@ -417,6 +535,44 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     }
   }
 
+  // PDF 背景固定为白色：用户要求无论应用主题，PDF 始终是亮色白底。
+  // 不再沿用 body 的 --bg，避免 dark mode 应用导出后 PDF 仍是深色。
+  const resolvedBg = '#ffffff'
+
+  // 在 exportRoot 上 inline 与 body.light-mode 等价的浅色 CSS 变量。
+  // 这样 exportRoot 子树会按"等价浅色主题"渲染，无需修改 document.body。
+  const LIGHT_THEME_VARS: Record<string, string> = {
+    '--bg': '#ffffff',
+    '--fg': '#1f2328',
+    '--muted': '#6b7280',
+    '--border': '#e5e7eb',
+    '--preview-bg': '#fafafa',
+    '--border-strong': '#d1d5db',
+    '--panel-bg': '#f9fafb',
+    '--wysiwyg-bg': '#f3f4f6',
+    '--wysiwyg-status-bg': '#e5e7eb',
+    '--code-bg': '#f3f4f6',
+    '--table-border': '#cbd5e1',
+    '--table-header-bg': '#f1f5f9',
+    '--table-header-fg': '#1e293b',
+    '--table-row-hover': '#f8fafc',
+    '--code-border': '#e5e7eb',
+    '--code-fg': '#1f2328',
+    '--code-muted': '#6b7280',
+    '--c-key': '#1d4ed8',
+    '--c-str': '#059669',
+    '--c-num': '#059669',
+    '--c-fn': '#db2777',
+    '--c-com': '#9ca3af',
+  }
+  const applyLightThemeVars = (root: HTMLElement): void => {
+    try {
+      for (const k in LIGHT_THEME_VARS) {
+        try { root.style.setProperty(k, LIGHT_THEME_VARS[k]) } catch {}
+      }
+    } catch {}
+  }
+
   safeProgress({ stage: 'prepare', message: '准备导出…' })
   // 先等“原页面”图片与字体稳定下来，否则 html2canvas 计算布局时会把未加载完的图片当成 0 高度，
   // 最终表现为：PDF 里图片缺失/只截了一半（典型就是图床慢的时候更容易触发）。
@@ -433,7 +589,7 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
   const options = {
     margin: 10, // 单位：mm
     image: { type: 'jpeg', quality: 0.98 },
-    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: resolvedBg, scrollX: 0, scrollY: 0 },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     ...opt,
   }
@@ -441,12 +597,27 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
   // 用 .preview 作为父作用域，复用现有 Markdown 样式（否则很多规则不会命中，表现为“格式丢了”）
   const exportRoot = document.createElement('div')
   exportRoot.className = 'preview flymd-export-preview'
-  exportRoot.style.background = '#ffffff'
+  exportRoot.style.background = resolvedBg
   exportRoot.style.position = 'static'
   exportRoot.style.overflow = 'visible'
   exportRoot.style.padding = '0'
 
+  // 强制浅色导出（关键：不动 document.body，避免 UI 闪烁 + 避免覆盖导出期间用户手动切换的主题）。
+  // 直接在 exportRoot 上 inline 与 body.light-mode 等价的 CSS 变量，
+  // 让 exportRoot 内部所有依赖 --bg/--fg/--table-* 等变量的规则都解析为浅色。
+  // Mermaid SVG 内部颜色由 flymdReRenderMermaidIn 走强制 light 渲染（见下方），不受 CSS 变量影响。
+  applyLightThemeVars(exportRoot)
+
   const clone = el.cloneNode(true) as HTMLElement
+
+  // 重新渲染 Mermaid：使用新主题（light），避免 dark mode 导出的 PDF 仍是黑底/白字。
+  // 依赖 main.ts 暴露的 flymdReRenderMermaidIn：会清缓存、强制 mermaid.initialize(light)、逐节点重新渲染。
+  try {
+    const rerender = (window as any).flymdReRenderMermaidIn as ((c: HTMLElement) => Promise<void>) | undefined
+    if (typeof rerender === 'function') {
+      await rerender(clone)
+    }
+  } catch {}
 
   // 把原图片的最终尺寸/选中的资源同步到克隆节点，消除“布局依赖图片加载”的特殊情况
   try {
@@ -471,9 +642,22 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
 
   // 关键：让 preview-body 在容器内自适应，不要撑破 html2pdf 的 A4 宽度容器
   try {
+    // 调用方可能传入为了测量而隐藏/定位过的临时节点；克隆后必须按普通文档流导出。
+    clone.style.position = 'static'
+    clone.style.inset = 'auto'
+    clone.style.left = 'auto'
+    clone.style.top = 'auto'
+    clone.style.right = 'auto'
+    clone.style.bottom = 'auto'
     clone.style.width = '100%'
     clone.style.maxWidth = '100%'
     clone.style.boxSizing = 'border-box'
+    clone.style.overflow = 'visible'
+    clone.style.opacity = '1'
+    clone.style.visibility = 'visible'
+    clone.style.pointerEvents = 'auto'
+    clone.style.zIndex = 'auto'
+    clone.style.transform = 'none'
   } catch {}
 
   // 基础样式：保证图片不溢出 + KaTeX 关键样式
@@ -494,37 +678,32 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
       display: none !important;
     }
 
-    /* 导出 PDF：强制使用浅色变量，避免深色模式下导出变成“白底浅字”几乎看不见 */
-    .flymd-export-preview {
-      color-scheme: light;
-      --bg: #ffffff;
-      --fg: #1f2328;
-      --muted: #7a7a7a;
-      --border: #e5e7eb;
-      --border-strong: #cbd5e1;
-      --code-bg: #f6f8fa;
-      --code-border: #e5e7eb;
-      --code-fg: #1f2328;
-      --code-muted: #667085;
-      --c-key: #7c3aed;
-      --c-str: #2563eb;
-      --c-num: #059669;
-      --c-fn:  #db2777;
-      --c-com: #9ca3af;
-      --table-border: #cbd5e1;
-      --table-header-bg: #f1f5f9;
-      --table-header-fg: #1e293b;
-      --table-row-hover: #f8fafc;
-    }
+    /* 沿用项目自身主题：不覆盖 --bg/--fg/--code-bg 等 CSS 变量，
+       不强制 background/color，让 .flymd-export-preview 自然继承 body 当前主题。
+       这避免了 Mermaid 等 SVG 内部 currentColor / var(--text) 被强制值覆盖后
+       与自身填充色相近导致文字不可见的问题。
+       代码块语法高亮的 --c-* 引用由项目 CSS 提供（不同 .md-* 主题各自定义）。 */
 
     /* 导出容器：让 .preview 从“应用布局”退化为“普通文档流” */
     .flymd-export-preview.preview {
       position: static !important;
       top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
       overflow: visible !important;
+      opacity: 1 !important;
+      visibility: visible !important;
       padding: 0 !important;
-      background: #ffffff !important;
       box-shadow: none !important;
+    }
+
+    .flymd-export-preview .preview {
+      position: static !important;
+      top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+      overflow: visible !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+      z-index: auto !important;
+      transform: none !important;
     }
 
     .flymd-export-preview .preview-body img,
@@ -602,19 +781,13 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     }
   } catch {}
 
-  // 等克隆节点的图片也进入“可计算尺寸”的稳定态（多数情况下会命中缓存，成本很低）
+  // 图片内联与等待改到“挂载到文档之后”执行（见下方 mount 之后）：
+  // detached 节点的 <img> 不会发起加载，必须在元素进入文档后再替换为 blob: 并等待，
+  // 否则 html2canvas 会截到尚未加载完成的空白图。
   const blobUrls: string[] = []
   let mount: HTMLDivElement | null = null
   let viewport: HTMLDivElement | null = null
   try {
-    throwIfCancelled()
-    // 关键：跨域图床如果没给 CORS 头，html2canvas 会直接报错并跳过图片；这里把它们内联为 blob: 同源资源
-    safeProgress({ stage: 'prepare', message: '正在处理图片与字体…' })
-    try { blobUrls.push(...(await inlineCrossOriginImages(clone, Math.max(0, Number(opt?.fetchRemoteImageMs ?? EXPORT_FETCH_REMOTE_IMAGE_MS) || 0)))) } catch {}
-    try {
-      await waitForImagesIn(clone, Math.max(0, Number(opt?.waitCloneImagesMs ?? EXPORT_WAIT_CLONE_IMAGES_MS) || 0))
-      await nextFrame()
-    } catch {}
     throwIfCancelled()
 
     let html2canvas: any = null
@@ -664,25 +837,139 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     mount.style.top = '0'
     mount.style.width = innerW + 'mm'
     mount.style.maxWidth = innerW + 'mm'
-    mount.style.background = '#ffffff'
+    mount.style.background = resolvedBg
     mount.style.overflow = 'visible'
     mount.style.pointerEvents = 'none'
     mount.style.zIndex = '-1'
+    // 强制 exportRoot 走浅色主题：覆盖 body.dark-mode 各类选择器的 hardcoded !important 颜色。
+    // 用 mount 内联的 <style>，mount 在 finally 中被 remove，所以 style 不会污染应用主题。
+    // 选择器必须带 body.dark-mode 前缀——dark-mode 规则特异性 (0,2,2) / (0,3,1) 高于裸的 .preview (0,1,0)，
+    // !important 仍可胜出。导出时 body 可能处于 dark-mode，应用是 dark 也不影响 PDF 走浅色。
+    const forceLight = document.createElement('style')
+    forceLight.textContent = `
+      body.dark-mode .preview.flymd-export-preview,
+      body.dark-mode .preview.flymd-export-preview .preview-body,
+      body.light-mode .preview.flymd-export-preview,
+      body.light-mode .preview.flymd-export-preview .preview-body {
+        background: #ffffff !important;
+        color: #1f2328 !important;
+      }
+      body.dark-mode .preview.flymd-export-preview a,
+      body.dark-mode .preview.flymd-export-preview a:hover,
+      body.light-mode .preview.flymd-export-preview a,
+      body.light-mode .preview.flymd-export-preview a:hover {
+        color: #2563eb !important;
+      }
+      body.dark-mode .preview.flymd-export-preview :not(pre) > code,
+      body.light-mode .preview.flymd-export-preview :not(pre) > code {
+        background: #f3f4f6 !important;
+        color: #1f2328 !important;
+      }
+      body.dark-mode .preview.flymd-export-preview pre,
+      body.light-mode .preview.flymd-export-preview pre {
+        background: #f3f4f6 !important;
+        color: #1f2328 !important;
+        border-color: #e5e7eb !important;
+      }
+      /* 代码块语法高亮：让 hljs token 走 exportRoot inline 的 --c-* 变量（与 body.light-mode 配色一致）。
+         选择器必须带 body.dark-mode 前缀，否则 dark-mode 规则 (0,3,1) 会胜出。
+         var(--c-*) 让 token 颜色由 exportRoot 上 inline 的浅色调色板决定，保留项目自身高亮对比。 */
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-keyword,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-selector-tag,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-built_in,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-keyword,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-selector-tag,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-built_in { color: var(--c-key) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-title,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-section,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-function,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-title,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-section,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-function { color: var(--c-fn) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-string,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-attr,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-template-variable,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-string,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-attr,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-template-variable { color: var(--c-str) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-number,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-literal,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-bullet,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-number,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-literal,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-bullet { color: var(--c-num) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-comment,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-quote,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-comment,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-quote { color: var(--c-com) !important; font-style: italic !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-variable,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-params,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-property,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-variable,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-params,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-property { color: var(--fg) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-class,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-type,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-class,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-type { color: var(--c-fn) !important; }
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-operator,
+      body.dark-mode .preview.flymd-export-preview code.hljs .hljs-punctuation,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-operator,
+      body.light-mode .preview.flymd-export-preview code.hljs .hljs-punctuation { color: var(--fg) !important; }
+      body.dark-mode .preview.flymd-export-preview blockquote,
+      body.light-mode .preview.flymd-export-preview blockquote {
+        border-left-color: #e5e7eb !important;
+        color: #4b5563 !important;
+      }
+      body.dark-mode .preview.flymd-export-preview table,
+      body.light-mode .preview.flymd-export-preview table {
+        border-color: #cbd5e1 !important;
+        box-shadow: none !important;
+      }
+      body.dark-mode .preview.flymd-export-preview table tbody tr:nth-child(even) td,
+      body.light-mode .preview.flymd-export-preview table tbody tr:nth-child(even) td {
+        background: #f8fafc !important;
+      }
+      body.dark-mode .preview.flymd-export-preview table tbody tr:hover td,
+      body.light-mode .preview.flymd-export-preview table tbody tr:hover td {
+        background: #f1f5f9 !important;
+      }
+      body.dark-mode .preview.flymd-export-preview hr,
+      body.light-mode .preview.flymd-export-preview hr {
+        border-color: #e5e7eb !important;
+      }
+    `
+    mount.appendChild(forceLight)
     // viewport：用于“分页渲染”时裁切可视区域，避免一次性生成超长大画布导致黑页。
     viewport = document.createElement('div')
     viewport.className = 'flymd-pdf-export-viewport'
     viewport.style.position = 'relative'
     viewport.style.width = innerW + 'mm'
     viewport.style.maxWidth = innerW + 'mm'
-    viewport.style.background = '#ffffff'
+    viewport.style.background = resolvedBg
     viewport.style.overflow = 'visible'
     viewport.appendChild(exportRoot)
     mount.appendChild(viewport)
     document.body.appendChild(mount)
 
     try {
+      safeProgress({ stage: 'prepare', message: '正在处理图片与字体…' })
       await waitForFonts(document)
-      await waitForImagesIn(exportRoot, Math.max(0, Number(opt?.waitCloneImagesMs ?? EXPORT_WAIT_CLONE_IMAGES_MS) || 0))
+      // 元素已挂载到文档：此时把本地/远程/asset 图片替换为 blob: 同源资源，<img> 才会真正发起加载。
+      try {
+        const imagePrep = await inlineImagesForPdf(exportRoot, {
+          sourceFilePath: opt?.sourceFilePath || opt?.filePath || null,
+          remoteTimeoutMs: Math.max(0, Number(opt?.fetchRemoteImageMs ?? EXPORT_FETCH_REMOTE_IMAGE_MS) || 0),
+          localTimeoutMs: Math.max(0, Number(opt?.readLocalImageMs ?? EXPORT_READ_LOCAL_IMAGE_MS) || 0),
+          onLog: safeLog,
+        })
+        blobUrls.push(...imagePrep.objectUrls)
+        if (imagePrep.total > 0) {
+          safeProgress({ stage: 'prepare', message: `图片处理完成：${imagePrep.inlined}/${imagePrep.total}` })
+        }
+      } catch {}
+      // 等待图片解码（含 blob: 加载）；给大图/慢盘更充裕余量，避免截到未加载态。
+      await waitForImagesIn(exportRoot, Math.max(8000, Number(opt?.waitCloneImagesMs ?? EXPORT_WAIT_CLONE_IMAGES_MS) || 0))
       await nextFrame()
     } catch {}
     throwIfCancelled()
@@ -814,7 +1101,7 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
         const pageStartedAt = Date.now()
         const pageCanvas: HTMLCanvasElement = await html2canvas(viewport, {
           ...(options as any)?.html2canvas,
-          backgroundColor: (options as any)?.html2canvas?.backgroundColor || '#ffffff',
+          backgroundColor: (options as any)?.html2canvas?.backgroundColor || resolvedBg,
           scrollX: 0,
           scrollY: 0,
           logging: false,
@@ -842,7 +1129,7 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
       const fullStartedAt = Date.now()
       const canvas: HTMLCanvasElement = await html2canvas(exportRoot, {
         ...(options as any)?.html2canvas,
-        backgroundColor: (options as any)?.html2canvas?.backgroundColor || '#ffffff',
+        backgroundColor: (options as any)?.html2canvas?.backgroundColor || resolvedBg,
         scrollX: 0,
         scrollY: 0,
         logging: false,
@@ -929,5 +1216,7 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     for (const u of blobUrls) {
       try { URL.revokeObjectURL(u) } catch {}
     }
+    // 不再需要恢复 document.body 主题类——本次导出全程未修改 document.body。
+    // 用户在导出期间切换主题也不会被吞。
   }
 }

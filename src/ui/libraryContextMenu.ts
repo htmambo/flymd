@@ -116,30 +116,8 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
       }
     }))
 
-    // 文件节点专属操作：在新实例中打开 / 生成便签
+    // 文件节点专属操作：生成便签
     if (!isDir) {
-      menu.appendChild(mkItem(t('ctx.openNewInstance'), async () => {
-        try {
-          const win = window as any
-          const openFn = win?.flymdOpenInNewInstance as ((p: string) => Promise<void>) | undefined
-          if (typeof openFn !== 'function') {
-            alert('当前环境不支持新实例打开，请直接从系统中双击该文件。')
-            return
-          }
-          try {
-            const cur = deps.getCurrentFilePath() ? deps.normalizePath(deps.getCurrentFilePath() as string) : ''
-            const target = deps.normalizePath(path)
-            if (cur && cur === target && deps.isDirty()) {
-              alert('当前文档有未保存的更改，禁止在新实例中打开。\n请先保存后再尝试。')
-              return
-            }
-          } catch {}
-          await openFn(path)
-        } catch (e) {
-          console.error('[库树] 新实例打开文档失败:', e)
-        }
-      }))
-
       menu.appendChild(mkItem(t('ctx.createSticky'), async () => {
         try {
           const win = window as any
@@ -169,6 +147,24 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
           console.error('[库树] 生成便签失败:', e)
         }
       }))
+
+      // PDF 导出（仅 Markdown 文件）
+      if (path.match(/\.m(arkdown|d)$/i)) {
+        menu.appendChild(mkItem(t('ctx.exportPdf'), async () => {
+          try {
+            const { exportFileToPdf } = await import('../exporters/pdfContextExport')
+            const fileName = path.split(/[\\/]/).pop() || 'document.md'
+            const suggestedName = fileName.replace(/\.m(arkdown|d)$/i, '.pdf')
+            await exportFileToPdf({
+              filePath: path,
+              suggestedName
+            })
+          } catch (e) {
+            console.error('[库树] PDF导出失败:', e)
+            alert('PDF导出失败: ' + (e instanceof Error ? e.message : String(e)))
+          }
+        }))
+      }
     }
 
     if (isDir) {

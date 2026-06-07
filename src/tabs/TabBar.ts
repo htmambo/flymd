@@ -541,9 +541,9 @@ export class TabBar {
     const menu = document.createElement('div')
     menu.className = 'tabbar-context-menu'
     menu.style.display = 'none'
-    const actions: Array<{ label: string; action: 'open-new-instance' | 'create-sticky-note' | 'rename' | 'close-right' | 'close-others' | 'close-all' }> = [
-      { label: '在新实例中打开', action: 'open-new-instance' },
+    const actions: Array<{ label: string; action: 'create-sticky-note' | 'export-pdf' | 'rename' | 'close-right' | 'close-others' | 'close-all' }> = [
       { label: '生成便签', action: 'create-sticky-note' },
+      { label: '导出为 PDF', action: 'export-pdf' },
       { label: '重命名文档…', action: 'rename' },
       { label: '关闭右侧所有标签', action: 'close-right' },
       { label: '关闭其他标签', action: 'close-others' },
@@ -567,15 +567,15 @@ export class TabBar {
   /**
    * 处理上下文菜单动作
    */
-  private async handleContextMenuAction(action: 'open-new-instance' | 'create-sticky-note' | 'rename' | 'close-right' | 'close-others' | 'close-all'): Promise<void> {
+  private async handleContextMenuAction(action: 'create-sticky-note' | 'export-pdf' | 'rename' | 'close-right' | 'close-others' | 'close-all'): Promise<void> {
     const targetId = this.contextMenuTargetTabId
     this.hideContextMenu()
     switch (action) {
-      case 'open-new-instance':
-        if (targetId) await this.openTabInNewInstance(targetId)
-        break
       case 'create-sticky-note':
         if (targetId) await this.createStickyNote(targetId)
+        break
+      case 'export-pdf':
+        if (targetId) await this.exportTabToPdf(targetId)
         break
       case 'rename':
         if (targetId) await this.renameTabFile(targetId)
@@ -619,54 +619,16 @@ export class TabBar {
     }
   }
 
-  private async openTabInNewInstance(tabId: string): Promise<boolean> {
-    const tab = this.tabManager.findTabById(tabId)
-    if (!tab) return false
-    if (!tab.filePath) {
-      alert('当前标签尚未保存为文件，无法在新实例中打开。\n请先保存到磁盘后再尝试。')
-      return false
-    }
-    if (tab.dirty) {
-      alert('当前标签有未保存的更改，禁止在新实例中打开。\n请先保存后再尝试。')
-      return false
-    }
-    const flymd = (window as any)
-    const openFn = flymd?.flymdOpenInNewInstance as ((path: string) => Promise<void>) | undefined
-    if (typeof openFn !== 'function') {
-      alert('当前环境不支持新实例打开，请直接从系统中双击该文件。')
-      return false
-    }
-    try {
-      await openFn(tab.filePath)
-      return true
-    } catch (e) {
-      console.error('[TabBar] 新实例打开文档失败:', e)
-      return false
-    }
-  }
-
-  private async detachTabToNewInstance(tabId: string): Promise<void> {
-    const ok = await this.openTabInNewInstance(tabId)
-    if (!ok) return
-    try { await this.closeTab(tabId) } catch {}
-  }
-
   /**
-   * 拖拽“跨窗口移动标签”入口
+   * 拖拽”跨窗口移动标签”入口
    *
    * 策略：
    * - 优先命中其它窗口：拖到窗口上 → 在目标窗口打开为标签（ACK 后关闭源标签）
    * - 否则创建新窗口：拖到空白区域 → 新窗口打开为标签（ACK 后关闭源标签）
-   * - 兼容旧行为：按住 Alt 拖出 → 仍用系统关联打开“新进程实例”（老功能不被砍掉）
    */
   private async detachTabByDropPoint(tabId: string, e: PointerEvent): Promise<void> {
-    // 拖放落地前先隐藏“窗口外幽灵”，避免目标窗口被遮挡
+    // 拖放落地前先隐藏”窗口外幽灵”，避免目标窗口被遮挡
     try { await this.hideDragGhostWindow() } catch {}
-    // 老行为保留：给用户留后门，避免“习惯被硬改”
-    if (e.altKey) {
-      await this.detachTabToNewInstance(tabId)
-      return
-    }
 
     const myLabel = await getCurrentWebviewWindowLabel()
     const targetLabel = await findWebviewWindowLabelAtScreenPoint(e.screenX, e.screenY, {
@@ -691,8 +653,7 @@ export class TabBar {
       y: Math.round(e.screenY),
     })
     if (!created?.label) {
-      // 创建失败：兜底回到旧的“新进程打开”行为
-      await this.detachTabToNewInstance(tabId)
+      alert('无法创建新窗口')
       return
     }
 
@@ -848,6 +809,35 @@ export class TabBar {
       await createFn(tab.filePath)
     } catch (e) {
       console.error('[TabBar] 生成便签失败:', e)
+    }
+  }
+
+  /**
+   * 导出标签内容为 PDF
+   */
+  private async exportTabToPdf(tabId: string): Promise<void> {
+    const tab = this.tabManager.findTabById(tabId)
+    if (!tab) return
+
+    try {
+      const { exportFileToPdf } = await import('../exporters/pdfContextExport')
+
+      // 从文件路径提取文件名
+      let fileName = 'document.md'
+      if (tab.filePath) {
+        const parts = tab.filePath.replace(/\\/g, '/').split('/')
+        fileName = parts[parts.length - 1] || 'document.md'
+      }
+      const suggestedName = fileName.replace(/\.m(arkdown|d)$/i, '.pdf')
+
+      await exportFileToPdf({
+        filePath: tab.filePath || '',
+        content: tab.content,
+        suggestedName
+      })
+    } catch (e) {
+      console.error('[TabBar] PDF导出失败:', e)
+      alert('PDF导出失败: ' + (e instanceof Error ? e.message : String(e)))
     }
   }
 

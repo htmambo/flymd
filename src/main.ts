@@ -405,6 +405,81 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
   })
 }
 
+// Mermaid 渲染：将 root 内的 ```mermaid / pre.mermaid 占位转为 SVG 图。
+// 抽取自 renderPreview，供预览与右键 PDF 导出复用，保持渲染逻辑单一来源。
+async function renderMermaidIn(root: HTMLElement): Promise<void> {
+  try {
+    const codeBlocks = root.querySelectorAll('pre > code.language-mermaid') as NodeListOf<HTMLElement>
+    try { if (DEBUG_RENDER) console.log('[预处理] language-mermaid 代码块数量:', codeBlocks.length) } catch {}
+    codeBlocks.forEach((code) => {
+      try {
+        const pre = code.parentElement as HTMLElement
+        const text = code.textContent || ''
+        const div = document.createElement('div')
+        div.className = 'mermaid'
+        div.textContent = text
+        pre.replaceWith(div)
+      } catch {}
+    })
+  } catch {}
+  try {
+    const preMermaid = root.querySelectorAll('pre.mermaid')
+    try { if (DEBUG_RENDER) console.log('[预处理] pre.mermaid 元素数量:', preMermaid.length) } catch {}
+    preMermaid.forEach((pre) => {
+      try {
+        const text = pre.textContent || ''
+        const div = document.createElement('div')
+        div.className = 'mermaid'
+        div.textContent = text
+        pre.replaceWith(div)
+      } catch {}
+    })
+  } catch {}
+  try {
+    const nodes = Array.from(root.querySelectorAll('.mermaid')) as HTMLElement[]
+    try { if (DEBUG_RENDER) console.log('[预处理] 准备渲染 Mermaid 节点:', nodes.length) } catch {}
+    if (nodes.length > 0) {
+      let mermaid: any
+      try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch (e2) { throw e2 } }
+      if (!mermaidReady) {
+        mermaid.initialize(getMermaidConfig());
+        mermaidReady = true
+      }
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i]
+        const code = el.textContent || ''
+        const hash = hashMermaidCode(code)
+        const desiredId = `${hash}-${mermaidSvgCacheVersion}-${i}`
+        try {
+          let svgMarkup = getCachedMermaidSvg(code, desiredId)
+          if (!svgMarkup) {
+            const renderId = `${hash}-${Date.now()}-${i}`
+            const { svg } = await mermaid.render(renderId, code)
+            cacheMermaidSvg(code, svg, renderId)
+            svgMarkup = svg.split(renderId).join(desiredId)
+          }
+          const wrap = document.createElement('div')
+          wrap.innerHTML = svgMarkup || ''
+          const svgEl = wrap.firstElementChild as SVGElement | null
+          if (svgEl) {
+            try { normalizeMermaidSvg(svgEl) } catch {}
+            if (!svgEl.id) svgEl.id = desiredId
+            const fig = document.createElement('div')
+            fig.className = 'mmd-figure'
+            // 记录 Mermaid 源码：导出 PDF 时按需重建为 <div class="mermaid">text</div> 后用 light theme 重新渲染，
+            // 解决 dark mode 下导出 PDF 仍是黑底的问题。源码长度通常 < 1KB，data 属性开销可忽略。
+            try { fig.dataset.source = code } catch {}
+            fig.appendChild(svgEl)
+            try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
+            el.replaceWith(fig)
+            try { postAttachMermaidSvgAdjust(svgEl) } catch {}
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 const KATEX_CRITICAL_STYLE_ID = 'flymd-katex-critical-style'
 function ensureKatexCriticalStyle() {
   try {
@@ -4084,73 +4159,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         if (!_calloutCopyEventsBound) { try { preview.addEventListener('click', onCalloutCopyClick as any, true) } catch {} ; _calloutCopyEventsBound = true }
       }
     } catch {}
-    try {
-      const codeBlocks = buf.querySelectorAll('pre > code.language-mermaid') as NodeListOf<HTMLElement>
-      try { if (DEBUG_RENDER) console.log('[预处理] language-mermaid 代码块数量:', codeBlocks.length) } catch {}
-      codeBlocks.forEach((code) => {
-        try {
-          const pre = code.parentElement as HTMLElement
-          const text = code.textContent || ''
-          const div = document.createElement('div')
-          div.className = 'mermaid'
-          div.textContent = text
-          pre.replaceWith(div)
-        } catch {}
-      })
-    } catch {}
-    try {
-      const preMermaid = buf.querySelectorAll('pre.mermaid')
-      try { if (DEBUG_RENDER) console.log('[预处理] pre.mermaid 元素数量:', preMermaid.length) } catch {}
-      preMermaid.forEach((pre) => {
-        try {
-          const text = pre.textContent || ''
-          const div = document.createElement('div')
-          div.className = 'mermaid'
-          div.textContent = text
-          pre.replaceWith(div)
-        } catch {}
-      })
-    } catch {}
-    try {
-      const nodes = Array.from(buf.querySelectorAll('.mermaid')) as HTMLElement[]
-      try { if (DEBUG_RENDER) console.log('[预处理] 准备渲染 Mermaid 节点:', nodes.length) } catch {}
-      if (nodes.length > 0) {
-        let mermaid: any
-        try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch (e2) { throw e2 } }
-        if (!mermaidReady) {
-          mermaid.initialize(getMermaidConfig());
-          mermaidReady = true
-        }
-        for (let i = 0; i < nodes.length; i++) {
-          const el = nodes[i]
-          const code = el.textContent || ''
-          const hash = hashMermaidCode(code)
-          const desiredId = `${hash}-${mermaidSvgCacheVersion}-${i}`
-          try {
-            let svgMarkup = getCachedMermaidSvg(code, desiredId)
-            if (!svgMarkup) {
-              const renderId = `${hash}-${Date.now()}-${i}`
-              const { svg } = await mermaid.render(renderId, code)
-              cacheMermaidSvg(code, svg, renderId)
-              svgMarkup = svg.split(renderId).join(desiredId)
-            }
-            const wrap = document.createElement('div')
-            wrap.innerHTML = svgMarkup || ''
-            const svgEl = wrap.firstElementChild as SVGElement | null
-            if (svgEl) {
-              try { normalizeMermaidSvg(svgEl) } catch {}
-              if (!svgEl.id) svgEl.id = desiredId
-              const fig = document.createElement('div')
-              fig.className = 'mmd-figure'
-              fig.appendChild(svgEl)
-              try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
-              el.replaceWith(fig)
-              try { postAttachMermaidSvgAdjust(svgEl) } catch {}
-            }
-          } catch {}
-        }
-      }
-    } catch {}
+    try { await renderMermaidIn(buf) } catch {}
     // 一次性替换预览 DOM
     try {
       try { injectPreviewMeta(buf, previewMeta, previewMetaLabels) } catch {}
@@ -4391,6 +4400,9 @@ async function renderPreview(opts?: RenderPreviewOptions) {
             if (!svgEl.id) svgEl.id = desiredId
             const fig = document.createElement('div')
             fig.className = 'mmd-figure'
+            // 记录 Mermaid 源码：导出 PDF 时按需重建为 <div class="mermaid">text</div> 后用 light theme 重新渲染，
+            // 解决 dark mode 下导出 PDF 仍是黑底的问题。源码长度通常 < 1KB，data 属性开销可忽略。
+            try { fig.dataset.source = code } catch {}
             fig.appendChild(svgEl)
             try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
             el.replaceWith(fig)
@@ -5420,6 +5432,7 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
       try { return typeof v === 'string' ? v : JSON.stringify(v) } catch { return String(v) }
     }
     const bytes = await exportPdf(el, {
+      sourceFilePath: currentFilePath || undefined,
       cancelSource,
       onLog: (msg: string, data?: any) => overlay.appendLog(data != null ? (msg + ' ' + fmt(data)) : msg),
       onProgress: (p: any) => {
@@ -5522,6 +5535,7 @@ async function saveAs() {
               try { return typeof v === 'string' ? v : JSON.stringify(v) } catch { return String(v) }
             }
             const bytes = await exportPdf(el, {
+              sourceFilePath: currentFilePath || undefined,
               cancelSource,
               onLog: (msg: string, data?: any) => overlay.appendLog(data != null ? (msg + ' ' + fmt(data)) : msg),
               onProgress: (p: any) => {
@@ -6562,8 +6576,136 @@ try {
         return null
       }
     }
-    ;(window as any).flymdOpenInNewInstance = async (path: string) => {
-      try { await openPath(path) } catch {}
+    // 仅为容器内的 <img> 注入 data-abs-path / data-raw-src：
+    // 不在此处启动实际加载（图片实际加载由 exportPdf 的 inlineImagesForPdf 在挂载后接管）。
+    // 这样 PDF 导出器（pdf.ts::inlineImagesForPdf）能直接通过 data-abs-path 命中本地相对路径，
+    // 解决右键导出时 src 已被替换为 asset: 协议、丢失原始相对路径的问题。
+    // 安全考量：仅基于当前 <img> 的 src 解析并覆盖 data-abs-path，
+    // 避免信任 Markdown 原始 HTML 中由用户输入带来的 data-abs-path 属性。
+    function injectImageAbsPaths(root: ParentNode, currentFilePath?: string | null): void {
+      try {
+        const imgs = root.querySelectorAll ? root.querySelectorAll('img') : []
+        imgs.forEach((img) => {
+          try {
+            const el = img as HTMLImageElement
+            const src = el.getAttribute('src') || ''
+            if (!src) return
+            // 已可加载协议：无需解析；remote/asset/blob/data 走 remote 分支或保持原样
+            if (/^(data:|blob:|https?:|asset:)/i.test(src)) return
+            const abs = resolveLocalImageAbsPathFromSrc(src, currentFilePath)
+            if (!abs) return
+            // 始终用本次解析结果覆盖：保证 data-abs-path 与 src 严格对应，
+            // 拒绝来自原始 HTML 的可疑预置值。data-raw-src 同理覆盖。
+            el.setAttribute('data-abs-path', abs)
+            el.setAttribute('data-raw-src', src)
+            // 注意：不进行 WebDAV 同步 remap；remap 失败兜底由 exportPdf 的
+            // inlineImagesForPdf 在内联读取失败时再做（避免本地路径被错误改写）。
+          } catch {}
+        })
+      } catch {}
+    }
+
+    // Markdown 渲染器（用于 PDF 导出等功能）
+    ;(window as any).flymdRenderMarkdown = async (markdown: string): Promise<string> => {
+      await ensureRenderer()
+      if (!md) throw new Error('Markdown 渲染器未初始化')
+
+      let raw = String(markdown || '')
+
+      // 移除 YAML Front Matter
+      try {
+        const { body } = splitYamlFrontMatter(raw)
+        raw = body
+      } catch {}
+
+      // Excel 公式里的 `$` 不是行内数学分隔符：先转义
+      raw = protectExcelDollarRefs(raw)
+
+      // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被分断的问题
+      try {
+        const { normalizeCalloutMarkdown } = await import('./plugins/markdownItCallout')
+        if (typeof normalizeCalloutMarkdown === 'function') {
+          raw = normalizeCalloutMarkdown(raw)
+        }
+      } catch {}
+
+      return md.render(raw)
+    }
+    // 渲染 Markdown 到指定容器：在纯渲染基础上补全 Mermaid/KaTeX 等 DOM 后处理，
+    // 供右键 PDF 导出复用，使其与主菜单导出（走预览 DOM）的内容效果一致。
+    // 可选 currentFilePath：用于给 <img> 注入 data-abs-path/data-raw-src，
+    // 使导出器（pdf.ts::inlineImagesForPdf）能基于文件路径解析本地相对路径。
+    ;(window as any).flymdRenderMarkdownToContainer = async (container: HTMLElement, markdown: string, currentFilePath?: string | null): Promise<void> => {
+      const render = (window as any).flymdRenderMarkdown as ((md: string) => Promise<string>) | undefined
+      if (typeof render !== 'function') throw new Error('Markdown 渲染器未初始化')
+      container.innerHTML = await render(markdown)
+      try { ensurePreviewHeadingIds(container) } catch {}
+      // 注入图片绝对路径属性：与主预览路径保持一致，便于导出器直接命中。
+      // 必须在 Mermaid/KaTeX 之前处理，避免二者对图片节点做无关转换。
+      try { injectImageAbsPaths(container, currentFilePath) } catch {}
+      try { await renderMermaidIn(container) } catch {}
+      try { await renderKatexPlaceholders(container, true) } catch {}
+    }
+    // 重新渲染容器内的 Mermaid 节点（PDF 导出用）：
+    // 关键：必须无视主题缓存（cache key 不含 theme）与 mermaidReady 一次性初始化，
+    // 否则在 dark mode 应用导出的 PDF 仍会拿到暗色 SVG（classDiagram 黑底/黑字不可见）。
+    // 策略：先清缓存，再强制 mermaid.initialize(light)，最后逐节点重新渲染。
+    ;(window as any).flymdReRenderMermaidIn = async (container: HTMLElement): Promise<void> => {
+      try {
+        const figs = Array.from(container.querySelectorAll('.mmd-figure[data-source]')) as HTMLElement[]
+        if (figs.length === 0) return
+        // 把 .mmd-figure[data-source] 还原为 <div class="mermaid">text</div>
+        for (const fig of figs) {
+          try {
+            const src = String(fig.getAttribute('data-source') || '')
+            if (!src) continue
+            const div = document.createElement('div')
+            div.className = 'mermaid'
+            div.textContent = src
+            fig.replaceWith(div)
+          } catch {}
+        }
+        // 清空 SVG 缓存：避免 getMermaidConfig() 在 dark 时缓存的暗色 SVG 被复用。
+        try { invalidateMermaidSvgCache('pdf-export: force light theme') } catch {}
+        // 强制把 Mermaid 重置为未初始化状态，并用 light config 重新初始化。
+        // 这样 mermaid.render 内部颜色会按 light theme 生成，避免 classDiagram 黑底黑字。
+        mermaidReady = false
+        let mermaid: any
+        try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch (e2) { throw e2 } }
+        const lightCfg = (() => {
+          try { return getMermaidConfig() } catch { return { startOnLoad: false, securityLevel: 'strict', theme: 'default' } }
+        })()
+        // 覆盖 theme：忽略 body.dark-mode / prefers-color-scheme（用户在系统暗色环境下也想要亮色 PDF）
+        try { lightCfg.theme = 'default' } catch {}
+        try { if (lightCfg.themeVariables) delete lightCfg.themeVariables } catch {}
+        try { mermaid.initialize(lightCfg); mermaidReady = true } catch (e) { try { console.error('[PDF导出] Mermaid light 初始化失败', e) } catch {} }
+        // 逐节点重新渲染
+        const nodes = Array.from(container.querySelectorAll('.mermaid')) as HTMLElement[]
+        for (let i = 0; i < nodes.length; i++) {
+          const el = nodes[i]
+          const code = el.textContent || ''
+          const hash = hashMermaidCode(code)
+          const renderId = `${hash}-pdf-${Date.now()}-${i}`
+          try {
+            const { svg } = await mermaid.render(renderId, code)
+            const wrap = document.createElement('div')
+            wrap.innerHTML = svg || ''
+            const svgEl = wrap.firstElementChild as SVGElement | null
+            if (svgEl) {
+              try { normalizeMermaidSvg(svgEl) } catch {}
+              const desiredId = `${hash}-pdf-${i}`
+              if (!svgEl.id) svgEl.id = desiredId
+              const fig = document.createElement('div')
+              fig.className = 'mmd-figure'
+              try { fig.dataset.source = code } catch {}
+              fig.appendChild(svgEl)
+              try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
+              el.replaceWith(fig)
+              try { postAttachMermaidSvgAdjust(svgEl) } catch {}
+            }
+          } catch {}
+        }
+      } catch {}
     }
     // 在系统文件管理器中打开（Windows: 资源管理器 / macOS: Finder / Linux: 默认文件管理器）
     ;(window as any).flymdOpenInExplorer = async (path: string, isDir?: boolean) => {

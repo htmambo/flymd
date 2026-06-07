@@ -272,10 +272,10 @@ function ensureStyle(): void {
   style.id = FLYMD_PROGRESS_STYLE_ID
   style.textContent = `
     .flymd-progress-overlay{
-      position:fixed;inset:0;background:rgba(255,255,255,.86);
+      position:fixed;inset:0;background:rgba(15,23,42,.28);
       display:flex;align-items:center;justify-content:center;z-index:${FLYMD_PROGRESS_Z_INDEX};
-      backdrop-filter: blur(4px);
-      -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(3px);
+      -webkit-backdrop-filter: blur(3px);
     }
     .flymd-progress-dialog{
       width:340px;max-width:calc(100% - 40px);
@@ -347,6 +347,28 @@ function ensureStyle(): void {
     .flymd-progress-btn.danger:hover{
       background:linear-gradient(135deg,#fecaca 0%,#fca5a5 100%);
     }
+
+    /* 暗色主题：弱化遮罩并让对话框整体协调，避免白屏刺眼 */
+    body.dark-mode .flymd-progress-overlay{ background:rgba(0,0,0,.42); }
+    body.dark-mode .flymd-progress-dialog{
+      background:rgba(30,32,38,.97);
+      color:#e5e7eb;
+      border-color:rgba(255,255,255,.10);
+      box-shadow:0 14px 40px rgba(0,0,0,.5);
+    }
+    body.dark-mode .flymd-progress-title{ color:#f3f4f6; }
+    body.dark-mode .flymd-progress-sub{ color:#cbd5e1; }
+    body.dark-mode .flymd-progress-meter{ color:#94a3b8; }
+    body.dark-mode .flymd-progress-icon .doc,
+    body.dark-mode .flymd-progress-icon .doc:before{ border-color:#cbd5e1; background:#1e2026; }
+    body.dark-mode .flymd-progress-bars span{ background:#cbd5e1; }
+    body.dark-mode .flymd-progress-log{
+      background:rgba(255,255,255,.05); color:#cbd5e1; border-color:rgba(255,255,255,.08);
+    }
+    body.dark-mode .flymd-progress-btn{
+      background:#2a2d35; color:#e5e7eb; border-color:rgba(255,255,255,.12);
+    }
+    body.dark-mode .flymd-progress-btn:hover{ background:#33373f; }
   `
   document.head.appendChild(style)
 }
