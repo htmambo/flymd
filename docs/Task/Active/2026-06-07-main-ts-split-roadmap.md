@@ -4,20 +4,25 @@
 |---|---|
 | 创建日期 | 2026-06-07 |
 | 责任人 | 果农 + Claude（协作）+ Codex 复审 |
-| 状态 | 📋 调研完成，等待用户决策启动 B2 |
+| 状态 | 🔄 Batch 1 完成，Batch 2 调研完成，待启动 |
 | 关联 | `2026-06-07-p0-tech-debt-batch-1.md`、`main-ts-inventory.md` |
 
-## 0. 现状快照
+## 0. 现状快照(2026-06-07 末)
 
-| 指标 | 数值 |
-|---|---|
-| 总行数 | 12,025 |
-| 顶层函数（`^function` 开头）| 208 个 |
-| import 语句 | 102 |
-| `addEventListener` | 144 处 |
-| `register*` | 5 处 |
-| `invoke` | 22 处 |
-| `listen` | 4 处 |
+| 指标 | 路线图初始 | 当前(实测) | 差值 |
+|---|---|---|---|
+| 总行数 | 12,025 | 11,893 | -132 |
+| 顶层函数（`^function` 开头）| 208 | 207 | -1 |
+| import 语句 | 102 | 102 | 0 |
+| `addEventListener` | 144 | 142 | -2 |
+| `register*` | 5 | 5 | 0 |
+| `invoke` | 22 | 22 | 0 |
+| `listen` | 4 | 4 | 0 |
+
+**实际已发生的拆分**(路线图未列):
+- `src/ui/contextMenus.ts`（`showContextMenu` 183 行）— 路线图误以为还在 main.ts
+- `src/core/commandPalette.ts`（依赖注入 `buildBuiltinContextMenuItems`）— 项目正在用 DI 模式拆分
+- `src/fileTree.ts`（已加 `pathUtils` 导出）+ `src/fileTree.test.ts`（12 个跨平台测试）
 
 ## 1. 已完成的部分
 
@@ -89,9 +94,22 @@ main.ts 已从 `src/utils/*` 导入以下剥离模块（说明项目**已经在�
 - **进展(2026-06-07)**：已删除 10 个死代码/重复定义函数（-102 行实际削减,无 main.ts 行为变化）。包括 escapeAttrValue、yieldToUi、getPluginOrder、newFolderSafe、resolvePluginInstallAbsolute、toPluginAssetUrl、shouldDeferWysiwygRender、importPortableBackupSilent、maybeAutoExportPortableBackup、setDefaultPasteDir、resetStickyModeFlags。codex 复审 d49c182/3cc28b8/139208f 全部 APPROVED。
 
 **Batch 2（中风险，~3-4 天）**：UI 子组件逻辑
-- "右键菜单"上下文构建（line 1380-1450）→ `src/menus/contextMenu.ts`
-- "命令面板"命令注册 → `src/menus/commandPalette.ts`
-- 预期效果：main.ts → 10,500 行（-1000 行）
+- "右键菜单"上下文构建（line 1167-1378）→ `src/menus/contextMenu.ts`(~282 行)
+  - `buildBuiltinContextMenuItems` (line 1167-1328, 162 行)
+  - `buildContextMenuContext` (line 1329-1358, 30 行)
+  - `buildContextMenuContextForPalette` (line 1359-1378, 20 行)
+- 右键菜单监听器（line 1380-1450, 70 行）→ `src/menus/contextMenuListeners.ts`
+- "命令面板"命令注册 → 已在 `core/commandPalette.ts`，**已用 DI 模式接入**
+- **项目已采用的 DI 模式**(参照 `commandPalette.ts:37`):
+  - `deps.buildBuiltinContextMenuItems: (ctx) => Promise<ContextMenuItemConfig[]>`
+  - **Batch 2 切入点**:把 main.ts 中 `buildBuiltinContextMenuItems` 抽到 `menus/contextMenu.ts`,作为函数 export,main.ts 注入到 `core/commandPalette.ts` 调用点
+- 预期效果:main.ts → 11,600 行(-300 行)
+- 风险:共享状态(`currentFilePath`/`wysiwygV2Active`/`mode`/`pluginContextMenuItems`)/需通过参数显式传入
+- **拆分步骤**:
+  - B2-1:识别 `buildBuiltinContextMenuItems` 内部所有 main.ts 模块级变量引用
+  - B2-2:建 `src/menus/contextMenu.ts`,export `buildBuiltinContextMenuItems(ctx, deps)`,main.ts 注入调用
+  - B2-3:验证右键菜单行为不变(库/编辑器/预览 3 个区域 + WYSIWYG)
+  - B2-4:同样模式迁 `buildContextMenuContext` + `buildContextMenuContextForPalette`
 
 **Batch 3（中高风险，~5-7 天）**：bootstrap 拆出
 - `bootstrap/initDom.ts`（DOM 元素查询）
