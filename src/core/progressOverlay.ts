@@ -38,6 +38,8 @@ export function openProgressOverlay(opt?: {
       setProgress() {},
       appendLog() {},
       markCancelled() {},
+      markSuccess() {},
+      setActions() {},
       fail() {},
       close() {},
     }
