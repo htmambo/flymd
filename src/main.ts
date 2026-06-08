@@ -106,6 +106,7 @@ let platformInitApi: PlatformInitApi | null = null
 // 编辑器插入 / 包装
 let editorInsertApi: EditorInsertApi | null = null
 let katexCacheApi: KatexCacheApi | null = null
+let katexCriticalStyleApi: KatexCriticalStyleApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -154,6 +155,7 @@ import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import { createKatexCache, type KatexCacheApi } from './modes/katexCache'
+import { createKatexCriticalStyle, KATEX_CRITICAL_STYLE_ID, type KatexCriticalStyleApi } from './modes/katexCriticalStyle'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
 import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
 import {
@@ -328,7 +330,7 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
     if (!katexCssLoaded) {
       await import('katex/dist/katex.min.css')
       katexCssLoaded = true
-      ensureKatexCriticalStyle()
+      katexCriticalStyleApi!.ensure()
     }
   } catch {}
 
@@ -462,48 +464,6 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
   } catch {}
 }
 
-const KATEX_CRITICAL_STYLE_ID = 'flymd-katex-critical-style'
-function ensureKatexCriticalStyle() {
-  try {
-    if (document.getElementById(KATEX_CRITICAL_STYLE_ID)) return
-    const criticalStyle = document.createElement('style')
-    criticalStyle.id = KATEX_CRITICAL_STYLE_ID
-    criticalStyle.textContent = `
-      /* KaTeX critical styles：仅作为 CSS 动态加载失败时的兜底；作用域限制在预览区，避免污染所见模式 */
-      .preview-body .katex svg {
-        fill: currentColor;
-        stroke: currentColor;
-        fill-rule: nonzero;
-        fill-opacity: 1;
-        stroke-width: 1;
-        stroke-linecap: butt;
-        stroke-linejoin: miter;
-        stroke-miterlimit: 4;
-        stroke-dasharray: none;
-        stroke-dashoffset: 0;
-        stroke-opacity: 1;
-        display: block;
-        height: inherit;
-        position: absolute;
-        width: 100%;
-      }
-      .preview-body .katex svg path { stroke: none; }
-      .preview-body .katex .stretchy { display: block; overflow: hidden; position: relative; width: 100%; }
-      .preview-body .katex .hide-tail { overflow: hidden; position: relative; width: 100%; }
-      .preview-body .katex .halfarrow-left { left: 0; overflow: hidden; position: absolute; width: 50.2%; }
-      .preview-body .katex .halfarrow-right { overflow: hidden; position: absolute; right: 0; width: 50.2%; }
-      .preview-body .katex .brace-left { left: 0; overflow: hidden; position: absolute; width: 25.1%; }
-      .preview-body .katex .brace-center { left: 25%; overflow: hidden; position: absolute; width: 50%; }
-      .preview-body .katex .brace-right { overflow: hidden; position: absolute; right: 0; width: 25.1%; }
-      .preview-body .katex .x-arrow-pad { padding: 0 .5em; }
-      .preview-body .katex .cd-arrow-pad { padding: 0 .55556em 0 .27778em; }
-      .preview-body .katex .mover,
-      .preview-body .katex .munder,
-      .preview-body .katex .x-arrow { text-align: center; }
-    `
-    document.head.appendChild(criticalStyle)
-  } catch {}
-}
 
 // Mermaid 工具（已拆分到 core/mermaid.ts）
 import { isMermaidCacheDisabled, getMermaidScale, setMermaidScaleClamped, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCache, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache, MERMAID_SCALE_MIN, MERMAID_SCALE_MAX, MERMAID_SCALE_STEP } from './core/mermaid'
@@ -709,6 +669,11 @@ editorInsertApi = createEditorInsert({
 katexCacheApi = createKatexCache({
   max: 1500,
   maxLen: 512,
+})
+
+// KaTeX 兜底 CSS 注入工厂实例化(idempotent,DOM 早返)
+katexCriticalStyleApi = createKatexCriticalStyle({
+  id: KATEX_CRITICAL_STYLE_ID,
 })
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
@@ -1862,7 +1827,7 @@ async function renderPreviewLight() {
           katexCssLoaded = true
 
           // 手动注入“只影响预览区”的关键 CSS 兜底，避免全局覆盖导致所见模式错乱
-          ensureKatexCriticalStyle()
+          katexCriticalStyleApi!.ensure()
         }
 
         // 渲染每个数学节点
