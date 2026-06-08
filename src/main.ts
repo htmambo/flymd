@@ -105,6 +105,7 @@ let wysiwygAutoNewlinesApi: WysiwygAutoNewlinesApi | null = null
 let platformInitApi: PlatformInitApi | null = null
 // 编辑器插入 / 包装
 let editorInsertApi: EditorInsertApi | null = null
+let katexCacheApi: KatexCacheApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -152,6 +153,7 @@ import { createOutline } from './modes/outline'
 import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
+import { createKatexCache, type KatexCacheApi } from './modes/katexCache'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
 import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
 import {
@@ -264,10 +266,6 @@ let mermaidReady = false
 // KaTeX 渲染在大文档（特别是大量公式）场景下非常容易把 UI 线程卡死。
 // 这里用时间切片把长任务切开：功能不变，但不会“切阅读模式像死机”。
 let _katexMod: any | null = null
-const _katexHtmlCache = new Map<string, string>()
-// 这是个纯性能缓存：命中就赚，溢出就清，别搞复杂的 LRU。
-const KATEX_HTML_CACHE_MAX = 1500
-const KATEX_HTML_CACHE_MAX_LATEX_LEN = 512
 let _renderPreviewSeq = 0
 const DEBUG_RENDER = false
 
@@ -317,23 +315,6 @@ function scheduleDeferredStartupWork(): void {
   }, 400)
 }
 
-function renderKatexToHtmlCached(katexMod: any, latex: string, displayMode: boolean): string {
-  const src = latex || ''
-  // 大公式缓存意义不大，只会吃内存；小公式重复率高，缓存很划算。
-  const canCache = src.length > 0 && src.length <= KATEX_HTML_CACHE_MAX_LATEX_LEN
-  const key = canCache ? `${displayMode ? 'B' : 'I'}:${src}` : ''
-  if (canCache) {
-    const hit = _katexHtmlCache.get(key)
-    if (hit != null) return hit
-  }
-  const html = katexMod.default.renderToString(src, { throwOnError: false, displayMode })
-  if (canCache) {
-    if (_katexHtmlCache.size >= KATEX_HTML_CACHE_MAX) _katexHtmlCache.clear()
-    _katexHtmlCache.set(key, html)
-  }
-  return html
-}
-
 async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, seq?: number): Promise<void> {
   const nodes = Array.from(root.querySelectorAll('.md-math-inline, .md-math-block')) as HTMLElement[]
   if (nodes.length < 1) return
@@ -359,7 +340,7 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
       const latex = el.getAttribute('data-math') || ''
       const displayMode = el.classList.contains('md-math-block')
       try {
-        el.innerHTML = renderKatexToHtmlCached(katexMod, latex, displayMode)
+        el.innerHTML = katexCacheApi!.renderCached(katexMod, latex, displayMode)
       } catch {
         try { el.textContent = latex } catch {}
       }
@@ -390,7 +371,7 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
         const latex = el.getAttribute('data-math') || ''
         const displayMode = el.classList.contains('md-math-block')
         try {
-          el.innerHTML = renderKatexToHtmlCached(katexMod, latex, displayMode)
+          el.innerHTML = katexCacheApi!.renderCached(katexMod, latex, displayMode)
         } catch {
           try { el.textContent = latex } catch {}
         }
@@ -722,6 +703,12 @@ editorInsertApi = createEditorInsert({
   setDirty: (v) => { dirty = v },
   refreshTitle: () => { titlebarStatusApi?.refreshTitle() },
   refreshStatus: () => { titlebarStatusApi?.refreshStatus() },
+})
+
+// KaTeX HTML 渲染缓存工厂实例化(纯性能缓存,Map 状态闭包持有)
+katexCacheApi = createKatexCache({
+  max: 1500,
+  maxLen: 512,
 })
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
