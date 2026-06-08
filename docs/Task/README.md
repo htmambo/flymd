@@ -293,3 +293,16 @@ docs/Task/
   - **Codex R1**:APPROVED 0 blocker,1 nit 补 previewEl fallback 测试(已补)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 528/528 通过(原 510 + 新增 19)、main.ts 净 -64 行(9084→9020)
   - 提交:`49a611b`(已推送 origin)
+- ✅ [2026-06-08-batch21-main-ts-extract-katex-cache.md](Archive/2026-06/2026-06-08-batch21-main-ts-extract-katex-cache.md) — Batch 21:抽离 katexCache(KaTeX HTML 渲染缓存层,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/modes/katexCache.ts` 新建:工厂 `createKatexCache({ max, maxLen })` → `{ renderCached }`(37 行,7 tests)
+    - 闭包持有 Map 状态(替代原 module-level `_katexHtmlCache`)
+    - 1:1 保留 canCache / key 格式 / 命中检查 / render 选项 / clear-then-set 淘汰
+  - **T2 ✅** 删除 main.ts 3 个 module-level 状态 (`_katexHtmlCache` / `KATEX_HTML_CACHE_MAX=1500` / `KATEX_HTML_CACHE_MAX_LATEX_LEN=512`)
+  - **T3 ✅** 2 call site (L343, L374) 改用 `katexCacheApi!.renderCached(...)`,factory 在 platformInitApi 之后实例化
+  - **关键设计**:
+    - 工厂闭包替代 module-level singleton — 状态私有 + 可注入 max/maxLen
+    - katex mod 仍由调用方注入(保留原 `_katexMod` 共享动态 import 缓存)
+    - `katexCacheApi!` 非空断言合理 — factory 在任何 `renderKatexPlaceholders` 调用前已实例化
+  - **Codex R1**:APPROVED 0 blocker,1 nit 修 test 名字(已修)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 536/536 通过(原 528 + 新增 7)、main.ts 净 -13 行(9020→9007)
+  - 提交:`73b24c5`(已推送 origin)
