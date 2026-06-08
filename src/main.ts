@@ -101,6 +101,8 @@ const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximiz
 let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
 // WYSIWYG 模式自动换行(代码围栏 / 行内数学 $...$ 闭合)
 let wysiwygAutoNewlinesApi: WysiwygAutoNewlinesApi | null = null
+// 平台 init(platform class + window drag)
+let platformInitApi: PlatformInitApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -146,6 +148,7 @@ import { createStickyTodoActions } from './modes/stickyTodoActions'
 import { createWysiwygCaret } from './modes/wysiwygCaret'
 import { createOutline } from './modes/outline'
 import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
+import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -696,6 +699,17 @@ let stickyTodoAutoPreview = false // 便签快速待办编辑后是否需要自�
 let stickyNoteOpacity = STICKY_NOTE_DEFAULT_OPACITY   // 窗口透明度
 let stickyNoteColor: StickyNoteColor = STICKY_NOTE_DEFAULT_COLOR  // 便签背景色
 let stickyNoteReminders: StickyNoteReminderMap = {}   // 便签待办提醒状态（按文件+文本标记）
+
+// 平台 init 工厂实例化(platform class + window drag)— 必须早于首次调用处
+platformInitApi = createPlatformInit({
+  isCompactTitlebarEnabled,
+  isFocusModeEnabled,
+  getStickyNoteMode: () => stickyNoteMode,
+  getStickyNoteLocked: () => stickyNoteLocked,
+  getCurrentWindow: () => {
+    try { return getCurrentWindow() } catch { return null }
+  },
+})
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
 let _libFloatToggleEl: HTMLButtonElement | null = null
@@ -1368,7 +1382,7 @@ performance.mark('flymd-dom-ready')
 // 初始化平台适配（Android 支持）
 initPlatformIntegration().catch((e) => console.error('[Platform] Initialization failed:', e))
 // 初始化平台类（用于 CSS 平台适配，Windows 显示窗口控制按钮）
-try { initPlatformClass() } catch {}
+try { platformInitApi?.initPlatformClass() } catch {}
 // Windows 透明窗口拖动残影/白条兜底
 try { windowsCompositorPokeApi.start() } catch {}
 // 应用已保存主题并挂载主题 UI
@@ -1392,7 +1406,7 @@ try { initNetworkProxyFetchShim() } catch {}
 // 初始化专注模式事件
 try { initFocusModeEvents() } catch {}
 // 初始化窗口拖拽（为 mac / Linux 上的紧凑标题栏补齐拖动支持）
-try { initWindowDrag() } catch {}
+try { platformInitApi?.initWindowDrag() } catch {}
 // 初始化窗口边缘 resize（decorations: false 时提供窗口调整大小功能）
 try { windowResizeApi.init() } catch {}
 // 恢复专注模式状态（需要等 store 初始化后执行，见下方 store 初始化处）
@@ -5229,56 +5243,8 @@ function initFocusModeEvents() {
   })
 }
 
-// 平台类初始化：为 body 添加平台标识类，用于 CSS 平台适配
-function initPlatformClass() {
-  const platform = (navigator.platform || '').toLowerCase()
-  if (platform.includes('win')) {
-    document.body.classList.add('platform-windows')
-  } else if (platform.includes('mac')) {
-    document.body.classList.add('platform-mac')
-  } else if (platform.includes('linux')) {
-    document.body.classList.add('platform-linux')
-  }
-}
-
-// Windows：透明无边框窗口在拖动后偶发出现“顶部白条/残影”的兜底。
-// 原因本质是 WebView2/DWM 合成在某些 move 序列里没有及时刷新透明 surface。
-// 这里用“轻微改变 body 背景一帧”强制触发一次合成更新；不改窗口大小、不闪烁标题栏。
-
-// 窗口拖拽初始化：为 mac / Linux 上的紧凑标题栏补齐拖动支持
-function initWindowDrag() {
-  const platform = (navigator.platform || '').toLowerCase()
-  const isMac = platform.includes('mac')
-  const isLinux = platform.includes('linux')
-  // Windows 上原生 + -webkit-app-region 已足够。
-  // macOS / Linux：webview 对 -webkit-app-region 支持不一致，且 macOS 上还可能吞点击，这里统一用 startDragging 兜底。
-  if (!isMac && !isLinux) return
-
-  // 当前主布局使用 tabbar-row；titlebar 仅为旧布局兼容
-  const titlebar = document.querySelector('.tabbar-row, .titlebar') as HTMLElement | null
-  if (!titlebar) return
-
-  const shouldIgnoreTarget = (target: EventTarget | null): boolean => {
-    const el = target as HTMLElement | null
-    if (!el) return false
-    // 标签栏/窗口控制等可交互区域必须排除，否则会把点击/拖拽排序等交互变成拖动窗口
-    return !!el.closest(
-      '.window-controls, .menu-item, button, a, input, textarea, [data-tauri-drag-ignore], .tabbar-tab, .tabbar-new-btn',
-    )
-  }
-
-  titlebar.addEventListener('mousedown', (ev: MouseEvent) => {
-    if (ev.button !== 0) return
-    // 便签锁定或未开启紧凑/专注标题栏时，不处理拖动
-    if (stickyNoteLocked) return
-    if (!(isCompactTitlebarEnabled() || isFocusModeEnabled() || stickyNoteMode)) return
-    if (shouldIgnoreTarget(ev.target)) return
-    try {
-      const win = getCurrentWindow()
-      void win.startDragging()
-    } catch {}
-  })
-}
+// initPlatformClass / initWindowDrag 已抽离到 src/modes/platformInit.ts
+// 平台依赖(isCompactTitlebarEnabled / isFocusModeEnabled / stickyNoteMode/Locked / getCurrentWindow)走 factory deps。
 
 // 窗口边缘 resize 初始化：为 decorations: false 时提供窗口调整大小功能
 
