@@ -103,6 +103,8 @@ let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
 let wysiwygAutoNewlinesApi: WysiwygAutoNewlinesApi | null = null
 // 平台 init(platform class + window drag)
 let platformInitApi: PlatformInitApi | null = null
+// 编辑器插入 / 包装
+let editorInsertApi: EditorInsertApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -149,6 +151,7 @@ import { createWysiwygCaret } from './modes/wysiwygCaret'
 import { createOutline } from './modes/outline'
 import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
+import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -710,6 +713,14 @@ platformInitApi = createPlatformInit({
     try { return getCurrentWindow() } catch { return null }
   },
 })
+
+// 编辑器插入 / 包装工厂实例化(纯函数,无外部依赖)
+editorInsertApi = createEditorInsert({
+  getEditor: () => editor,
+  setDirty: (v) => { dirty = v },
+  refreshTitle: () => { titlebarStatusApi?.refreshTitle() },
+  refreshStatus: () => { titlebarStatusApi?.refreshStatus() },
+})
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
 let _libFloatToggleEl: HTMLButtonElement | null = null
@@ -1036,7 +1047,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
           return
         }
         const env: PlainPasteEnv = {
-          insertAtCursor: (t) => insertAtCursor(t),
+          insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
           isPreviewMode: () => mode === 'preview',
           isWysiwygMode: () => wysiwyg,
           renderPreview: () => renderPreview(),
@@ -1968,7 +1979,7 @@ async function saveImageToLocalAndGetPath(file: File, fname: string, force?: boo
     {
       getEditorValue: () => editor.value,
       setEditorValue: (v: string) => { editor.value = v },
-      insertAtCursor: (text: string) => insertAtCursor(text),
+      insertAtCursor: (text: string) => editorInsertApi?.insertAtCursor(text),
       markDirtyAndRefresh: () => {
         dirty = true
         titlebarStatusApi?.refreshTitle()
@@ -3199,34 +3210,10 @@ function extIsImage(name: string): boolean {
   return /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(name)
 }
 
-function insertAtCursor(text: string) {
-  const start = editor.selectionStart
-  const end = editor.selectionEnd
-  const val = editor.value
-  editor.value = val.slice(0, start) + text + val.slice(end)
-  const pos = start + text.length
-  editor.selectionStart = editor.selectionEnd = pos
-  dirty = true
-  titlebarStatusApi?.refreshTitle()
-  titlebarStatusApi?.refreshStatus()
-}
+// insertAtCursor / wrapSelection 已抽离到 src/core/editorInsert.ts
+// 22 个 call site 全部用 editorInsertApi?. 前缀,见该工厂实例化(705 附近)
 
 // 文本格式化与插入工具
-function wrapSelection(before: string, after: string, placeholder = '') {
-  const start = editor.selectionStart
-  const end = editor.selectionEnd
-  const val = editor.value
-  const selected = val.slice(start, end) || placeholder
-  const insert = `${before}${selected}${after}`
-  editor.value = val.slice(0, start) + insert + val.slice(end)
-  const selStart = start + before.length
-  const selEnd = selStart + selected.length
-  editor.selectionStart = selStart
-  editor.selectionEnd = selEnd
-  dirty = true
-  titlebarStatusApi?.refreshTitle()
-  titlebarStatusApi?.refreshStatus()
-}
 
 async function formatBold() {
   if (wysiwygV2Active) {
@@ -3236,7 +3223,7 @@ async function formatBold() {
       return
     } catch {}
   }
-  wrapSelection('**', '**', '加粗文本')
+  editorInsertApi?.wrapSelection('**', '**', '加粗文本')
 }
 async function formatItalic() {
   if (wysiwygV2Active) {
@@ -3246,7 +3233,7 @@ async function formatItalic() {
       return
     } catch {}
   }
-  wrapSelection('*', '*', '斜体文本')
+  editorInsertApi?.wrapSelection('*', '*', '斜体文本')
 }
 async function insertLink() {
   if (wysiwygV2Active) {
@@ -3300,7 +3287,7 @@ const _imageUploader = createImageUploader({
     titlebarStatusApi?.refreshTitle()
     titlebarStatusApi?.refreshStatus()
   },
-  insertAtCursor: (text: string) => insertAtCursor(text),
+  insertAtCursor: (text: string) => editorInsertApi?.insertAtCursor(text),
   getCurrentFilePath: () => currentFilePath,
   isTauriRuntime: () => isTauriRuntime(),
   ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
@@ -7546,7 +7533,7 @@ function bindEvents() {
         try {
           e.preventDefault()
           const env: PlainPasteEnv = {
-            insertAtCursor: (t) => insertAtCursor(t),
+            insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
             isPreviewMode: () => mode === 'preview',
             isWysiwygMode: () => wysiwyg,
             renderPreview: () => renderPreview(),
@@ -7634,7 +7621,7 @@ function bindEvents() {
             // 转译失败时退回纯文本，保证不会“吃掉”粘贴内容
             const finalText = (mdText && mdText.trim()) ? mdText : plainText
             if (finalText) {
-              insertAtCursor(finalText)
+              editorInsertApi?.insertAtCursor(finalText)
               if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
             }
             return
@@ -7674,11 +7661,11 @@ function bindEvents() {
               },
             },
           )
-          insertAtCursor(r.markdown || plainText)
+          editorInsertApi?.insertAtCursor(r.markdown || plainText)
           if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           return
         } catch {
-          insertAtCursor(plainText)
+          editorInsertApi?.insertAtCursor(plainText)
           if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           return
         } finally {
@@ -7695,7 +7682,7 @@ function bindEvents() {
             e.preventDefault()
             const placeholder = '[正在抓取title]'
             // 先插入占位提示，让用户感知到粘贴正在进行；此处不触发预览渲染，避免多次重绘
-            insertAtCursor(placeholder)
+            editorInsertApi?.insertAtCursor(placeholder)
 
             let finalText = url
             try {
@@ -7723,7 +7710,7 @@ function bindEvents() {
                 titlebarStatusApi?.refreshStatus()
               } else {
                 // 占位符已被用户编辑删除，退回为在当前位置插入最终文本
-                insertAtCursor(finalText)
+                editorInsertApi?.insertAtCursor(finalText)
               }
               if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
             } catch {}
@@ -7768,7 +7755,7 @@ function bindEvents() {
         if (upCfg && file) {
           const safeFile = file as File
           const pub = await uploadImageToCloud(safeFile as any, fname, safeFile.type || 'application/octet-stream', upCfg as any)
-          insertAtCursor(`![${fname}](${pub.publicUrl})`)
+          editorInsertApi?.insertAtCursor(`![${fname}](${pub.publicUrl})`)
           if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           else if (wysiwyg) scheduleWysiwygRender()
           return
@@ -7822,7 +7809,7 @@ function bindEvents() {
                   } catch {}
                 }
                 if (partsLocal.length > 0) {
-                  insertAtCursor(partsLocal.join('\n'))
+                  editorInsertApi?.insertAtCursor(partsLocal.join('\n'))
                   if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                   return
                 }
@@ -7843,7 +7830,7 @@ function bindEvents() {
                     } catch {}
                   }
                   if (partsLocal.length > 0) {
-                    insertAtCursor(partsLocal.join('\n'))
+                    editorInsertApi?.insertAtCursor(partsLocal.join('\n'))
                     if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                     return
                   }
@@ -7855,7 +7842,7 @@ function bindEvents() {
                 try { const url = await fileToDataUrl(f); partsData.push(`![${f.name}](${url})`) } catch {}
               }
               if (partsData.length > 0) {
-                insertAtCursor(partsData.join('\n'))
+                editorInsertApi?.insertAtCursor(partsData.join('\n'))
                 if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                 return
               }
@@ -7918,7 +7905,7 @@ function bindEvents() {
               }
             }
             if (partsUpload.length > 0) {
-              insertAtCursor(partsUpload.join('\n'))
+              editorInsertApi?.insertAtCursor(partsUpload.join('\n'))
               if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
               return
             }
@@ -7933,7 +7920,7 @@ function bindEvents() {
           }
         }
         if (parts.length > 0) {
-          insertAtCursor(parts.join('\n'))
+          editorInsertApi?.insertAtCursor(parts.join('\n'))
           if (mode === 'preview') await renderPreview()
           }
         return
@@ -7943,7 +7930,7 @@ function bindEvents() {
       const cand = (uriList.split('\n').find((l) => /^https?:/i.test(l)) || '').trim() || plain.trim()
       if (cand && /^https?:/i.test(cand)) {
         const isImg = extIsImage(cand)
-        insertAtCursor(`${isImg ? '!' : ''}[${isImg ? 'image' : 'link'}](${cand})`)
+        editorInsertApi?.insertAtCursor(`${isImg ? '!' : ''}[${isImg ? 'image' : 'link'}](${cand})`)
         if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
       }
     } catch (err) {
@@ -8175,7 +8162,7 @@ function bindEvents() {
                       } catch {}
                     }
                     if (partsLocal.length > 0) {
-                      insertAtCursor(partsLocal.join('\n'))
+                      editorInsertApi?.insertAtCursor(partsLocal.join('\n'))
                       if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                       return
                     }
@@ -8223,7 +8210,7 @@ function bindEvents() {
                       parts.push(`![${toLabel(p)}](${needAngle ? `<${p}>` : p})`)
                     }
                   }
-                  insertAtCursor(parts.join('\n'))
+                  editorInsertApi?.insertAtCursor(parts.join('\n'))
                   if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
                   return
                 }
@@ -8235,7 +8222,7 @@ function bindEvents() {
                 return needAngle ? `<${p}>` : p
               }
               const text = imgs.map((p) => `![${toLabel(p)}](${toMdUrl(p)})`).join('\n')
-              insertAtCursor(text)
+              editorInsertApi?.insertAtCursor(text)
               if (mode === 'preview') await renderPreview(); return
             }
           } catch (err) {
@@ -8354,7 +8341,7 @@ function bindEvents() {
           try {
             initSpeechTranscribeFeature({
               getStore: () => store,
-              insertAtCursor: (text: string) => { try { insertAtCursor(text) } catch {} },
+              insertAtCursor: (text: string) => { try { editorInsertApi?.insertAtCursor(text) } catch {} },
               pluginNotice: (msg: string, level?: 'ok' | 'err', ms?: number) => { try { pluginNotice(msg, level, ms) } catch {} },
               confirmNative: (message: string, title?: string) => confirmNative(message, title || '确认'),
             })
