@@ -334,3 +334,16 @@ docs/Task/
     - Nit 2: stop() 测试加 clearInterval spy 验证 timer 实际清理(已采纳)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 547/547 通过(原 541 + 新增 6)、main.ts 净 -21 行(8972→8951)
   - 提交:`0e5ca4f`(已推送 origin)
+- ✅ [2026-06-08-batch24-main-ts-extract-deferred-startup.md](Archive/2026-06/2026-06-08-batch24-main-ts-extract-deferred-startup.md) — Batch 24:抽离 deferredStartup(启动期非关键模块延迟加载调度,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/core/deferredStartup.ts` 新建:工厂 `createDeferredStartup(deps)` → `{ schedule() }`(~95 行,6 tests)
+    - 6 个 task 作模块内 const `TASKS`:`{ delayMs, label, run(deps) }`
+    - deps 注入:`scheduleAfterFirstPaint` / `applyI18nUi` / `loadAutoSave`
+  - **T2 ✅** 删除 main.ts 1 个 let + 1 个函数 (26 行);1 call site (L8158) 改用 `deferredStartupApi!.schedule()`
+  - **关键设计**:
+    - 6 task 顺序 + delayMs (0/80/160/240/320/400) verbatim
+    - 相对路径修正:`./tabs/...` → `../tabs/...`(新文件在 src/core/)
+    - 启动期时序数据驱动,审计友好
+  - **Codex R1**:APPROVED 0 blocker
+    - Nit: 测试没观察 console.warn 字符串(已采纳,spy 测 + 字符串类型断言)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 553/553 通过(原 547 + 5 + 1 nit 补)、main.ts 净 -20 行(8951→8931)
+  - 提交:`aad5b13`(已推送 origin)
