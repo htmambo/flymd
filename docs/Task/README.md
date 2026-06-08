@@ -320,3 +320,17 @@ docs/Task/
     - 大段 verbatim CSS 文本适合加 1-2 个最易错位置的回归断言
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 541/541 通过(原 536 + 新增 5)、main.ts 净 -35 行(9007→8972)
   - 提交:`157e94b`(已推送 origin)
+- ✅ [2026-06-08-batch23-main-ts-extract-dot-blink.md](Archive/2026-06/2026-06-08-batch23-main-ts-extract-dot-blink.md) — Batch 23:抽离 dotBlink(所见模式光标点闪烁,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/modes/dotBlink.ts` 新建:工厂 `createDotBlink({ intervalMs })` → `{ start(), stop(), isOn() }`(44 行,6 tests)
+    - 闭包持有 timer id + on boolean,800ms 周期从硬编码变 deps 注入
+  - **T2 ✅** 删除 main.ts 2 module-level state + 2 函数 + 1 stale 注释 (22 行)
+  - **T3 ✅** 3 call site (L2042, L2063, L2877) 改用 `dotBlinkApi!.start()` / `dotBlinkApi!.stop()`
+  - **关键设计**:
+    - 工厂闭包替代 module-level state — timer/on 私有
+    - intervalMs 注入 + vi.useFakeTimers 测试 — 周期可调且可测
+    - 闪烁由 CSS 驱动,本 timer 仅翻状态
+  - **Codex R1**:APPROVED 0 blocker
+    - Nit 1: 删 L609 stale 注释(已采纳)
+    - Nit 2: stop() 测试加 clearInterval spy 验证 timer 实际清理(已采纳)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 547/547 通过(原 541 + 新增 6)、main.ts 净 -21 行(8972→8951)
+  - 提交:`0e5ca4f`(已推送 origin)
