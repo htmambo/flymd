@@ -264,3 +264,12 @@ docs/Task/
   - **Codex R1**:APPROVED 高置信度,行为 verbatim、TDZ 安全、scope 不溢出
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 496/496 通过(原 487 + 新增 9)、main.ts 净 -33 行(9146→9113)
   - 提交:`7db551f`(已推送 origin)
+- ✅ [2026-06-08-batch18-main-ts-extract-editor-insert.md](Archive/2026-06/2026-06-08-batch18-main-ts-extract-editor-insert.md) — Batch 18:抽离 editorInsert 工具(编辑器文本插入/包装,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/core/editorInsert.ts` 新建:createEditorInsert factory(50 行,7 tests);2 纯函数
+    - insertAtCursor(text):在选区处插入文本,光标到末尾
+    - wrapSelection(before, after, placeholder?):包裹选区或占位符
+  - **T2 ✅** 4 deps(getEditor + setDirty + refreshTitle + refreshStatus)— getEditor 每次调用时重读,因 selection 状态变化
+  - **T3 ✅** 22 call site(insertAtCursor 20 + wrapSelection 2)用 Python regex 批量前缀 `editorInsertApi?.`
+  - **Codex R1**:APPROVED 0 blocker,行为 verbatim 保留
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 503/503 通过(原 496 + 新增 7)、main.ts 净 -15 行(9113→9098)
+  - 提交:`c9fed4d`(已推送 origin)
