@@ -153,6 +153,7 @@ import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
+import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -1428,71 +1429,6 @@ const preview = document.getElementById('preview') as HTMLDivElement
 const filenameLabel = document.getElementById('filename') as HTMLDivElement
 let _previewLinkEventsBound = false
 
-function normalizePreviewAnchorText(input: string): string {
-  try { return decodeURIComponent(String(input || '')) } catch { return String(input || '') }
-}
-
-function makePreviewHeadingId(text: string, index: number): string {
-  const base = normalizePreviewAnchorText(text)
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\u4e00-\u9fa5\s-]/gi, '')
-    .replace(/\s+/g, '-')
-    .slice(0, 64)
-  return base || `toc-${index}`
-}
-
-function ensurePreviewHeadingIds(root: ParentNode): void {
-  try {
-    const used = new Set<string>()
-    const heads = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[]
-    heads.forEach((h, idx) => {
-      let id = String(h.getAttribute('id') || '').trim()
-      if (!id) id = makePreviewHeadingId(h.textContent || '', idx)
-      const base = id
-      let n = 1
-      while (used.has(id)) id = `${base}-${n++}`
-      used.add(id)
-      if (h.getAttribute('id') !== id) h.setAttribute('id', id)
-    })
-  } catch {}
-}
-
-function isPreviewHashLink(href: string): boolean {
-  return /^#[^#\s]+/.test(String(href || '').trim())
-}
-
-function findPreviewAnchorTarget(hashHref: string): HTMLElement | null {
-  try {
-    const raw = String(hashHref || '').trim()
-    if (!isPreviewHashLink(raw)) return null
-    const id = normalizePreviewAnchorText(raw.slice(1)).trim()
-    if (!id) return null
-    const body = document.querySelector('.preview .preview-body') as HTMLElement | null
-    const root = body || preview || document
-    let target = root.querySelector(`#${cssEscapeCompat(id)}`) as HTMLElement | null
-    if (target) return target
-
-    const wanted = makePreviewHeadingId(id, 0)
-    const heads = Array.from(root.querySelectorAll('h1,h2,h3,h4,h5,h6')) as HTMLElement[]
-    target = heads.find((h, idx) => {
-      const text = (h.textContent || '').trim()
-      return text === id || makePreviewHeadingId(text, idx) === wanted
-    }) || null
-    if (target && !target.id) target.id = wanted
-    return target
-  } catch {
-    return null
-  }
-}
-
-function scrollPreviewAnchorIntoView(hashHref: string): boolean {
-  const target = findPreviewAnchorTarget(hashHref)
-  if (!target) return false
-  try { target.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { target.scrollIntoView() }
-  return true
-}
-
 async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Promise<void> {
   const win = window as any
   if (openInNewTab && typeof win.flymdOpenFile === 'function') {
@@ -1527,7 +1463,7 @@ function ensurePreviewLinkHandlingBound(): void {
         const href = String(link.getAttribute('href') || '').trim()
         if (!href) return
         if (isPreviewHashLink(href)) {
-          if (scrollPreviewAnchorIntoView(href)) {
+          if (scrollPreviewAnchorIntoView(href, preview)) {
             ev.preventDefault()
             try { ev.stopPropagation() } catch {}
           }
