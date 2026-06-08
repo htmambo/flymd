@@ -99,6 +99,8 @@ const windowsCompositorPokeApi = createWindowsCompositorPoke({ isTauriRuntime, g
 const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximizedState, getWindowScaleFactorSafe: windowPlacementApi.getWindowScaleFactorSafe, isTauriRuntime })
 // 顶栏标题/状态栏/滚动位置同步层(DOM 引用延后到查询完成后再注入,这里先占位)
 let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
+// WYSIWYG 模式自动换行(代码围栏 / 行内数学 $...$ 闭合)
+let wysiwygAutoNewlinesApi: WysiwygAutoNewlinesApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -143,6 +145,7 @@ import { createStickyAutoSaver } from './modes/stickyAutoSave'
 import { createStickyTodoActions } from './modes/stickyTodoActions'
 import { createWysiwygCaret } from './modes/wysiwygCaret'
 import { createOutline } from './modes/outline'
+import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -1738,6 +1741,20 @@ const outlineApi = createOutline({
   logWarn,
 })
 
+// WYSIWYG 自动换行(代码围栏 / 行内数学)工厂实例化
+wysiwygAutoNewlinesApi = createWysiwygAutoNewlines({
+  getWysiwyg: () => wysiwyg,
+  getEditor: () => editor,
+  getDirty: () => dirty,
+  setDirty: (v) => { dirty = v },
+  getHoldFence: () => wysiwygHoldFenceUntilEnter,
+  setHoldFence: (v) => { wysiwygHoldFenceUntilEnter = v },
+  getHoldInlineDollar: () => wysiwygHoldInlineDollarUntilEnter,
+  setHoldInlineDollar: (v) => { wysiwygHoldInlineDollarUntilEnter = v },
+  refreshTitle: () => { titlebarStatusApi?.refreshTitle() },
+  refreshStatus: () => { titlebarStatusApi?.refreshStatus() },
+})
+
 // 顶栏标题/状态栏/滚动位置同步层(DOM 就绪后实例化)
 titlebarStatusApi = createTitlebarStatus({
   getCurrentFilePath: () => currentFilePath,
@@ -2187,119 +2204,8 @@ async function toggleWysiwyg() {
 // _caretFontKey)闭包到工厂内部。_editorPadBottomBasePx 因 main.ts 还有 2 处外部写入,
 // 走 wysiwygCaretApi.getPadBottomBasePx/setPadBottomBasePx 保持共享。
 
-function autoNewlineAfterBackticksInWysiwyg() {
-  try {
-    if (!wysiwyg) return
-    const pos = editor.selectionStart >>> 0
-    if (pos < 3) return
-    const last3 = editor.value.slice(pos - 3, pos)
-    if (last3 === '```' || last3 === '~~~') {
-      const v = editor.value
-      // 判断是否为“闭合围栏”：需要位于行首（至多 3 个空格）并且之前处于围栏内部，且围栏字符一致
-      const before = v.slice(0, pos)
-      const lineStart = before.lastIndexOf('\n') + 1
-      const curLine = before.slice(lineStart)
-      const fenceRE = /^ {0,3}(```+|~~~+)/
-      const preText = v.slice(0, lineStart)
-      const preLines = preText.split('\n')
-      let insideFence = false
-      let fenceCh = ''
-      for (const ln of preLines) {
-        const m = ln.match(fenceRE)
-        if (m) {
-          const ch = m[1][0]
-          if (!insideFence) { insideFence = true; fenceCh = ch }
-          else if (ch === fenceCh) { insideFence = false; fenceCh = '' }
-        }
-      }
-      const m2 = curLine.match(fenceRE)
-      const isClosing = !!(m2 && insideFence && m2[1][0] === last3[0])
-
-      // 在光标处插入换行，但将光标保持在换行前，便于继续输入语言标识（如 ```js\n）
-      editor.value = v.slice(0, pos) + '\n' + v.slice(pos)
-      editor.selectionStart = editor.selectionEnd = pos
-      dirty = true
-      titlebarStatusApi?.refreshTitle()
-
-      // 若检测到闭合，则开启“需回车再渲染”的围栏延迟
-      if (isClosing) {
-        wysiwygHoldFenceUntilEnter = true
-      }
-    }
-  } catch {}
-}
-
-// 所见模式：行内数学 $...$ 闭合后，自动在光标处后插入至少 2 个换行，避免新内容与公式渲染重叠
-function autoNewlineAfterInlineDollarInWysiwyg() {
-  try {
-    if (!wysiwyg) return
-    const pos = editor.selectionStart >>> 0
-    if (pos < 1) return
-    const v = editor.value
-    // 仅在最新输入字符为 $ 时判定
-    if (v[pos - 1] !== '$') return
-    // 若是 $$（块级），不处理
-    if (pos >= 2 && v[pos - 2] === '$') return
-
-    // 判断是否在代码围栏内，是则不处理
-    const before = v.slice(0, pos)
-    const lineStart = before.lastIndexOf('\n') + 1
-    const fenceRE = /^ {0,3}(```+|~~~+)/
-    const preText = v.slice(0, lineStart)
-    const preLines = preText.split('\n')
-    let insideFence = false
-    let fenceCh = ''
-    for (const ln of preLines) {
-      const m = ln.match(fenceRE)
-      if (m) {
-        const ch = m[1][0]
-        if (!insideFence) { insideFence = true; fenceCh = ch }
-        else if (ch === fenceCh) { insideFence = false; fenceCh = '' }
-      }
-    }
-    if (insideFence) return
-
-    // 当前整行（用于检测行内 $ 奇偶）
-    const lineEnd = (() => { const i = v.indexOf('\n', lineStart); return i < 0 ? v.length : i })()
-    const line = v.slice(lineStart, lineEnd)
-    const upto = v.slice(lineStart, pos) // 行首到光标（含刚输入的 $）
-
-    // 统计“未被转义、且不是 $$ 的单个 $”数量
-    let singles = 0
-    let lastIdx = -1
-    for (let i = 0; i < upto.length; i++) {
-      if (upto[i] !== '$') continue
-      // 跳过 $$（块级）
-      if (i + 1 < upto.length && upto[i + 1] === '$') { i++; continue }
-      // 跳过转义 \$（奇数个反斜杠）
-      let bs = 0
-      for (let j = i - 1; j >= 0 && upto[j] === '\\'; j--) bs++
-      if ((bs & 1) === 1) continue
-      singles++
-      lastIdx = i
-    }
-
-    // 若刚好闭合（奇->偶）且最后一个单 $ 就是刚输入的这个
-    if (singles % 2 === 0 && lastIdx === upto.length - 1) {
-      // 行内数学已闭合：延迟渲染，待用户按下回车键后再渲染
-      wysiwygHoldInlineDollarUntilEnter = true
-      // 仅在当前位置之后补足至少 2 个换行
-      let have = 0
-      for (let i = pos; i < v.length && i < pos + 3; i++) { if (v[i] === '\n') have++; else break }
-      const need = Math.max(0, 3 - have)
-      if (need > 0) {
-        const ins = '\n'.repeat(need)
-        editor.value = v.slice(0, pos) + ins + v.slice(pos)
-        const newPos = pos + ins.length
-        editor.selectionStart = editor.selectionEnd = newPos
-        dirty = true
-        titlebarStatusApi?.refreshTitle()
-        titlebarStatusApi?.refreshStatus()
-      }
-    }
-  } catch {}
-}
-
+// autoNewlineAfterBackticksInWysiwyg / autoNewlineAfterInlineDollarInWysiwyg 已抽离到 src/modes/wysiwygAutoNewlines.ts
+// 2 个 hold 状态(wysiwygHoldFenceUntilEnter / wysiwygHoldInlineDollarUntilEnter)走 factory deps 保持 main-local 共享。
 // Ribbon 菜单按钮已在 HTML 模板中定义，无需动态插入
 const containerEl = document.querySelector('.container') as HTMLDivElement
 // Ctrl/Cmd + 滚轮：缩放/放大编辑、预览、所见模式字号；Shift + 滚轮：调整阅读宽度
