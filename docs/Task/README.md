@@ -273,3 +273,12 @@ docs/Task/
   - **Codex R1**:APPROVED 0 blocker,行为 verbatim 保留
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 503/503 通过(原 496 + 新增 7)、main.ts 净 -15 行(9113→9098)
   - 提交:`c9fed4d`(已推送 origin)
+- ✅ [2026-06-08-batch19-main-ts-extract-image-utils.md](Archive/2026-06/2026-06-08-batch19-main-ts-extract-image-utils.md) — Batch 19:抽离 imageUtils 工具(图片扩展名/转 dataURL,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/core/imageUtils.ts` 新建:命名导出 2 纯函数(20 行,7 tests)— 无工厂无 deps
+    - extIsImage(name):regex 检测图片扩展名(8 种)
+    - fileToDataUrl(file):FileReader 包装 File → data URL
+  - **T2 ✅** 7 call site(4 extIsImage + 3 fileToDataUrl)直接用 import 名称,无 prefix 改动
+  - **关键设计**:命名导出而非工厂 — pure/stateless/0 deps,工厂会增加无意义包装
+  - **Codex R1**:APPROVED 0 blocker,1 nit 修 test 名字(已修)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 510/510 通过(原 503 + 新增 7)、main.ts 净 -14 行(9098→9084)
+  - 提交:`b74b17b`(已推送 origin)
