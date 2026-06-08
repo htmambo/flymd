@@ -108,6 +108,7 @@ let editorInsertApi: EditorInsertApi | null = null
 let katexCacheApi: KatexCacheApi | null = null
 let katexCriticalStyleApi: KatexCriticalStyleApi | null = null
 let dotBlinkApi: DotBlinkApi | null = null
+let deferredStartupApi: DeferredStartupApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -158,6 +159,7 @@ import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import { createKatexCache, type KatexCacheApi } from './modes/katexCache'
 import { createKatexCriticalStyle, KATEX_CRITICAL_STYLE_ID, type KatexCriticalStyleApi } from './modes/katexCriticalStyle'
 import { createDotBlink, type DotBlinkApi } from './modes/dotBlink'
+import { createDeferredStartup, type DeferredStartupApi } from './core/deferredStartup'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
 import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
 import {
@@ -291,32 +293,6 @@ async function getKatexMod(): Promise<any> {
   if (_katexMod) return _katexMod
   _katexMod = await import('katex')
   return _katexMod
-}
-
-let _deferredStartupWorkScheduled = false
-function scheduleDeferredStartupWork(): void {
-  if (_deferredStartupWorkScheduled) return
-  _deferredStartupWorkScheduled = true
-
-  // 首屏先活下来，非关键模块一律后移，而且分批丢出去，别再一起抢主线程。
-  scheduleAfterFirstPaint(() => {
-    void import('./tabs/integration').catch(e => console.warn('[Tabs] Failed to load tab system:', e))
-  }, 0)
-  scheduleAfterFirstPaint(() => {
-    void import('./modes/sourcePreviewSplit').catch(e => console.warn('[SplitPreview] Failed to init split view:', e))
-  }, 80)
-  scheduleAfterFirstPaint(() => {
-    void import('./modes/sourceLineNumbers').catch(e => console.warn('[SourceLineNumbers] Failed to init line numbers:', e))
-  }, 160)
-  scheduleAfterFirstPaint(() => {
-    void import('./ui/libraryResize').catch(e => console.warn('[LibraryResize] Failed to init library resize:', e))
-  }, 240)
-  scheduleAfterFirstPaint(() => {
-    try { applyI18nUi() } catch {}
-  }, 320)
-  scheduleAfterFirstPaint(() => {
-    try { void getAutoSave().loadFromStore() } catch {}
-  }, 400)
 }
 
 async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, seq?: number): Promise<void> {
@@ -659,6 +635,14 @@ katexCriticalStyleApi = createKatexCriticalStyle({
 // 所见模式光标点闪烁工厂实例化(800ms 周期,状态机)
 dotBlinkApi = createDotBlink({
   intervalMs: 800,
+})
+
+// 启动期非关键模块延迟加载调度工厂实例化
+// (Tabs / SplitPreview / SourceLineNumbers / LibraryResize / i18n / autoSave)
+deferredStartupApi = createDeferredStartup({
+  scheduleAfterFirstPaint,
+  applyI18nUi,
+  loadAutoSave: () => { try { void getAutoSave().loadFromStore() } catch {} },
 })
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
@@ -8181,7 +8165,7 @@ function bindEvents() {
 
     // 性能标记：首次渲染完成
     performance.mark('flymd-first-render')
-    scheduleDeferredStartupWork()
+    deferredStartupApi!.schedule()
     // 在线公告（官网 announcements.json）：不阻塞启动，失败静默
     try { initOnlineAnnouncements() } catch {}
 
