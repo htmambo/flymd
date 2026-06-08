@@ -306,3 +306,17 @@ docs/Task/
   - **Codex R1**:APPROVED 0 blocker,1 nit 修 test 名字(已修)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 536/536 通过(原 528 + 新增 7)、main.ts 净 -13 行(9020→9007)
   - 提交:`73b24c5`(已推送 origin)
+- ✅ [2026-06-08-batch22-main-ts-extract-katex-critical-style.md](Archive/2026-06/2026-06-08-batch22-main-ts-extract-katex-critical-style.md) — Batch 22:抽离 katexCriticalStyle(KaTeX 兜底 CSS 注入,完成 2026-06-08,经 codex R1 复审初始 REJECTED 后修复 APPROVED)
+  - **T1 ✅** `src/modes/katexCriticalStyle.ts` 新建:工厂 `createKatexCriticalStyle({ id })` → `{ ensure() }`(~85 行,5 tests)
+    - 命名导出 `KATEX_CRITICAL_STYLE_ID` 常量,main.ts 直接 import 复用避免字面量重复
+    - 整段 CSS 文本作模块内常量 `KATEX_CRITICAL_CSS`
+  - **T2 ✅** 删除 main.ts 1 个 const + 1 个函数 (42 行);2 call site (L331, L1823) 改用 `katexCriticalStyleApi!.ensure()`
+  - **Codex R1 踩坑**:
+    - 初始 REJECTED 1 blocker: 抽出时 `.brace-center` 宽度误改 50% → 50.2%(已 revert)
+    - Nit 1: 用 import 的 `KATEX_CRITICAL_STYLE_ID` 避免字面量重复(已采纳)
+    - Nit 2: 加 brace-center width: 50% 回归断言(已采纳)
+  - **关键设计**:
+    - 工厂闭包无外部状态,ensure() 内部 idempotent
+    - 大段 verbatim CSS 文本适合加 1-2 个最易错位置的回归断言
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 541/541 通过(原 536 + 新增 5)、main.ts 净 -35 行(9007→8972)
+  - 提交:`157e94b`(已推送 origin)
