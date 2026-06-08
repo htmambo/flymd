@@ -152,6 +152,7 @@ import { createOutline } from './modes/outline'
 import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
+import { extIsImage, fileToDataUrl } from './core/imageUtils'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -3206,9 +3207,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
 }
 
 // 拖拽支持：
-function extIsImage(name: string): boolean {
-  return /\.(png|jpe?g|gif|svg|webp|bmp|avif)$/i.test(name)
-}
+// extIsImage / fileToDataUrl 已抽离到 src/core/imageUtils.ts
 
 // insertAtCursor / wrapSelection 已抽离到 src/core/editorInsert.ts
 // 22 个 call site 全部用 editorInsertApi?. 前缀,见该工厂实例化(705 附近)
@@ -3260,19 +3259,6 @@ async function insertLink() {
   titlebarStatusApi?.refreshStatus()
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  // 使用 FileReader 生成 data URL，避免手动拼接带来的内存与性能问题
-  return await new Promise<string>((resolve, reject) => {
-    try {
-      const fr = new FileReader()
-      fr.onerror = () => reject(fr.error || new Error('读取文件失败'))
-      fr.onload = () => resolve(String(fr.result || ''))
-      fr.readAsDataURL(file)
-    } catch (e) {
-      reject(e as any)
-    }
-  })
-}
 
 // 粘贴/拖拽上传核心模块包装
 const _imageUploader = createImageUploader({
