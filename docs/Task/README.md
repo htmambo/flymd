@@ -238,3 +238,29 @@ docs/Task/
   - **pre-existing 保留**:fastInfo 优先 + slice 回退、setScrollPercent clamp [0,1]、restore 重试 50/100/200ms
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 427/427 通过(原 407 + 新增 20)、main.ts 净 -105 行(10050→9945)
   - 提交:`743ec6c`(已推送 origin)
+- ✅ [2026-06-08-batch14-main-ts-extract-outline.md](Archive/2026-06/2026-06-08-batch14-main-ts-extract-outline.md) — Batch 14+15:抽离 outline 子系统(Markdown / WYSIWYG / PDF 大纲,完成 2026-06-08,经 codex R1 复审)
+  - **T1 ✅** `src/modes/outline.ts` 新建:createOutline factory(570 行,14 tests);10 函数 + 10 状态闭包
+    - renderOutlinePanel / getOutlineContext / bindOutlineScrollSync / onOutlineScroll / updateOutlineActive
+    - renderPdfOutline / bindPdfOutlineClicks
+    - scheduleOutlineUpdate(200ms 防抖) / scheduleOutlineUpdateFromSource / ensureOutlineObserverBound
+  - **关键设计**:PDF 路径走 pdfjs 动态 import + 缓存 Map keyed by filePath;stat.mtime 兼容 `Date | null`;titlebarStatusApi 引用 outlineApi.scheduleOutlineUpdate(行 ~1714 先实例化,TDZ 安全)
+  - **外部共享**:_outlineLastSignature 走 getter/setter pair 注入
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 475/475 通过(原 461 + 新增 14)、main.ts 净 -514 行(9753→9239)
+  - 提交:`a9531f8`(已推送 origin)
+- ✅ [2026-06-08-batch16-main-ts-extract-wysiwyg-auto-newlines.md](Archive/2026-06/2026-06-08-batch16-main-ts-extract-wysiwyg-auto-newlines.md) — Batch 16:抽离 wysiwygAutoNewlines 工厂(WYSIWYG 自动换行,完成 2026-06-08)
+  - **T1 ✅** `src/modes/wysiwygAutoNewlines.ts` 新建:createWysiwygAutoNewlines factory(155 行,12 tests);2 函数
+    - autoNewlineAfterBackticksInWysiwyg(围栏 ```/~~~ 闭合后换行)
+    - autoNewlineAfterInlineDollarInWysiwyg(行内数学 $...$ 闭合后补 2 换行)
+  - **T2 ✅** 2 hold 状态(wysiwygHoldFenceUntilEnter / wysiwygHoldInlineDollarUntilEnter)走 getter/setter pair;main.ts 4 个 reset 点保留
+  - **pre-existing**:两个函数在 main.ts 中未直接调用(pre-existing 死代码),保留工厂实例化产物
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 487/487 通过(原 475 + 新增 12)、main.ts 净 -93 行(9239→9146)
+  - 提交:`6859c02`(已推送 origin)
+- ✅ [2026-06-08-batch17-main-ts-extract-platform-init.md](Archive/2026-06/2026-06-08-batch17-main-ts-extract-platform-init.md) — Batch 17:抽离 platformInit 工厂(平台 class + 窗口拖动,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/modes/platformInit.ts` 新建:createPlatformInit factory(60 行,9 tests);2 函数
+    - initPlatformClass(添加 body.platform-{windows,mac,linux} class)
+    - initWindowDrag(mac/linux 拖动支持,Windows 早返)
+  - **T2 ✅** 工厂实例化挪到 705 行(stickyNote 状态声明后,call sites 前)— 可选链在 factory 未实例化时推断为 never
+  - **T3 ✅** 5 get-only deps,无 setter(工厂仅读)
+  - **Codex R1**:APPROVED 高置信度,行为 verbatim、TDZ 安全、scope 不溢出
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 496/496 通过(原 487 + 新增 9)、main.ts 净 -33 行(9146→9113)
+  - 提交:`7db551f`(已推送 origin)
