@@ -282,3 +282,14 @@ docs/Task/
   - **Codex R1**:APPROVED 0 blocker,1 nit 修 test 名字(已修)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 510/510 通过(原 503 + 新增 7)、main.ts 净 -14 行(9098→9084)
   - 提交:`b74b17b`(已推送 origin)
+- ✅ [2026-06-08-batch20-main-ts-extract-preview-anchor.md](Archive/2026-06/2026-06-08-batch20-main-ts-extract-preview-anchor.md) — Batch 20:抽离 previewAnchor 工具(预览锚点解析,完成 2026-06-08,经 codex R1 复审 APPROVED)
+  - **T1 ✅** `src/core/previewAnchor.ts` 新建:命名导出 6 个 preview anchor 解析函数(78 行,19 tests)— 无工厂无 deps
+    - normalizePreviewAnchorText / makePreviewHeadingId / ensurePreviewHeadingIds / isPreviewHashLink / findPreviewAnchorTarget / scrollPreviewAnchorIntoView
+  - **T2 ✅** call site 改动: `scrollPreviewAnchorIntoView(href, preview)` 显式传 `previewEl`(原闭包引用 main-local `preview`);deps 对象加 `makePreviewHeadingId` 引用
+  - **关键设计**:
+    - 命名导出而非工厂 — 6 函数都是 stateless utility,与 imageUtils 同模式
+    - `previewEl` 参数化替代闭包 — 唯一外部 call site 显式传 `preview`
+    - `cssEscapeCompat` 从 `src/ui/outlineHeadsCache.ts:31` 复用(该函数本就在 outlineHeadsCache 中导出)
+  - **Codex R1**:APPROVED 0 blocker,1 nit 补 previewEl fallback 测试(已补)
+  - 验证:`npx tsc --noEmit` 0 错误、`npm test` 528/528 通过(原 510 + 新增 19)、main.ts 净 -64 行(9084→9020)
+  - 提交:`49a611b`(已推送 origin)
