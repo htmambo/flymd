@@ -107,6 +107,7 @@ let platformInitApi: PlatformInitApi | null = null
 let editorInsertApi: EditorInsertApi | null = null
 let katexCacheApi: KatexCacheApi | null = null
 let katexCriticalStyleApi: KatexCriticalStyleApi | null = null
+let dotBlinkApi: DotBlinkApi | null = null
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -156,6 +157,7 @@ import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import { createKatexCache, type KatexCacheApi } from './modes/katexCache'
 import { createKatexCriticalStyle, KATEX_CRITICAL_STYLE_ID, type KatexCriticalStyleApi } from './modes/katexCriticalStyle'
+import { createDotBlink, type DotBlinkApi } from './modes/dotBlink'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
 import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
 import {
@@ -604,28 +606,6 @@ let wysiwygCaretEl: HTMLDivElement | null = null
 let wysiwygStatusEl: HTMLDivElement | null = null
 // _wysiwygCaretLineIndex / _wysiwygCaretVisualColumn / _caretCharWidth / _caretFontKey
 // 已闭包到 src/modes/wysiwygCaret.ts 工厂内,main.ts 不再持有。
-// 点状“光标”闪烁控制（仅所见模式预览中的点）
-let _dotBlinkTimer: number | null = null
-let _dotBlinkOn = true
-
-function startDotBlink() {
-  try {
-    if (_dotBlinkTimer != null) return
-    _dotBlinkOn = true
-    _dotBlinkTimer = window.setInterval(() => {
-      _dotBlinkOn = !_dotBlinkOn
-      // 闪烁由 CSS 动画驱动；此计时器仅用于保持状态，可按需扩展
-    }, 800)
-  } catch {}
-}
-
-function stopDotBlink() {
-  try {
-    if (_dotBlinkTimer != null) { clearInterval(_dotBlinkTimer); _dotBlinkTimer = null }
-    _dotBlinkOn = false
-  } catch {}
-}
-// 库侧栏选中状态
 let selectedFolderPath: string | null = null
 let selectedNodeEl: HTMLElement | null = null
 // 库面板停靠状态：true=固定在左侧并收缩编辑区；false=覆盖式抽屉
@@ -674,6 +654,11 @@ katexCacheApi = createKatexCache({
 // KaTeX 兜底 CSS 注入工厂实例化(idempotent,DOM 早返)
 katexCriticalStyleApi = createKatexCriticalStyle({
   id: KATEX_CRITICAL_STYLE_ID,
+})
+
+// 所见模式光标点闪烁工厂实例化(800ms 周期,状态机)
+dotBlinkApi = createDotBlink({
+  intervalMs: 800,
 })
 // 边缘唤醒热区元素（非固定且隐藏时显示，鼠标靠近自动展开库）
 let _libEdgeEl: HTMLDivElement | null = null
@@ -2060,7 +2045,7 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       await renderPreview()
       try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
       syncScrollEditorToPreview()
-      wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); startDotBlink()
+      wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start()
     } else {
       if (wysiwygV2Active) {
         try { await disableWysiwygV2() } catch {}
@@ -2081,7 +2066,7 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       // 退出所见模式时清理延迟标记
       wysiwygHoldInlineDollarUntilEnter = false
       wysiwygHoldFenceUntilEnter = false
-      stopDotBlink()
+      dotBlinkApi!.stop()
       // 若大纲面板当前可见，退出所见模式后也立即刷新大纲并绑定预览滚动同步
       try {
         const outline = document.getElementById('lib-outline') as HTMLDivElement | null
@@ -2895,7 +2880,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
               const lines = Math.max(4, Math.min(12, approx || 0))
               const moved = wysiwygCaretApi.moveWysiwygCaretByLines(lines, wysiwygCaretApi.getVisualColumn())
               if (moved !== 0) { // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
-                _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); startDotBlink(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
+                _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
             }
           } catch {}
         }
