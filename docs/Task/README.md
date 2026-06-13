@@ -55,6 +55,12 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [2026-06-13-math-and-mermaid-render-fix.md](Archive/2026-06/2026-06-13-math-and-mermaid-render-fix.md) — 修复 math/katex/latex 围栏代码块 + KaTeX 失败可观测性 + flow/seq 别名 + mermaid 错误兜底(完成 2026-06-13)
+  - **T1 ✅** `main.ts` `highlight()`: math/katex/latex 三个 lang 统一输出 `<pre class="md-math-block">` 占位,走 `renderKatexPlaceholders` 二次渲染
+  - **T2 ✅** `renderKatexPlaceholders` + `highlight()` 增加 `DEBUG_RENDER` 节点数日志
+  - **T3 ✅** `highlight()` 新增 flow/seq 别名(走 mermaid 占位);`renderMermaidIn` 错误回填 DOM(`.mmd-figure.mmd-error`);`preview.css` 红色错误样式
+  - **T4 ✅** 新增 `src/markdownItKatexBlocks.test.ts` 9 用例(含 XSS 转义 + flow/seq 别名)
+  - **验证**:`npm run build` ✅(37.74s) + `npm test` 562/562 ✅
 - ✅ [LIB_LIBRARY_ICON_STYLING_PLAN.md](Archive/2026-06/LIB_LIBRARY_ICON_STYLING_PLAN.md) — 根行 Home 图标补 scheme 配色(完成 2026-06-04)
   - **T1 ✅** style.css: 5 条 `.lib-ico-library` path 规则(scope `body.lib-color-depth`),沿用 `.lib-ico-folder` 模式
   - **T2 ✅** 验证: `npm run build` ✅(18.91s) + `npm test` 139/139 ✅

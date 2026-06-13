@@ -325,6 +325,7 @@ async function getKatexMod(): Promise<any> {
 async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, seq?: number): Promise<void> {
   const nodes = Array.from(root.querySelectorAll('.md-math-inline, .md-math-block')) as HTMLElement[]
   if (nodes.length < 1) return
+  try { if (DEBUG_RENDER) console.log('[KaTeX] 占位节点数:', nodes.length, 'forPrint=', !!forPrint) } catch {}
 
   let katexMod: any
   try { katexMod = await getKatexMod() } catch (e) { try { console.error('[KaTeX] 模块加载失败：', e) } catch {} ; return }
@@ -345,7 +346,7 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
       if (typeof seq === 'number' && seq !== _renderPreviewSeq) return
       const el = nodes[i]
       const latex = el.getAttribute('data-math') || ''
-      const displayMode = el.classList.contains('md-math-block')
+      const displayMode = el.classList.contains('md-math-block') || el.classList.contains('md-math-inline-display')
       try {
         el.innerHTML = katexCacheApi!.renderCached(katexMod, latex, displayMode)
       } catch {
@@ -376,7 +377,7 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
         if (isInputPendingCompat()) break
         const el = nodes[i++]
         const latex = el.getAttribute('data-math') || ''
-        const displayMode = el.classList.contains('md-math-block')
+        const displayMode = el.classList.contains('md-math-block') || el.classList.contains('md-math-inline-display')
         try {
           el.innerHTML = katexCacheApi!.renderCached(katexMod, latex, displayMode)
         } catch {
@@ -463,7 +464,26 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
             el.replaceWith(fig)
             try { postAttachMermaidSvgAdjust(svgEl) } catch {}
           }
-        } catch {}
+        } catch (e: any) {
+          // 渲染失败：保留占位并把错误信息回填到 DOM，让用户能直接看到问题
+          // （mermaid 11 移除了 st=>start: / Andrew->China: 等老式语法，会在 parse/render 时抛错）
+          try {
+            const msg = (e && (e.message || e.toString && e.toString())) || '未知错误'
+            const hint = (e && e.hash && (e.hash.text || e.hash.token)) ? ` (line ${e.hash.line || '?'})` : ''
+            try { console.warn('[Mermaid] 渲染失败：', msg) } catch {}
+            const fig = document.createElement('div')
+            fig.className = 'mmd-figure mmd-error'
+            const title = document.createElement('div')
+            title.className = 'mmd-error-title'
+            title.textContent = 'Mermaid 渲染失败' + hint
+            const body = document.createElement('pre')
+            body.className = 'mmd-error-body'
+            body.textContent = String(msg)
+            fig.appendChild(title)
+            fig.appendChild(body)
+            el.replaceWith(fig)
+          } catch {}
+        }
       }
     }
   } catch {}
@@ -2687,10 +2707,21 @@ async function ensureRenderer() {
     breaks: true, // 单个换行渲染为 <br>，与所见模式的“回车即提行”保持一致
     highlight(code: string, lang: string): string {
       // Mermaid 代码块保留为占位容器，稍后由 mermaid 渲染
-      const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
-      if (lang && lang.toLowerCase() === 'mermaid') {
-        const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
-        return `<pre class="mermaid">${esc}</pre>`
+      // math / katex / latex 三个围栏代码块统一识别为数学公式，输出与 $$...$$ 相同的占位元素
+      // 由 renderKatexPlaceholders 二次渲染（与自定义 markdownItKatex 插件行为一致）
+      // flow / seq 别名：兼容老式 ```flow / ```seq 围栏，一并走 mermaid 渲染管线。
+      // 注意：mermaid 11 已不再支持 `st=>start:` / `Andrew->China:` 这类老式语法，
+      // 用户需改用 `flowchart TD` + `A-->B` / `sequenceDiagram` + `A->>B` 新式语法。
+      const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+      const esc = (s: string) => s.replace(/[&<>"']/g, (ch: string) => escMap[ch] || ch)
+      const lower = (lang || '').toLowerCase()
+      if (lower === 'mermaid' || lower === 'flow' || lower === 'seq') {
+        try { if (DEBUG_RENDER) console.log('[预处理] mermaid 代码块（lang=' + lower + '）') } catch {}
+        return `<pre class="mermaid">${esc(code)}</pre>`
+      }
+      if (lower === 'math' || lower === 'katex' || lower === 'latex') {
+        try { if (DEBUG_RENDER) console.log('[预处理] math 代码块（lang=' + lower + '）: 走 KaTeX 占位') } catch {}
+        return `<pre class="md-math-block" data-math="${esc(code)}"></pre>`
       }
       try {
         const normalizedLang = lang ? normalizeHljsLang(lang) : ''
@@ -2699,8 +2730,7 @@ async function ensureRenderer() {
           return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
         }
       } catch {}
-      const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
-      return `<pre><code class="hljs">${esc}</code></pre>`
+      return `<pre><code class="hljs">${esc(code)}</code></pre>`
     }
   })
     // 启用脚注支持（[^1] / [^name] 语法）

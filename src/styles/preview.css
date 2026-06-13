@@ -260,6 +260,16 @@
 
 /* 滚动条样式优化 */
 
+/* 行内 display 风格公式：段中 $$...$$ 使用，行内位置 + display 字号（不断行） */
+.md-math-inline-display {
+  display: inline-block;
+  vertical-align: middle;
+}
+.md-math-inline-display .katex-display {
+  margin: 0;
+  display: inline-block;
+}
+
 /* Mermaid 图右上角缩放控件 */
 .mmd-figure { position: relative; display: block; }
 .mmd-figure > svg { display: block; }
@@ -281,6 +291,33 @@
   transition: opacity .15s ease;
 }
 .mmd-figure:hover .mmd-tools { opacity: 1; pointer-events: auto; }
+/* Mermaid 渲染失败占位：把 mermaid 抛出的错误直接回填到 DOM 上 */
+.mmd-figure.mmd-error {
+  border: 1px solid #e25555;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(226, 85, 85, 0.08);
+  color: #c0392b;
+  font-family: var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 12px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mmd-figure.mmd-error .mmd-error-title {
+  font-weight: 600;
+  color: #c0392b;
+  margin-bottom: 6px;
+}
+.mmd-figure.mmd-error .mmd-error-body {
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .mmd-tools .tools-row { display: inline-flex; gap: 4px; justify-content: flex-end; }
 .mmd-tools button {
   min-width: 20px; height: 20px;

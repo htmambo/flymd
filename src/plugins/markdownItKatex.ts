@@ -18,6 +18,32 @@ function isValidDelim(src: string, pos: number) {
 
 function math_inline(state: any, silent: boolean) {
   if (state.src[state.pos] !== '$') return false
+
+  // 行内双美元符 $$...$$：在段落中间出现时也识别为数学公式（display 风格：居中、更大字号，但不强制独占一块）。
+  // 块级 ruler 要求 $$ 在行首才会触发 math_block，这里把"段中"也兜住。
+  if (state.src[state.pos + 1] === '$') {
+    const start = state.pos + 2
+    let end = -1
+    let m = start
+    while ((m = state.src.indexOf('$$', m)) !== -1) {
+      // 跳过被 \ 转义的 \$$（奇数个反斜杠前缀）
+      let p = m - 1
+      while (state.src[p] === '\\') p--
+      if (((m - p) & 1) === 1) { end = m; break }
+      m += 2
+    }
+    if (end !== -1 && end > start) {
+      if (silent) return true
+      const t = state.push('math_inline', 'math', 0)
+      t.markup = '$$'
+      t.content = state.src.slice(start, end)
+      t.attrs = [['data-display', '1']]
+      state.pos = end + 2
+      return true
+    }
+    // 没找到匹配 $$：交还给单 $ 处理（保持原行为）
+  }
+
   const res = isValidDelim(state.src, state.pos)
   if (!res.canOpen) { if (!silent) state.pending += '$'; state.pos += 1; return true }
   let start = state.pos + 1
@@ -88,6 +114,11 @@ export default function katexPlugin(md: MarkdownIt, options: KatexOpts = {}) {
   // 这样 DOMPurify 不会剥离关键 SVG/path 属性，因为真正的 KaTeX DOM 在消毒之后才插入。
   md.renderer.rules.math_inline = (t: any, i: number) => {
     const fixed = normalizeKatexLatexForInline(t[i].content || '')
+    // $$...$$ 在行内位置触发时，data-display=1 → 渲染为行内但 display 风格（居中字号、不断行）
+    const isDisplay = t[i].attrs && t[i].attrs.some((a: [string, string]) => a[0] === 'data-display' && a[1] === '1')
+    if (isDisplay) {
+      return `<span class="md-math-inline md-math-inline-display" data-math="${esc(fixed)}"></span>`
+    }
     return `<span class="md-math-inline" data-math="${esc(fixed)}"></span>`
   }
   md.renderer.rules.math_block = (t: any, i: number) => {
