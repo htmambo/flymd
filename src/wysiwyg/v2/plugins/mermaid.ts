@@ -154,6 +154,8 @@ class MermaidNodeView implements NodeView {
   private chartContainer: HTMLElement
   private preWrapper: HTMLElement
   private editBtn: HTMLButtonElement | null = null
+  private _onDomEnter: (() => void) | null = null
+  private _onDomLeave: (() => void) | null = null
   private node: Node
   private view: EditorView
   private getPos: () => number | undefined
@@ -279,10 +281,10 @@ class MermaidNodeView implements NodeView {
       }
     })
     // 由父容器 hover 触发显示
-    this.dom.addEventListener('mouseenter', () => {
+    this.dom.addEventListener('mouseenter', this._onDomEnter = () => {
       try { if (this.editBtn) this.editBtn.style.display = 'flex' } catch {}
     })
-    this.dom.addEventListener('mouseleave', () => {
+    this.dom.addEventListener('mouseleave', this._onDomLeave = () => {
       try { if (this.editBtn) this.editBtn.style.display = 'none' } catch {}
     })
 
@@ -448,6 +450,10 @@ class MermaidNodeView implements NodeView {
     try {
       document.removeEventListener('click', this.handleClickOutside)
     } catch {}
+    // 清理本节点上的 mouseenter/mouseleave 监听器(PR-2 A2 hover 编辑按钮)
+    // 避免 NodeView 反复创建/销毁导致监听器累积
+    try { if (this._onDomEnter) this.dom.removeEventListener('mouseenter', this._onDomEnter) } catch {}
+    try { if (this._onDomLeave) this.dom.removeEventListener('mouseleave', this._onDomLeave) } catch {}
   }
 
   // 根据当前编辑状态与内容是否为空，控制提示文字是否显示

@@ -476,6 +476,14 @@ function rewriteLocalImagesToAsset() {
 function cleanupEditorOnly() {
   try { if (_imgObserver) { _imgObserver.disconnect(); _imgObserver = null } } catch {}
   try { cleanupCodeCopyOverlay() } catch {}
+  // 解绑上一次 enable 注册的 table hover 监听器,避免反复 enable 导致监听器累积卡死
+  try {
+    const host = _root?.querySelector?.('.ProseMirror') as HTMLElement | null
+    if (host && (host as any).__tableHoverCleanup) {
+      try { (host as any).__tableHoverCleanup() } catch {}
+      ;(host as any).__tableHoverCleanup = null
+    }
+  } catch {}
   if (_editor) {
     try { _editor.destroy() } catch {}
     _editor = null
@@ -1824,6 +1832,13 @@ function refreshCodeCopyButtonsNow() {
 function setupTableHoverButton(host: HTMLElement | null) {
   try {
     if (!host) return
+    // 防止 enableWysiwygV2 重复调用导致 mouseover/mouseout 监听器累积,
+    // 切模式时会让浏览器卡死;同时在 cleanupEditorOnly 时解绑
+    const hostAny = host as any
+    if (hostAny.__tableHoverCleanup) {
+      try { hostAny.__tableHoverCleanup() } catch {}
+      hostAny.__tableHoverCleanup = null
+    }
     let currentBtn: HTMLButtonElement | null = null
     let currentTbl: HTMLElement | null = null
     const hide = () => {
@@ -1895,6 +1910,13 @@ function setupTableHoverButton(host: HTMLElement | null) {
     // 滚动或编辑器被销毁时,隐藏按钮
     const onScroll = () => { hide() }
     try { host.addEventListener('scroll', onScroll, { passive: true, capture: true } as any) } catch {}
+    // 清理闭包:cleanupEditorOnly 销毁 editor 时调用,避免监听器泄漏
+    hostAny.__tableHoverCleanup = () => {
+      try { host.removeEventListener('mouseover', onOver) } catch {}
+      try { host.removeEventListener('mouseout', onOut) } catch {}
+      try { host.removeEventListener('scroll', onScroll, true) } catch {}
+      try { hide() } catch {}
+    }
   } catch {}
 }
 
