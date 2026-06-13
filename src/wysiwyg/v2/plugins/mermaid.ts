@@ -157,6 +157,8 @@ class MermaidNodeView implements NodeView {
   private _onDomEnter: (() => void) | null = null
   private _onDomLeave: (() => void) | null = null
   private node: Node
+  // NodeView 是否已被销毁(防止 await 渲染期间被销毁后还写 DOM 触发死循环)
+  private destroyed = false
   private view: EditorView
   private getPos: () => number | undefined
   private toolbar: HTMLElement
@@ -403,6 +405,7 @@ class MermaidNodeView implements NodeView {
   }
 
   private async renderChart() {
+    if (this.destroyed) return
     const code = this.node.textContent
     console.log('[Mermaid Plugin] 开始渲染，代码长度:', code.length)
 
@@ -415,10 +418,13 @@ class MermaidNodeView implements NodeView {
     this.chartContainer.textContent = '渲染中...'
     try {
       await renderMermaid(this.chartContainer, code)
+      // 渲染期间 NodeView 可能被销毁(PM 重建),销毁后不再修改 DOM
+      if (this.destroyed) return
       // PR-2 A4: 渲染成功,清掉错误条
       try { this.errHandle?.clear() } catch {}
       console.log('[Mermaid Plugin] 渲染完成')
     } catch (e) {
+      if (this.destroyed) return
       console.error('[Mermaid Plugin] 渲染出错:', e)
       this.chartContainer.textContent = '渲染失败'
       // PR-2 A4: 渲染失败,显示错误条
@@ -446,6 +452,7 @@ class MermaidNodeView implements NodeView {
 
   destroy() {
     console.log('[Mermaid Plugin] destroy 被调用')
+    this.destroyed = true
     // 清理事件监听器
     try {
       document.removeEventListener('click', this.handleClickOutside)
@@ -483,7 +490,7 @@ class MermaidNodeView implements NodeView {
   }
 
   ignoreMutation(mutation: any) {
-    // 忽略图表容器的任何变化
+    // 忽略图表容器的任何变化(包括 textContent='渲染失败'/'渲染中...'/'渲染完成')
     if (mutation.target === this.chartContainer || this.chartContainer.contains(mutation.target as globalThis.Node)) {
       return true
     }
@@ -493,6 +500,23 @@ class MermaidNodeView implements NodeView {
     }
     // 忽略 preWrapper 的样式/属性变化（防止切换编辑模式时闪烁）
     if (mutation.target === this.preWrapper && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略 dom 自身属性变化(hintOverlay/editBtn 切换 display,setupTableHoverButton
+    // 写入 dataset 等都不会改变 PM 文档结构,不应触发 NodeView 重建)
+    if (mutation.target === this.dom && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略错误条 overlay(.ov-error-bar 是 attachOverlayError 注入的)
+    if ((mutation.target as HTMLElement)?.classList?.contains?.('ov-error-bar')) {
+      return true
+    }
+    // 忽略子节点的属性变化(hintOverlay 的 style 切换)
+    if (this.hintOverlay && (mutation.target === this.hintOverlay || this.hintOverlay.contains(mutation.target as globalThis.Node)) && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略 editBtn 自身的属性变化(显示/隐藏)
+    if (this.editBtn && (mutation.target === this.editBtn || this.editBtn.contains(mutation.target as globalThis.Node))) {
       return true
     }
     // contentDOM (代码编辑区) 的内容变化需要通知 ProseMirror 以同步到文档
