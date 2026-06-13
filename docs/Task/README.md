@@ -56,11 +56,34 @@ docs/Task/
 #### 2026-06
 
 - ✅ [2026-06-13-math-and-mermaid-render-fix.md](Archive/2026-06/2026-06-13-math-and-mermaid-render-fix.md) — 修复 math/katex/latex 围栏代码块 + KaTeX 失败可观测性 + flow/seq 别名 + mermaid 错误兜底(完成 2026-06-13)
+- ✅ [2026-06-13-wysiwyg-html-inline-tags.md](Archive/2026-06/2026-06-13-wysiwyg-html-inline-tags.md) — 所见模式 sub/sup/abbr HTML 内联标签渲染(完成 2026-06-14)
+  - remark 插件合并配对 HTML 标签 + $markSchema mark 定义 + remark-stringify handlers
+  - 610/610 测试通过(含新增 8 用例)
   - **T1 ✅** `main.ts` `highlight()`: math/katex/latex 三个 lang 统一输出 `<pre class="md-math-block">` 占位,走 `renderKatexPlaceholders` 二次渲染
   - **T2 ✅** `renderKatexPlaceholders` + `highlight()` 增加 `DEBUG_RENDER` 节点数日志
   - **T3 ✅** `highlight()` 新增 flow/seq 别名(走 mermaid 占位);`renderMermaidIn` 错误回填 DOM(`.mmd-figure.mmd-error`);`preview.css` 红色错误样式
   - **T4 ✅** 新增 `src/markdownItKatexBlocks.test.ts` 9 用例(含 XSS 转义 + flow/seq 别名)
   - **验证**:`npm run build` ✅(37.74s) + `npm test` 562/562 ✅
+- ✅ [2026-06-13-wysiwyg-complex-block-edit.md](Archive/2026-06/2026-06-13-wysiwyg-complex-block-edit.md) — 所见模式复杂块(KaTeX/Mermaid/HTML Table)编辑稳定性改造(完成 2026-06-13)
+  - **PR-1 ✅** (commit 961605c) 冻结锁 + 浮层源码编辑全改造
+    - B1 ✅ editLock 工具(acquireEditLock / withEditLock / bindEditLockEditor)
+    - B2 ✅ enterLatexSourceEdit 接入冻结锁
+    - B3 ✅ focusout 替换全局 mousedown 捕获
+    - B4 ✅ overlay 位置 ResizeObserver + scroll 实时跟随
+    - B5 ✅ 反序列化改用 dataset.value,不再 regex 截断
+    - B6 ✅ _mathEditingActive 节点标记替代 500ms 硬定时
+    - B7 ✅ enterMermaidSourceEdit 浮层入口
+    - B8 ✅ enterTableSourceEdit 浮层入口
+    - B9 ✅ overlay 错误条(overlayError.ts)统一收口
+    - B10 ✅ 10 用例(editLock acquire/release/重入/异常路径)
+  - **PR-2 ✅** (commit 8b92130) 体验优化
+    - A1 ✅ math NodeView 铅笔按钮(hover 显示,无 dblclick 提示)
+    - A2 ✅ mermaid 节点右下角编辑按钮
+    - A3 ✅ 块级↔行内公式互转(convertMathNodeType + 浮层按钮)
+    - A4 ✅ math 节点内嵌 inline error(渲染失败显示)
+    - A5 ✅ +7 用例(overlayError 行为 + window 桥契约)
+  - **验证**:`npx tsc --noEmit` 改动文件 0 错误 + `npx vitest run` 594/594 ✅(587+7)
+  - **新增依赖**:无
 - ✅ [LIB_LIBRARY_ICON_STYLING_PLAN.md](Archive/2026-06/LIB_LIBRARY_ICON_STYLING_PLAN.md) — 根行 Home 图标补 scheme 配色(完成 2026-06-04)
   - **T1 ✅** style.css: 5 条 `.lib-ico-library` path 规则(scope `body.lib-color-depth`),沿用 `.lib-ico-folder` 模式
   - **T2 ✅** 验证: `npm run build` ✅(18.91s) + `npm test` 139/139 ✅

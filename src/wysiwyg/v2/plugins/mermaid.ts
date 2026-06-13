@@ -5,6 +5,7 @@ import { codeBlockSchema } from '@milkdown/preset-commonmark'
 import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { HighlightCodeBlockNodeView } from './highlight'
+import { attachOverlayError } from '../overlayError'
 
 // 检测当前是否为夜间模式
 function isDarkMode(): boolean {
@@ -152,7 +153,12 @@ class MermaidNodeView implements NodeView {
   contentDOM: HTMLElement | null
   private chartContainer: HTMLElement
   private preWrapper: HTMLElement
+  private editBtn: HTMLButtonElement | null = null
+  private _onDomEnter: (() => void) | null = null
+  private _onDomLeave: (() => void) | null = null
   private node: Node
+  // NodeView 是否已被销毁(防止 await 渲染期间被销毁后还写 DOM 触发死循环)
+  private destroyed = false
   private view: EditorView
   private getPos: () => number | undefined
   private toolbar: HTMLElement
@@ -160,6 +166,8 @@ class MermaidNodeView implements NodeView {
   private justEnteredEdit: number = 0  // 防止双击后 clickOutside 立即关闭
   // 空 mermaid 代码时的提示覆盖层
   private hintOverlay: HTMLElement
+  // PR-2 A4: 渲染失败时显示的内嵌错误条(复用 overlayError.handle)
+  private errHandle: ReturnType<typeof attachOverlayError> | null = null
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     console.log('[Mermaid Plugin] 创建 NodeView, language:', node.attrs.language)
@@ -173,6 +181,9 @@ class MermaidNodeView implements NodeView {
     this.dom.classList.add('mermaid-node-wrapper')
     this.dom.style.margin = '1em 0'
     this.dom.style.position = 'relative'
+
+    // PR-2 A4: 内嵌错误条 — 渲染失败时显示,默认隐藏
+    try { this.errHandle = attachOverlayError(this.dom) } catch {}
 
     // 创建源代码容器（保持可编辑）- 使用标准的 pre>code 结构
     this.preWrapper = document.createElement('pre')
@@ -233,10 +244,61 @@ class MermaidNodeView implements NodeView {
     this.chartContainer.style.cursor = 'pointer'
     this.chartContainer.textContent = '渲染中...'
 
+    // PR-2 A2: 显式"编辑源码"按钮(无需双击),位置在图表右下角
+    this.editBtn = document.createElement('button')
+    this.editBtn.type = 'button'
+    this.editBtn.className = 'mermaid-edit-btn'
+    this.editBtn.title = '编辑 Mermaid 源码'
+    this.editBtn.setAttribute('aria-label', '编辑 Mermaid 源码')
+    this.editBtn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3l8.5-8.5z"/><path d="M10 3l3 3"/></svg>'
+    this.editBtn.style.position = 'absolute'
+    this.editBtn.style.bottom = '6px'
+    this.editBtn.style.right = '6px'
+    this.editBtn.style.width = '22px'
+    this.editBtn.style.height = '22px'
+    this.editBtn.style.borderRadius = '11px'
+    this.editBtn.style.background = 'var(--wysiwyg-bg, #fff)'
+    this.editBtn.style.border = '1px solid var(--border-color, #d0d0d0)'
+    this.editBtn.style.color = 'var(--text-color, #555)'
+    this.editBtn.style.cursor = 'pointer'
+    this.editBtn.style.padding = '0'
+    // display 走 CSS(.mermaid-edit-btn 默认 flex + opacity 0.4),由样式控制显示
+    this.editBtn.style.alignItems = 'center'
+    this.editBtn.style.justifyContent = 'center'
+    this.editBtn.style.zIndex = '5'
+    this.editBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.12)'
+    this.editBtn.style.opacity = '0.85'
+    this.editBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    this.editBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      try {
+        const fn = (window as any).__mdeditorEnterMermaidSourceEdit
+        if (typeof fn === 'function') fn(this.dom)
+      } catch (err) {
+        try { console.error('[mermaid edit btn]', err) } catch {}
+      }
+    })
+    // 显示/隐藏改由 CSS opacity + transform 控制(.mermaid-edit-btn 默认 opacity 0.4,
+    // 父容器 hover 时 opacity 1),这里不再切换 display 避免覆盖 CSS
+    this._onDomEnter = null
+    this._onDomLeave = null
+
     // 双击切换到源代码编辑
     this.chartContainer.addEventListener('dblclick', (e) => {
       e.stopPropagation()
       e.preventDefault()
+      // 优先走浮层源码编辑(B7 入口);浮层不可用时回退到内嵌编辑模式
+      try {
+        const mod: any = (window as any).__mdeditorEnterMermaidSourceEdit
+        if (typeof mod === 'function') {
+          mod(this.dom)
+          return
+        }
+      } catch {}
       this.enterEditMode()
     })
 
@@ -266,6 +328,17 @@ class MermaidNodeView implements NodeView {
     document.addEventListener('click', this.handleClickOutside)
 
     this.dom.appendChild(this.chartContainer)
+    // PR-2 A2: 显式编辑按钮(浮在 chartContainer 右下角)
+    this.dom.appendChild(this.editBtn)
+    // PR-2 UX: hover 时显示编辑提示
+    try {
+      if (!this.dom.querySelector(':scope > .wysiwyg-edit-hint')) {
+        const hint = document.createElement('span')
+        hint.className = 'wysiwyg-edit-hint'
+        hint.textContent = '双击或点 ✎ 编辑源码'
+        this.dom.appendChild(hint)
+      }
+    } catch {}
 
     // 初始渲染：空内容时自动进入编辑模式
     const code = this.node.textContent
@@ -338,21 +411,30 @@ class MermaidNodeView implements NodeView {
   }
 
   private async renderChart() {
+    if (this.destroyed) return
     const code = this.node.textContent
     console.log('[Mermaid Plugin] 开始渲染，代码长度:', code.length)
 
     if (!code || !code.trim()) {
       this.chartContainer.textContent = '(空 mermaid 图表)'
+      try { this.errHandle?.clear() } catch {}
       return
     }
 
     this.chartContainer.textContent = '渲染中...'
     try {
       await renderMermaid(this.chartContainer, code)
+      // 渲染期间 NodeView 可能被销毁(PM 重建),销毁后不再修改 DOM
+      if (this.destroyed) return
+      // PR-2 A4: 渲染成功,清掉错误条
+      try { this.errHandle?.clear() } catch {}
       console.log('[Mermaid Plugin] 渲染完成')
     } catch (e) {
+      if (this.destroyed) return
       console.error('[Mermaid Plugin] 渲染出错:', e)
       this.chartContainer.textContent = '渲染失败'
+      // PR-2 A4: 渲染失败,显示错误条
+      try { this.errHandle?.setError(e) } catch {}
     }
   }
 
@@ -376,10 +458,15 @@ class MermaidNodeView implements NodeView {
 
   destroy() {
     console.log('[Mermaid Plugin] destroy 被调用')
+    this.destroyed = true
     // 清理事件监听器
     try {
       document.removeEventListener('click', this.handleClickOutside)
     } catch {}
+    // 清理本节点上的 mouseenter/mouseleave 监听器(PR-2 A2 hover 编辑按钮)
+    // 避免 NodeView 反复创建/销毁导致监听器累积
+    try { if (this._onDomEnter) this.dom.removeEventListener('mouseenter', this._onDomEnter) } catch {}
+    try { if (this._onDomLeave) this.dom.removeEventListener('mouseleave', this._onDomLeave) } catch {}
   }
 
   // 根据当前编辑状态与内容是否为空，控制提示文字是否显示
@@ -409,7 +496,7 @@ class MermaidNodeView implements NodeView {
   }
 
   ignoreMutation(mutation: any) {
-    // 忽略图表容器的任何变化
+    // 忽略图表容器的任何变化(包括 textContent='渲染失败'/'渲染中...'/'渲染完成')
     if (mutation.target === this.chartContainer || this.chartContainer.contains(mutation.target as globalThis.Node)) {
       return true
     }
@@ -419,6 +506,23 @@ class MermaidNodeView implements NodeView {
     }
     // 忽略 preWrapper 的样式/属性变化（防止切换编辑模式时闪烁）
     if (mutation.target === this.preWrapper && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略 dom 自身属性变化(hintOverlay/editBtn 切换 display,setupTableHoverButton
+    // 写入 dataset 等都不会改变 PM 文档结构,不应触发 NodeView 重建)
+    if (mutation.target === this.dom && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略错误条 overlay(.ov-error-bar 是 attachOverlayError 注入的)
+    if ((mutation.target as HTMLElement)?.classList?.contains?.('ov-error-bar')) {
+      return true
+    }
+    // 忽略子节点的属性变化(hintOverlay 的 style 切换)
+    if (this.hintOverlay && (mutation.target === this.hintOverlay || this.hintOverlay.contains(mutation.target as globalThis.Node)) && mutation.type === 'attributes') {
+      return true
+    }
+    // 忽略 editBtn 自身的属性变化(显示/隐藏)
+    if (this.editBtn && (mutation.target === this.editBtn || this.editBtn.contains(mutation.target as globalThis.Node))) {
       return true
     }
     // contentDOM (代码编辑区) 的内容变化需要通知 ProseMirror 以同步到文档

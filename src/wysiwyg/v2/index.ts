@@ -2,6 +2,8 @@
 // 暴露 enable/disable 与 setMarkdown/getMarkdown 能力，供主流程挂接
 
 import { history } from '@milkdown/plugin-history'
+import { acquireEditLock, bindEditLockEditor } from './editLock'
+import { attachOverlayError } from './overlayError'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, commandsCtx, remarkStringifyOptionsCtx, parserCtx } from '@milkdown/core'
 import { TextSelection, type Command } from '@milkdown/prose/state'
 import { DOMParser as ProseDOMParser } from '@milkdown/prose/model'
@@ -23,9 +25,11 @@ import { guessSyncedDocImageAbsPath } from '../../utils/localImagePath'
 import { resolveLocalImageAbsPathFromSrc } from '../../utils/localImageSrcResolve'
 import { normalizeTabIndentText } from '../../utils/tabIndent'
 import { mermaidPlugin } from './plugins/mermaid'
+import { htmlToMarkdown } from '../../html2md'
 import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
 import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
+import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -60,6 +64,17 @@ let _codeCopyResizeObserver: ResizeObserver | null = null
 let _codeCopyWindowResizeHandler: (() => void) | null = null
 let _inlineCodeMouseTimer: number | null = null
 let _rootMouseDownHandler: ((ev: MouseEvent) => void) | null = null
+
+// 所见模式 preprocessor:只处理所见模式不原生支持但有等价 GFM 语法的标签
+// - <s>x</s>     → ~~x~~  (GFM strikethrough,preset-gfm 已支持,等价不污染)
+// - <sub>/<sup>/<abbr> 通过 remark 插件 + $mark 扩展渲染,不动源 markdown
+function transformInlineHtmlForWysiwyg(md: string): string {
+  try {
+    return md.replace(/<s>([^<]*?)<\/s>/g, (_m, inner) => `~~${inner}~~`)
+  } catch {
+    return md
+  }
+}
 
 function hasDollarText(node: any): boolean {
   try { return String(node?.textContent || '').includes('$') } catch { return false }
@@ -473,6 +488,14 @@ function rewriteLocalImagesToAsset() {
 function cleanupEditorOnly() {
   try { if (_imgObserver) { _imgObserver.disconnect(); _imgObserver = null } } catch {}
   try { cleanupCodeCopyOverlay() } catch {}
+  // 解绑上一次 enable 注册的 table hover 监听器,避免反复 enable 导致监听器累积卡死
+  try {
+    const host = _root?.querySelector?.('.ProseMirror') as HTMLElement | null
+    if (host && (host as any).__tableHoverCleanup) {
+      try { (host as any).__tableHoverCleanup() } catch {}
+      ;(host as any).__tableHoverCleanup = null
+    }
+  } catch {}
   if (_editor) {
     try { _editor.destroy() } catch {}
     _editor = null
@@ -482,7 +505,13 @@ function cleanupEditorOnly() {
 export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onChange: (md: string) => void) {
   // 规范化内容：空内容也是合法的（新文档或空文档）
   const content0 = normalizeTabIndentText((initialMd || '').toString())
-  const content = maybeConvertHtmlTableBlocksToGfm(content0)
+  // 把 <s>/<sub>/<sup> 三个所见模式不原生识别的 HTML 标签转成等价形式
+  // - <s>...</s>     -> ~~...~~      (GFM strikethrough,preset-gfm 支持)
+  // - <sub>...</sub> -> 保留 HTML    (remark 插件 + $mark 渲染)
+  // - <sup>...</sup> -> 保留 HTML    (同上)
+  // 只对 inline 形式做转换(行内非 <table> 等块级),不影响块级 HTML
+  const content1 = transformInlineHtmlForWysiwyg(content0)
+  const content = maybeConvertHtmlTableBlocksToGfm(content1)
   // 保护 Excel 公式里的 `$`，避免被 remark-math / 输入规则误识别为行内数学
   const contentForEditor = protectExcelDollarRefs(content)
   console.log('[WYSIWYG V2] enableWysiwygV2 called, content length:', content.length)
@@ -513,6 +542,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
         ctx.update(remarkStringifyOptionsCtx, (prev) => ({
           ...prev,
           bullet: '-',
+          handlers: { ...(prev as any)?.handlers, ...htmlInlineTagStringifyHandlers },
         } as any))
       } catch {}
       try {
@@ -546,6 +576,10 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(calloutNode)
     .use(calloutRemark)
     .use(calloutViewPlugin)
+    .use(remarkHtmlInlineTags)
+    .use(subMark)
+    .use(supMark)
+    .use(abbrMark)
     .use(automd)
     .use(listener)
     .use(history)
@@ -591,6 +625,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   if (mathHit) { ev.stopPropagation(); try { enterLatexSourceEdit(mathHit as HTMLElement) } catch {}; return; }
   const imgHit = t?.closest?.('img');
   if (imgHit) { ev.stopPropagation(); try { enterImageSourceEdit(imgHit as HTMLElement) } catch {}; return; }
+  const tableHit = t?.closest?.('table');
+  if (tableHit) { ev.stopPropagation(); try { enterTableSourceEdit(tableHit as HTMLElement) } catch {}; return; }
 }, true) } catch {} 
       try {
         pm.addEventListener('keydown', (ev) => {
@@ -727,6 +763,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       try { pm.addEventListener('mouseup', () => { try { scheduleInlineCodeMouseExit() } catch {} }, true) } catch {}
       try { pm.addEventListener('touchend', () => { try { scheduleInlineCodeMouseExit() } catch {} }, true) } catch {}
       try { setupCodeCopyOverlay(pm) } catch {}
+      try { setupTableHoverButton(pm) } catch {}
     }
     const host = _root?.firstElementChild as HTMLElement | null
     if (host) {
@@ -793,8 +830,60 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   } catch {}
   _suppressInitialUpdate = false
   _editor = editor
+  // 把 editor 引用注入 editLock,使浮层源码编辑期间可以冻结整个编辑器
+  try { bindEditLockEditor(() => _editor) } catch {}
   // 初次内容渲染完成后再刷一次代码块按钮覆盖层，避免“打开文件按钮不出现直到首次编辑”
   try { setTimeout(() => { try { scheduleCodeCopyRefresh() } catch {} }, 0) } catch {}
+  // 围栏 math/katex/latex 代码块转换为 math_block 节点,让所见模式正确显示公式
+  try { void transformMathFencesToMathBlocks(editor) } catch {}
+}
+
+// 围栏 math/katex/latex 代码块 → math_block 节点转换
+// 所见模式的 code_block 节点走 hljs 高亮,不能直接渲染公式;
+// 转换到 math_block 后由 milkdown-plugin-math + KaTeX 接管。
+// 转换在 enable 完成后做一次,用户在所见模式下改 lang 不会自动同步
+// (后续可加 post-processor)。
+async function transformMathFencesToMathBlocks(editor: any): Promise<void> {
+  try {
+    const view: any = editor?.ctx?.get?.(editorViewCtx)
+    if (!view) return
+    const state = view.state
+    const schema = state.schema
+    const mathBlock = schema.nodes['math_block']
+    const codeBlock = schema.nodes['code_block']
+    if (!mathBlock || !codeBlock) return
+    // 找到所有 lang=math|katex|latex 的 code_block
+    const targets: Array<{ from: number; to: number; value: string }> = []
+    state.doc.descendants((node: any, pos: number) => {
+      if (node.type === codeBlock) {
+        const lang = (node.attrs?.language || '').toLowerCase()
+        if (lang === 'math' || lang === 'katex' || lang === 'latex') {
+          const value = String(node.textContent || '')
+          // 去掉围栏代码块常见的 $$..$$ 或 $..$ 包装
+          let stripped = value.trim()
+          stripped = stripped.replace(/^\\?\$\$([\s\S]*?)\\?\$\$/m, '$1').trim()
+          stripped = stripped.replace(/^\\?\$(.*?)\\?\$/m, '$1').trim()
+          // 还原 markdown 常见的 \_  转义(用户从 markdown 复制围栏时常会带,
+          // KaTeX 不会自动去掉 \_  反斜杠,需要显式还原)
+          stripped = stripped.replace(/\\\(/g, '(').replace(/\\\)/g, ')')
+          stripped = stripped.replace(/\\_/g, '_')
+          stripped = stripped.replace(/\\\[/g, '[').replace(/\\\]/g, ']')
+          targets.push({ from: pos, to: pos + node.nodeSize, value: stripped })
+        }
+      }
+    })
+    if (!targets.length) return
+    let tr = state.tr
+    // 倒序替换,避免位置漂移
+    for (const t of targets.reverse()) {
+      const node = mathBlock.create({ value: t.value })
+      tr = tr.replaceRangeWith(t.from, t.to, node)
+    }
+    view.dispatch(tr)
+    console.log('[wysiwyg] 已转换', targets.length, '个 math/katex/latex 围栏为 math_block')
+  } catch (e) {
+    console.warn('[wysiwyg] 转换 math 围栏失败:', e)
+  }
 }
 
 export async function disableWysiwygV2() {
@@ -817,6 +906,7 @@ export async function disableWysiwygV2() {
   if (_editor) {
     try { await _editor.destroy() } catch {}
     _editor = null
+    try { bindEditLockEditor(() => null) } catch {}
   }
   try {
     // 隐藏并移除根节点，避免覆盖层残留拦截点击
@@ -1809,6 +1899,100 @@ function refreshCodeCopyButtonsNow() {
   } catch {}
 }
 
+// PR-2 A2: HTML 表格 hover 时显示"编辑源码"按钮
+// 说明:表格不是 NodeView(由 gfm 表格插件直接渲染),所以走全局 hover 委托 + 浮层按钮,
+//      类似 setupCodeCopyOverlay 的定位思路。点击按钮调用 enterTableSourceEdit(tableEl)。
+function setupTableHoverButton(host: HTMLElement | null) {
+  try {
+    if (!host) return
+    // 防止 enableWysiwygV2 重复调用导致 mouseover/mouseout 监听器累积,
+    // 切模式时会让浏览器卡死;同时在 cleanupEditorOnly 时解绑
+    const hostAny = host as any
+    if (hostAny.__tableHoverCleanup) {
+      try { hostAny.__tableHoverCleanup() } catch {}
+      hostAny.__tableHoverCleanup = null
+    }
+    let currentBtn: HTMLButtonElement | null = null
+    let currentTbl: HTMLElement | null = null
+    const hide = () => {
+      try { currentBtn?.remove() } catch {}
+      currentBtn = null
+      currentTbl = null
+    }
+    const show = (tbl: HTMLElement) => {
+      try {
+        if (currentTbl === tbl && currentBtn) { try { currentBtn.style.display = 'flex' } catch {}; return }
+        hide()
+        const ov = ensureOverlayHost()
+        if (!ov) return
+        const rc = tbl.getBoundingClientRect()
+        const hostRc = (host.parentElement || host).getBoundingClientRect()
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'ov-table-edit-btn'
+        btn.title = '编辑 HTML 表格源码'
+        btn.setAttribute('aria-label', '编辑 HTML 表格源码')
+        // 内联 SVG 铅笔图标(同 mermaid-edit-btn)
+        btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3l8.5-8.5z"/><path d="M10 3l3 3"/></svg>'
+        btn.style.position = 'absolute'
+        btn.style.pointerEvents = 'auto'
+        btn.style.zIndex = '8'
+        btn.style.width = '22px'
+        btn.style.height = '22px'
+        btn.style.borderRadius = '11px'
+        btn.style.background = 'var(--wysiwyg-bg, #fff)'
+        btn.style.border = '1px solid var(--border-color, #d0d0d0)'
+        btn.style.color = 'var(--text-color, #555)'
+        btn.style.cursor = 'pointer'
+        btn.style.padding = '0'
+        btn.style.alignItems = 'center'
+        btn.style.justifyContent = 'center'
+        btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.12)'
+        btn.style.left = Math.max(0, Math.round(rc.right - hostRc.left - 28)) + 'px'
+        btn.style.top = Math.max(0, Math.round(rc.top - hostRc.top + 6)) + 'px'
+        btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation() })
+        btn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          try { enterTableSourceEdit(tbl) } catch {}
+        })
+        ov.appendChild(btn)
+        currentBtn = btn
+        currentTbl = tbl
+      } catch {}
+    }
+    // mouseover 委托:命中 table 或其后代时显示按钮,离开时隐藏
+    const onOver = (ev: Event) => {
+      try {
+        const t = ev.target as HTMLElement | null
+        const tbl = t?.closest?.('table') as HTMLElement | null
+        if (!tbl) { hide(); return }
+        show(tbl)
+      } catch {}
+    }
+    const onOut = (ev: Event) => {
+      try {
+        const e = ev as MouseEvent
+        const next = e.relatedTarget as Node | null
+        if (next && currentTbl && currentTbl.contains(next)) return
+        hide()
+      } catch {}
+    }
+    host.addEventListener('mouseover', onOver)
+    host.addEventListener('mouseout', onOut)
+    // 滚动或编辑器被销毁时,隐藏按钮
+    const onScroll = () => { hide() }
+    try { host.addEventListener('scroll', onScroll, { passive: true, capture: true } as any) } catch {}
+    // 清理闭包:cleanupEditorOnly 销毁 editor 时调用,避免监听器泄漏
+    hostAny.__tableHoverCleanup = () => {
+      try { host.removeEventListener('mouseover', onOver) } catch {}
+      try { host.removeEventListener('mouseout', onOut) } catch {}
+      try { host.removeEventListener('scroll', onScroll, true) } catch {}
+      try { hide() } catch {}
+    }
+  } catch {}
+}
+
 async function renderMermaidInto(el: HTMLDivElement, code: string) {
   try {
     const { loadMermaid } = await import('../../core/mermaidLoader')
@@ -1933,16 +2117,51 @@ function onPmSelectionChange() {
 
 //  闭合后再渲染（不在输入起始处触发）
 let _mathReparseTimer: number | null = null
-let _suppressMathReparse = false // 在手动更新数学节点后临时阻止 reparse
+// 进入浮层源码编辑(open→apply/close 全程)期间,阻止 scheduleMathBlockReparse 重放文档,
+// 避免浮层刚要写入就被 reparse 顶掉导致 cachedFrom/cachedTo 错位
+let _mathEditingActive = false
+// 浮层错误显示:基于 overlayError.ts 复用同一个 handle,避免每次 apply 都重建 DOM
+const _overlayErrHandles = new WeakMap<HTMLElement, ReturnType<typeof attachOverlayError>>()
+function showOverlayError(wrap: HTMLElement, err: unknown): void {
+  try {
+    let h = _overlayErrHandles.get(wrap)
+    if (!h) {
+      h = attachOverlayError(wrap)
+      _overlayErrHandles.set(wrap, h)
+    }
+    h.setError(err)
+  } catch {}
+}
 function scheduleMathBlockReparse() {
-  if (_suppressMathReparse) return // 阻止重复处理
+  if (_mathEditingActive) return // 浮层打开中:禁止 reparse
   try { if (_mathReparseTimer != null) { clearTimeout(_mathReparseTimer); _mathReparseTimer = null } } catch {}
   _mathReparseTimer = window.setTimeout(async () => {
-    if (_suppressMathReparse) return // 再次检查
+    if (_mathEditingActive) return // 浮层打开中:再次检查
     try {
       const mdNow = await (_editor as any).action(getMarkdown())
       if (/\$\$[\s\S]*?\$\$/m.test(String(mdNow || ''))) {
+        // replaceAll 会用 tr.replace(0, docSize, ...) 重建整篇文档,旧光标被映射到
+        // 文档尾(且不带 scrollIntoView)。在含块级公式的文档里编辑任何内容都会触发,
+        // 表现为光标瞬间跳到底部。这里先存光标,replace 后再就近恢复。
+        const viewBefore: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        const hadFocus = !!viewBefore?.hasFocus?.()
+        const savedFrom: number | undefined = viewBefore?.state?.selection?.from
+        const savedTo: number | undefined = viewBefore?.state?.selection?.to
         await (_editor as any).action(replaceAll(String(mdNow || '')))
+        if (hadFocus && typeof savedFrom === 'number') {
+          try {
+            const viewAfter: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+            const size = viewAfter.state.doc.content.size
+            const from = Math.max(0, Math.min(savedFrom, size))
+            const to = Math.max(0, Math.min(typeof savedTo === 'number' ? savedTo : savedFrom, size))
+            const sel = TextSelection.between(
+              viewAfter.state.doc.resolve(from),
+              viewAfter.state.doc.resolve(to)
+            )
+            viewAfter.dispatch(viewAfter.state.tr.setSelection(sel).scrollIntoView())
+            viewAfter.focus()
+          } catch {}
+        }
       }
     } catch {}
   }, 240)
@@ -1955,10 +2174,7 @@ function updateMilkdownMathFromDom(
   cachedTo: number = -1
 ): any {
   try {
-    // 阻止 scheduleMathBlockReparse 重复处理
-    _suppressMathReparse = true
-    setTimeout(() => { _suppressMathReparse = false }, 500)
-
+    // 编辑锁由调用方(enterLatexSourceEdit)统一控制,此处不重入 500ms 定时
     const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
     if (!view || !mathEl) return view
 
@@ -2038,6 +2254,59 @@ function updateMilkdownMathFromDom(
   } catch (e) {
     console.error('[updateMilkdownMathFromDom] 错误:', e)
     return (_editor as any)?.ctx?.get?.(editorViewCtx)
+  }
+}
+
+// PR-2 A3: 块级↔行内公式互转
+// 把光标所在的 math_block / math_inline 节点替换为目标类型,保留 value
+function convertMathNodeType(mathEl: HTMLElement, targetType: 'math_inline' | 'math_block'): boolean {
+  try {
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    if (!view || !mathEl) return false
+    const pos = view.posAtDOM(mathEl, 0)
+    if (typeof pos !== 'number') return false
+    const state = view.state
+    const $pos = state.doc.resolve(pos)
+    const isMath = (n: any) => !!n && (n.type?.name === 'math_inline' || n.type?.name === 'math_block')
+    let from = -1, to = -1, current: any = null
+    for (let d = $pos.depth; d >= 0; d--) {
+      const node = $pos.node(d)
+      if (isMath(node)) {
+        from = $pos.before(d)
+        to = $pos.after(d)
+        current = node
+        break
+      }
+    }
+    if (from < 0) {
+      if ($pos.nodeAfter && isMath($pos.nodeAfter)) {
+        current = $pos.nodeAfter
+        from = pos
+        to = pos + current.nodeSize
+      } else if ($pos.nodeBefore && isMath($pos.nodeBefore)) {
+        current = $pos.nodeBefore
+        from = pos - current.nodeSize
+        to = pos
+      }
+    }
+    if (from < 0 || !current) return false
+    if (current.type.name === targetType) return true // 已经是目标类型
+    const schema = state.schema
+    const target = schema.nodes[targetType]
+    if (!target) return false
+    const value = String(current.attrs?.value || current.textContent || '')
+    let newNode: any
+    if (targetType === 'math_block') {
+      newNode = target.create({ value })
+    } else {
+      newNode = target.create({}, schema.text(value))
+    }
+    const tr = state.tr.replaceRangeWith(from, to, newNode)
+    view.dispatch(tr.scrollIntoView())
+    return true
+  } catch (e) {
+    console.error('[convertMathNodeType] 错误:', e)
+    return false
   }
 }
 // 从图片 DOM 反向更新 Milkdown 文档中的 image 节点
@@ -2166,15 +2435,21 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
     inner.appendChild(btnRow)
     wrap.appendChild(inner)
     ov.appendChild(wrap)
+    const errHandle = attachOverlayError(wrap)
 
     const close = () => { try { ov.removeChild(wrap) } catch {} }
     const apply = () => {
       const src = urlInput.value.trim()
       const alt = altInput.value || ''
       if (!src) { try { urlInput.focus() } catch {}; return }
-      try { img.setAttribute('data-flymd-src-raw', src) } catch {}
-      try { updateMilkdownImageFromDom(img, src, alt) } catch {}
-      close()
+      try {
+        try { img.setAttribute('data-flymd-src-raw', src) } catch {}
+        updateMilkdownImageFromDom(img, src, alt)
+        errHandle.clear()
+        close()
+      } catch (e) {
+        errHandle.setError(e)
+      }
     }
 
     const onKey = (ev: KeyboardEvent) => {
@@ -2278,6 +2553,39 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     wrap.style.top = Math.max(8, Math.round(rc.bottom - hostRc.top + 8)) + 'px'
     wrap.style.width = Math.max(10, finalWidth) + 'px'
 
+    // B4: 浮层位置随文档滚动 / 公式尺寸变化实时重算
+    const refreshPosition = () => {
+      try {
+        const rcN = mathEl.getBoundingClientRect()
+        const hostN = (_root as HTMLElement).getBoundingClientRect()
+        const w = wrap.offsetWidth || finalWidth
+        const cx = (rcN.left - hostN.left) + (rcN.width / 2)
+        let l = cx - w / 2
+        l = Math.max(marginX, Math.min((hostN.width || 0) - w - marginX, l))
+        wrap.style.left = Math.max(0, Math.round(l)) + 'px'
+        wrap.style.top = Math.max(8, Math.round(rcN.bottom - hostN.top + 8)) + 'px'
+      } catch {}
+    }
+    let positionCleanup: (() => void) | null = null
+    try {
+      if (typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => refreshPosition())
+        ro.observe(mathEl)
+        const onScroll = () => refreshPosition()
+        window.addEventListener('scroll', onScroll, { passive: true })
+        positionCleanup = () => {
+          try { ro.disconnect() } catch {}
+          try { window.removeEventListener('scroll', onScroll) } catch {}
+        }
+      } else if (typeof window !== 'undefined') {
+        const ti = window.setInterval(refreshPosition, 200)
+        positionCleanup = () => { try { window.clearInterval(ti) } catch {} }
+      }
+    } catch {
+      // ResizeObserver / setInterval 不可用时静默退化:仍可在 close 时清理
+      positionCleanup = null
+    }
+
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
     inner.style.background = 'var(--wysiwyg-bg)'
@@ -2290,20 +2598,37 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
 
     const header = document.createElement('div')
     header.style.display = 'flex'
-    header.style.justifyContent = 'flex-end'
+    header.style.justifyContent = 'space-between'
+    header.style.alignItems = 'center'
     header.style.marginBottom = '4px'
+
+    // PR-2 A3: 块级↔行内互转按钮(仅当 schema 同时支持两种类型时显示)
+    const convertBtn = document.createElement('button')
+    convertBtn.type = 'button'
+    try {
+      const viewProbe: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+      if (viewProbe) {
+        const schema = viewProbe.state?.schema
+        const hasBoth = schema?.nodes?.['math_inline'] && schema?.nodes?.['math_block']
+        convertBtn.style.display = hasBoth ? '' : 'none'
+      } else {
+        convertBtn.style.display = 'none'
+      }
+    } catch { convertBtn.style.display = 'none' }
+    convertBtn.textContent = isBlock ? '→ 行内' : '→ 块级'
+    convertBtn.title = isBlock ? '转换为行内公式' : '转换为块级公式'
 
     const delBtn = document.createElement('button')
     delBtn.type = 'button'
     delBtn.textContent = 'Delete'
 
+    header.appendChild(convertBtn)
     header.appendChild(delBtn)
     inner.appendChild(header)
 
     const ta = document.createElement('textarea')
-    const placeholder = '在此输入Katex公式'
-    const displayCode = (isBlock && isNew && !code) ? placeholder : code
-    ta.value = (isBlock ? ('$$\n' + (displayCode || '') + '\n$$') : ('$' + (displayCode || '') + '$'))
+    // B5: 直接从 dataset.value 读取原始 latex,不再回填 $$...$$ / $...$ 包装
+    ta.value = code
     ta.style.width = '100%'
     // 根据公式类型与渲染高度估算一个更宽松的编辑高度，避免复杂公式被挤在两行内
     const baseLines = isBlock ? 4 : 3
@@ -2318,29 +2643,51 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
 
     inner.appendChild(ta)
 
-    // 统一关闭逻辑：移除覆盖层并解绑文档级事件
-    let docMouseDownHandler: ((ev: MouseEvent) => void) | null = null
+    // B5: 新建空块时,在 textarea 上方放一个占位提示(单独 div,不污染 textarea 值)
+    const showPlaceholder = isBlock && isNew && !code
+    const ph = document.createElement('div')
+    ph.textContent = '在此输入Katex公式'
+    ph.style.fontSize = '12px'
+    ph.style.color = 'var(--wysiwyg-muted, #888)'
+    ph.style.marginBottom = '2px'
+    ph.style.pointerEvents = 'none'
+    if (showPlaceholder) inner.appendChild(ph)
+
+    // B2: 在 try 入口处立即申请编辑锁,所有退出路径都通过 closeOverlay 释放
+    const releaseEditLock = acquireEditLock()
+    // B6: 浮层打开期间,阻止 scheduleMathBlockReparse 重放文档
+    _mathEditingActive = true
+    let _overlayClosed = false
+    // 统一关闭逻辑：移除覆盖层并释放编辑锁
     const closeOverlay = () => {
+      if (_overlayClosed) return
+      _overlayClosed = true
       try { ov?.removeChild(wrap) } catch {}
-      if (docMouseDownHandler) {
-        try { document.removeEventListener('mousedown', docMouseDownHandler, true) } catch {}
-        docMouseDownHandler = null
-      }
+      try { if (positionCleanup) positionCleanup() } catch {}
+      try { releaseEditLock() } catch {}
+      _mathEditingActive = false
     }
+    // B2: 任何 throw 路径都通过 finally 兜底释放锁,避免 editor 永久冻结
+    try {
 
     const apply = () => {
-      let v = ta.value
-      v = String(v || '').trim()
+      // B5: 用户在 textarea 中的输入即为最终 latex,不再做 regex 去包装
+      const v = String(ta.value || '')
       const isBlk = (mathEl.dataset?.type === 'math_block' || mathEl.tagName === 'DIV')
-      if (isBlk) {
-        const m = v.match(/^\s*\$\$\s*[\r\n]?([\s\S]*?)\s*[\r\n]?\$\$\s*$/)
-        if (m) v = m[1]
-      } else {
-        const m = v.match(/^\s*\$([\s\S]*?)\$\s*$/)
-        if (m) v = m[1]
+      // B3: 把 updateMilkdownMathFromDom 的 PM 异常显式捕到 overlay 错误条
+      // 失败时不关闭浮层,允许用户修正后重试
+      let resultView: any = null
+      try {
+        resultView = updateMilkdownMathFromDom(mathEl, v, isBlk, cachedFrom, cachedTo)
+      } catch (err) {
+        try { showOverlayError(wrap, err) } catch {}
+        return
       }
-      // 更新公式并在块级公式后插入新段落（使用缓存的位置信息）
-      const resultView = updateMilkdownMathFromDom(mathEl, v, isBlk, cachedFrom, cachedTo)
+      // 成功:清理错误条 + 关闭浮层
+      try {
+        const h = _overlayErrHandles.get(wrap)
+        h?.clear()
+      } catch {}
       closeOverlay()
       // 恢复编辑器焦点
       if (resultView) {
@@ -2353,6 +2700,7 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     ta.addEventListener('keydown', (ev) => {
       const kev = ev as KeyboardEvent
       if (kev.key === 'Escape') {
+        kev.preventDefault()
         closeOverlay()
         // 恢复编辑器焦点
         const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
@@ -2364,18 +2712,14 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
         apply()
       }
     })
-    // 文档级点击检测：点击覆盖层外部时自动应用并关闭；点击 Delete / 文本框等内部元素则不干预
-    docMouseDownHandler = (ev: MouseEvent) => {
-      try {
-        const t = ev.target as HTMLElement | null
-        if (!t) return
-        // 点击在覆盖层内部：交给内部按钮 / 文本框处理
-        if (wrap.contains(t)) return
-        // 点击在外部：应用当前输入并关闭编辑框
-        apply()
-      } catch {}
-    }
-    try { document.addEventListener('mousedown', docMouseDownHandler, true) } catch {}
+    // B3: 用 textarea 的 focusout 替代文档级 mousedown 捕获
+    //     当焦点离开 textarea 且新焦点不在 overlay 内时,自动 apply
+    ta.addEventListener('focusout', (ev) => {
+      const fe = ev as FocusEvent
+      const next = fe.relatedTarget as Node | null
+      if (next && wrap.contains(next)) return // 焦点仍停在 overlay 内,不关闭
+      apply()
+    })
 
     let deleteArmed = false
     const resetDeleteState = () => {
@@ -2395,6 +2739,19 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
       deleteWysiwygNodeByDom(mathEl, ['math_inline', 'math_block'])
       closeOverlay()
     })
+    // PR-2 A3: 块级↔行内互转
+    convertBtn.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      try {
+        const ok = convertMathNodeType(mathEl, isBlock ? 'math_inline' : 'math_block')
+        if (ok) {
+          // 转换后节点已被替换,关闭当前浮层;新节点会触发 NodeView 重新创建
+          closeOverlay()
+        }
+      } catch (err) {
+        try { showOverlayError(wrap, err) } catch {}
+      }
+    })
     // 删除按钮失焦时仅重置确认状态，不再负责关闭编辑框（关闭由文档级点击和 apply 控制）
     delBtn.addEventListener('blur', (ev) => {
       const related = (ev as FocusEvent).relatedTarget as HTMLElement | null
@@ -2406,8 +2763,498 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     wrap.appendChild(inner)
     ov?.appendChild(wrap)
     setTimeout(() => { try { ta.focus(); ta.select() } catch {} }, 0)
+    } finally {
+      // B2: 任何 throw 路径都保证释放锁并清掉 _mathEditingActive
+      if (!_overlayClosed) {
+        try { releaseEditLock() } catch {}
+        _mathEditingActive = false
+      }
+    }
   } catch {}
 }
+
+// Mermaid 浮层源码编辑 (B7 入口)
+// 通过 mermaid NodeView 的 dblclick 事件触发,在图表容器下方弹出 textarea 浮层。
+// 编辑期间冻结整个编辑器 (避免 PM 事务破坏 cached 位置);
+// Esc 取消,Ctrl/Cmd+Enter 或 focusout 自动应用。
+function enterMermaidSourceEdit(domEl: HTMLElement) {
+  try {
+    const wrapper = (domEl.closest('.mermaid-node-wrapper') as HTMLElement) || null
+    const ov = ensureOverlayHost()
+    if (!ov) return
+
+    // 优先从 PM 文档直接拿 code_block 节点的源码 + 位置(避开 DOM 节点类型
+    // 不匹配的问题:NodeView 的 preWrapper 不带 data-language 属性)
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    let cachedFrom = -1, cachedTo = -1
+    let initialCode = ''
+    let anchorEl: HTMLElement | null = wrapper || domEl
+    if (view) {
+      try {
+        const state = view.state
+        // 先尝试用 domEl 找位置
+        let pos: number | null = null
+        try { pos = view.posAtDOM(domEl, 0) } catch {}
+        if (pos == null && wrapper) {
+          try { pos = view.posAtDOM(wrapper, 0) } catch {}
+        }
+        if (typeof pos === 'number' && pos >= 0) {
+          const $pos = state.doc.resolve(pos)
+          for (let d = $pos.depth; d >= 0; d--) {
+            const node = $pos.node(d)
+            if (node.type?.name === 'code_block') {
+              cachedFrom = $pos.before(d)
+              cachedTo = $pos.after(d)
+              initialCode = String(node.textContent || '')
+              break
+            }
+          }
+        }
+      } catch {}
+    }
+    // PM 路径没拿到源码时,降级到 DOM 读取(老路径,可能因 display:none 拿到空字符串)
+    if (!initialCode && wrapper) {
+      const anyPre = wrapper.querySelector('pre') as HTMLElement | null
+      if (anyPre) {
+        const anyCode = anyPre.querySelector('code') as HTMLElement | null
+        initialCode = (anyCode?.textContent ?? anyPre.textContent ?? '').toString()
+        anchorEl = anyPre
+      }
+    }
+
+    // 冻结编辑器 (避免浮层打开期间 PM 文档被修改,导致 cachedFrom/cachedTo 失效)
+    const releaseEditLock = acquireEditLock()
+    let _overlayClosed = false
+
+    // 位置:放在图表下方,沿用 anchor 元素的位置/宽度
+    const hostRc = (_root as HTMLElement).getBoundingClientRect()
+    const anchorRc = (anchorEl || wrapper || domEl).getBoundingClientRect()
+    const marginX = 12
+    const finalWidth = Math.max(280, Math.min(hostRc.width - marginX * 2, anchorRc.width || 320))
+
+    // 构建浮层 (结构参考 ov-katex)
+    const wrap = document.createElement('div')
+    wrap.className = 'ov-mermaid-source'
+    wrap.style.position = 'absolute'
+    wrap.style.pointerEvents = 'none'
+    wrap.style.zIndex = '20'
+    wrap.style.width = finalWidth + 'px'
+    wrap.style.left = Math.max(0, Math.round((anchorRc.left - hostRc.left) + (anchorRc.width - finalWidth) / 2)) + 'px'
+    wrap.style.top = Math.max(8, Math.round(anchorRc.bottom - hostRc.top + 8)) + 'px'
+
+    const inner = document.createElement('div')
+    inner.style.pointerEvents = 'auto'
+    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.borderRadius = '4px'
+    inner.style.padding = '6px'
+    inner.style.boxSizing = 'border-box'
+    inner.style.display = 'flex'
+    inner.style.flexDirection = 'column'
+    inner.style.gap = '4px'
+    inner.style.boxShadow = '0 2px 10px rgba(0,0,0,0.18)'
+
+    const header = document.createElement('div')
+    header.style.display = 'flex'
+    header.style.justifyContent = 'space-between'
+    header.style.alignItems = 'center'
+    header.style.fontSize = '12px'
+    header.style.opacity = '0.75'
+    const hint = document.createElement('span')
+    hint.textContent = '编辑 Mermaid 源码 (Esc 取消, Ctrl/Cmd+Enter 应用)'
+    const delBtn = document.createElement('button')
+    delBtn.type = 'button'
+    delBtn.textContent = 'Delete'
+    header.appendChild(hint)
+    header.appendChild(delBtn)
+    inner.appendChild(header)
+
+    const ta = document.createElement('textarea')
+    ta.value = initialCode
+    ta.spellcheck = false
+    ta.style.width = '100%'
+    ta.style.minHeight = '160px'
+    ta.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+    ta.style.fontSize = '13px'
+    ta.style.lineHeight = '1.5'
+    ta.style.resize = 'vertical'
+    ta.style.boxSizing = 'border-box'
+    inner.appendChild(ta)
+
+    const errBox = document.createElement('div')
+    errBox.style.color = '#c0392b'
+    errBox.style.fontSize = '12px'
+    errBox.style.minHeight = '14px'
+    errBox.style.whiteSpace = 'pre-wrap'
+    errBox.style.display = 'none'
+    inner.appendChild(errBox)
+
+    wrap.appendChild(inner)
+    ov.appendChild(wrap)
+
+    const showOverlayError = (_w: HTMLElement, e: any) => {
+      // B7 stub: overlayError.ts 尚未存在,本地先打 console
+      try { console.error('[mermaid overlay]', e) } catch {}
+    }
+    const focusEditor = () => {
+      const v: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+      if (v) setTimeout(() => { try { v.focus() } catch {} }, 30)
+    }
+    const closeOverlay = () => {
+      if (_overlayClosed) return
+      _overlayClosed = true
+      try { ov.removeChild(wrap) } catch {}
+      try { releaseEditLock() } catch {}
+    }
+
+    let applied = false
+    const apply = () => {
+      if (applied) return
+      applied = true
+      const newCode = ta.value
+      // 1) 写回 DOM(如果存在)供后续 renderMermaidNow 读出
+      try {
+        const target = anchorEl?.querySelector?.('code') || anchorEl
+        if (target) (target as HTMLElement).textContent = newCode
+      } catch {}
+      // 2) 让缓存失效,触发下一次 renderMermaidNow 重新渲染
+      try { if (anchorEl) _renderedMermaid.delete(anchorEl as HTMLElement) } catch {}
+      // 3) 派发 PM 事务,更新文档中的 code_block 内容
+      try {
+        const v: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (v) {
+          const state = v.state
+          const schema = state.schema
+          const codeBlockType = schema.nodes['code_block']
+          if (codeBlockType) {
+            let from = cachedFrom, to = cachedTo
+            if ((from < 0 || to < 0) && anchorEl) {
+              try {
+                const p = v.posAtDOM(anchorEl, 0)
+                if (typeof p === 'number' && p >= 0) {
+                  const $p = state.doc.resolve(p)
+                  for (let d = $p.depth; d >= 0; d--) {
+                    const node = $p.node(d)
+                    if (node.type === codeBlockType) {
+                      from = $p.before(d)
+                      to = $p.after(d)
+                      break
+                    }
+                  }
+                }
+              } catch {}
+            }
+            if (from >= 0 && to > from) {
+              const lang = (anchorEl?.getAttribute('data-language') || 'mermaid')
+              const newNode = codeBlockType.create(
+                { language: lang },
+                newCode ? schema.text(newCode) : null
+              )
+              const tr = state.tr.replaceWith(from, to, newNode)
+              v.dispatch(tr)
+            }
+          }
+        }
+      } catch (e) {
+        try { showOverlayError(wrap, e) } catch {}
+      }
+      // 4) 触发 mermaid 重新渲染 (浮层已关闭,渲染发生在 ov-mermaid 覆盖层)
+      try { scheduleMermaidRender() } catch {}
+      closeOverlay()
+      focusEditor()
+    }
+
+    const cancel = () => {
+      if (applied) return
+      applied = true
+      closeOverlay()
+      focusEditor()
+    }
+
+    // 键盘: Esc 取消, Ctrl/Cmd+Enter 应用
+    ta.addEventListener('keydown', (ev) => {
+      const kev = ev as KeyboardEvent
+      if (kev.key === 'Escape') {
+        kev.preventDefault()
+        kev.stopPropagation()
+        cancel()
+        return
+      }
+      if (kev.key === 'Enter' && (kev.ctrlKey || kev.metaKey)) {
+        kev.preventDefault()
+        apply()
+      }
+    })
+
+    // focusout: 焦点离开浮层时自动应用 (任务要求 focusout 触发,非 mousedown)
+    wrap.addEventListener('focusout', (ev) => {
+      const next = (ev as FocusEvent).relatedTarget as HTMLElement | null
+      if (next && wrap.contains(next)) return // 焦点仍停在浮层内
+      // 微小延迟,避免和点击其他浮层按钮竞争
+      setTimeout(() => { try { apply() } catch {} }, 0)
+    })
+
+    // Delete 按钮: 第一次进入待确认,第二次真正删除
+    let armed = false
+    delBtn.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      if (!armed) {
+        armed = true
+        delBtn.textContent = '确认删除'
+        return
+      }
+      try {
+        const v: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (v && anchorEl) {
+          const p = v.posAtDOM(anchorEl, 0)
+          if (typeof p === 'number' && p >= 0) {
+            const state = v.state
+            const $p = state.doc.resolve(p)
+            for (let d = $p.depth; d >= 0; d--) {
+              const node = $p.node(d)
+              if (node.type?.name === 'code_block') {
+                const from = $p.before(d)
+                const to = $p.after(d)
+                v.dispatch(state.tr.delete(from, to))
+                break
+              }
+            }
+          }
+        }
+      } catch (e) {
+        try { showOverlayError(wrap, e) } catch {}
+      }
+      applied = true
+      closeOverlay()
+      focusEditor()
+    })
+    delBtn.addEventListener('blur', () => {
+      if (delBtn.textContent === '确认删除') {
+        setTimeout(() => {
+          if (document.activeElement !== delBtn) {
+            armed = false
+            delBtn.textContent = 'Delete'
+          }
+        }, 100)
+      }
+    })
+
+    setTimeout(() => { try { ta.focus(); ta.select() } catch {} }, 0)
+  } catch (e) {
+    try { console.error('[mermaid overlay]', e) } catch {}
+  }
+}
+
+// 暴露给 mermaid NodeView (B7 入口),供双击事件调用
+try { (window as any).__mdeditorEnterMermaidSourceEdit = enterMermaidSourceEdit } catch {}
+// 暴露给表格 hover 编辑按钮(PR-2 A2)与 dblclick handler
+try { (window as any).__mdeditorEnterTableSourceEdit = enterTableSourceEdit } catch {}
+
+// PR-2 A1: 暴露给 math NodeView 的铅笔按钮
+try { (window as any).__mdeditorEnterLatexSourceEdit = enterLatexSourceEdit } catch {}
+
+// B8: HTML 表格源码编辑
+// 说明:htmlTable 插件在解析阶段已把 <table> HTML 转成 GFM Markdown 并交给 Milkdown 接管,
+//      原 HTML 源不再保留。MVP 方案:在打开浮层时,把当前渲染的 <table> DOM 序列化为 HTML,
+//      作为"原始源码"回填到 textarea;保存时把新 HTML 转成 Markdown 替换原 table 节点。
+//      若当前节点不支持转换(rowspan/colspan/嵌套),回退成序列化后的简化 HTML。
+function serializeTableEl(tableEl: HTMLElement): string {
+  try {
+    const clone = tableEl.cloneNode(true) as HTMLElement
+    // 去掉 ProseMirror / 编辑态残留标记
+    try { clone.removeAttribute('contenteditable') } catch {}
+    try { clone.querySelectorAll('[contenteditable]').forEach((el) => el.removeAttribute('contenteditable')) } catch {}
+    return clone.outerHTML
+  } catch {
+    return ''
+  }
+}
+
+function updateMilkdownTableFromDom(
+  tableEl: HTMLElement,
+  newHtml: string,
+  cachedFrom: number,
+  cachedTo: number
+): { ok: boolean; view: any } {
+  try {
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    if (!view) return { ok: false, view: null }
+    let from = cachedFrom, to = cachedTo
+    if (from < 0 || to < 0) {
+      let pos: number | null = null
+      try { pos = view.posAtDOM(tableEl, 0) } catch {}
+      if (pos == null || typeof pos !== 'number') return { ok: false, view }
+      const state = view.state
+      const $pos = state.doc.resolve(pos)
+      for (let d = $pos.depth; d > 0; d--) {
+        const name = $pos.node(d)?.type?.name
+        if (name === 'table') {
+          from = $pos.before(d)
+          to = $pos.after(d)
+          break
+        }
+      }
+    }
+    if (from < 0 || to < 0 || from === to) return { ok: false, view }
+
+    // 二次尝试:转换失败时回退为整段 GFM 文本替换
+    const nextMd = htmlToMarkdown(String(newHtml || ''))
+    if (!nextMd || !nextMd.trim()) return { ok: false, view }
+
+    const state = view.state
+    // 走标准路径:删除 table 节点后,在原位置插入由 Markdown 解析得到的 slice
+    // 先解析 Markdown → slice,然后用 replaceRange 替换 table 区间
+    let slice: any = null
+    try {
+      const ctx: any = (_editor as any).ctx
+      const p = ctx.get(parserCtx)
+      slice = p(nextMd)
+    } catch {}
+    if (!slice) return { ok: false, view }
+
+    let tr = state.tr.replace(from, to, (slice as any).content || slice)
+    view.dispatch(tr.scrollIntoView())
+    return { ok: true, view }
+  } catch (e) {
+    return { ok: false, view: null }
+  }
+}
+
+function enterTableSourceEdit(hitEl: HTMLElement) {
+  try {
+    const tableEl = (hitEl.closest('table') as HTMLElement) || null
+    if (!tableEl) return
+    const ov = ensureOverlayHost()
+    if (!ov) return
+
+    // 缓存位置:避免 overlay 内 DOM 变化后 posAtDOM 失效
+    let cachedFrom = -1, cachedTo = -1
+    try {
+      const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+      if (view) {
+        const pos = view.posAtDOM(tableEl, 0)
+        if (typeof pos === 'number') {
+          const $pos = view.state.doc.resolve(pos)
+          for (let d = $pos.depth; d > 0; d--) {
+            if ($pos.node(d)?.type?.name === 'table') {
+              cachedFrom = $pos.before(d)
+              cachedTo = $pos.after(d)
+              break
+            }
+          }
+        }
+      }
+    } catch {}
+
+    const sourceHtml = serializeTableEl(tableEl)
+    const hostRc = (_root as HTMLElement).getBoundingClientRect()
+    const rc = tableEl.getBoundingClientRect()
+    const hostWidth = hostRc.width || 0
+    const marginX = 16
+    const baseWidth = rc.width || 0
+    const minWidth = Math.max(360, baseWidth + 40)
+    const maxWidth = Math.max(280, hostWidth - marginX * 2)
+    const finalWidth = Math.min(maxWidth, minWidth)
+
+    const wrap = document.createElement('div')
+    wrap.className = 'ov-html-table'
+    wrap.style.position = 'absolute'
+    wrap.style.pointerEvents = 'none'
+    const centerX = (rc.left - hostRc.left) + (rc.width / 2)
+    let left = centerX - finalWidth / 2
+    left = Math.max(marginX, Math.min(hostWidth - finalWidth - marginX, left))
+    wrap.style.left = Math.max(0, Math.round(left)) + 'px'
+    wrap.style.top = Math.max(8, Math.round(rc.bottom - hostRc.top + 8)) + 'px'
+    wrap.style.width = Math.max(10, finalWidth) + 'px'
+
+    const inner = document.createElement('div')
+    inner.style.pointerEvents = 'auto'
+    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.borderRadius = '4px'
+    inner.style.padding = '6px'
+    inner.style.boxSizing = 'border-box'
+    inner.style.display = 'flex'
+    inner.style.flexDirection = 'column'
+    inner.style.rowGap = '4px'
+
+    const hint = document.createElement('div')
+    hint.style.fontSize = '12px'
+    hint.style.opacity = '0.7'
+    hint.textContent = '编辑 HTML 表格源码(Ctrl+Enter 应用,Esc 取消)'
+    inner.appendChild(hint)
+
+    const ta = document.createElement('textarea')
+    ta.value = sourceHtml
+    ta.style.width = '100%'
+    ta.style.minHeight = Math.max(160, Math.round(rc.height || 0) + 24) + 'px'
+    ta.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+    ta.style.fontSize = '13px'
+    ta.style.lineHeight = '1.45'
+    ta.style.resize = 'vertical'
+    ta.style.boxSizing = 'border-box'
+    inner.appendChild(ta)
+
+    wrap.appendChild(inner)
+    ov.appendChild(wrap)
+
+    const errHandle = attachOverlayError(wrap)
+    const releaseEditLock = acquireEditLock()
+    let _closed = false
+    const closeOverlay = () => {
+      if (_closed) return
+      _closed = true
+      try { ov.removeChild(wrap) } catch {}
+      try { releaseEditLock() } catch {}
+    }
+
+    const apply = () => {
+      const nextHtml = String(ta.value || '')
+      if (!nextHtml.trim()) {
+        errHandle.setError('表格源码不能为空')
+        try { ta.focus() } catch {}
+        return
+      }
+      try {
+        const result = updateMilkdownTableFromDom(tableEl, nextHtml, cachedFrom, cachedTo)
+        if (!result.ok) {
+          errHandle.setError('无法应用:仅支持简单 HTML 表格(无 rowspan/colspan/嵌套)')
+          return
+        }
+        errHandle.clear()
+        closeOverlay()
+        if (result.view) setTimeout(() => { try { result.view.focus() } catch {} }, 50)
+      } catch (e) {
+        try { errHandle.setError(e) } catch {}
+      }
+    }
+
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault()
+        closeOverlay()
+        const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (view) setTimeout(() => { try { view.focus() } catch {} }, 50)
+        return
+      }
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+        ev.preventDefault()
+        apply()
+      }
+    }
+    ta.addEventListener('keydown', onKey)
+    ta.addEventListener('focusout', (ev) => {
+      const fe = ev as FocusEvent
+      const next = fe.relatedTarget as Node | null
+      if (next && wrap.contains(next)) return
+      apply()
+    })
+
+    setTimeout(() => { try { ta.focus(); ta.select() } catch {} }, 0)
+  } catch (e) {
+    try { console.error('[html-table overlay]', e) } catch {}
+  }
+}
+
 function renderMermaidNow() {
   console.log('[DEBUG] renderMermaidNow 被调用')
   const host = getHost()

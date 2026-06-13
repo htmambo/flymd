@@ -5,6 +5,7 @@ import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { normalizeKatexLatexForInline } from '../../../utils/katexNormalize'
 import { isInputPendingCompat } from '../../../utils/platform'
+import { attachOverlayError } from '../overlayError'
 
 // 所见模式的大文档性能关键点：不要在主线程里同步渲染一堆 KaTeX。
 // 这里采用“空闲时渲染 + 有输入就让路 + 小公式缓存”的策略，避免右键/按钮点击被卡住。
@@ -89,6 +90,75 @@ function observeMathOnce(el: Element, onVisible: () => void) {
   }
 }
 
+// PR-2 A1: 公式节点编辑按钮(铅笔图标)
+// 默认隐藏,hover 父元素时显示,点击调用 window.__mdeditorEnterLatexSourceEdit
+// 通过 window 桥接避免 NodeView 静态依赖编辑器实例(同 mermaid 模式)
+// PR-2 A4: 节点内嵌错误条 — 复用 overlayError.handle,默认隐藏,渲染失败时显示
+// 给 host 附加一个 OverlayErrorHandle,WeakMap 缓存,避免重复附加
+const _inlineErrHandles = new WeakMap<HTMLElement, ReturnType<typeof attachOverlayError>>()
+function ensureInlineErrorOnHandle(host: HTMLElement): ReturnType<typeof attachOverlayError> {
+  let h = _inlineErrHandles.get(host)
+  if (!h) {
+    h = attachOverlayError(host as unknown as HTMLDivElement)
+    try {
+      h.el.classList.add('ov-error-bar-embedded')
+      h.el.style.position = 'absolute'
+      h.el.style.top = '-22px'
+      h.el.style.left = '0'
+      h.el.style.right = '0'
+      h.el.style.zIndex = '6'
+      h.el.style.marginBottom = '0'
+    } catch {}
+    _inlineErrHandles.set(host, h)
+  }
+  return h
+}
+
+function showInlineErrorOn(host: HTMLElement, e: unknown): void {
+  try { ensureInlineErrorOnHandle(host).setError(e) } catch {}
+}
+
+function clearInlineErrorOn(host: HTMLElement): void {
+  try { ensureInlineErrorOnHandle(host).clear() } catch {}
+}
+function createMathEditButton(parent: HTMLElement, type: 'math_inline' | 'math_block'): HTMLButtonElement {
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'math-edit-btn'
+  btn.dataset.type = type
+  btn.setAttribute('aria-label', '编辑公式源码')
+  btn.setAttribute('title', '编辑公式源码')
+  // 内联 SVG 铅笔图标
+  btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3l8.5-8.5z"/><path d="M10 3l3 3"/></svg>'
+  btn.addEventListener('mousedown', (e) => {
+    // 阻止 PM 选中丢失
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  btn.addEventListener('click', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      const fn = (window as any).__mdeditorEnterLatexSourceEdit
+      if (typeof fn === 'function') fn(parent)
+    } catch (err) {
+      try { console.error('[math edit btn]', err) } catch {}
+    }
+  })
+  return btn
+}
+
+// PR-2 UX: 在公式节点内添加 hover 提示文字
+function appendEditHint(host: HTMLElement, label: string): void {
+  try {
+    if (host.querySelector(':scope > .wysiwyg-edit-hint')) return
+    const hint = document.createElement('span')
+    hint.className = 'wysiwyg-edit-hint'
+    hint.textContent = label
+    host.appendChild(hint)
+  } catch {}
+}
+
 // Math Inline NodeView
 class MathInlineNodeView implements NodeView {
   dom: HTMLElement
@@ -96,6 +166,7 @@ class MathInlineNodeView implements NodeView {
   private katexContainer: HTMLElement
   private node: Node
   private renderSeq = 0
+  private editBtn: HTMLButtonElement | null = null
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -122,6 +193,10 @@ class MathInlineNodeView implements NodeView {
     this.katexContainer.classList.add('katex-display-inline')
     this.dom.appendChild(this.katexContainer)
 
+    // PR-2 A1: 铅笔按钮 — hover 时显示,点击进入源码编辑
+    this.editBtn = createMathEditButton(this.dom, 'math_inline')
+    appendEditHint(this.dom, '双击或点 ✎ 编辑')
+
     // 初始渲染
     this.scheduleRender()
   }
@@ -143,8 +218,12 @@ class MathInlineNodeView implements NodeView {
 
         // 使用 renderToString + innerHTML，减少 DOM 操作开销；并对小公式做缓存。
         this.katexContainer.innerHTML = renderKatexToHtmlCached(katex, value, false)
-      } catch {
+        // PR-2 A4: 渲染成功,清掉内嵌错误条
+        clearInlineErrorOn(this.dom)
+      } catch (e) {
         try { this.katexContainer.textContent = this.node.textContent || '' } catch {}
+        // PR-2 A4: 渲染失败,在 dom 顶部显示内嵌错误条
+        showInlineErrorOn(this.dom, e)
       }
     }
 
@@ -175,6 +254,10 @@ class MathInlineNodeView implements NodeView {
     // 节点被移除时取消观察，避免观察器长期持有无用目标。
     try { _mathIOHandlers.delete(this.dom) } catch {}
     try { _mathIO?.unobserve(this.dom) } catch {}
+    if (this.editBtn) {
+      try { this.editBtn.remove() } catch {}
+      this.editBtn = null
+    }
   }
 }
 
@@ -185,6 +268,7 @@ class MathBlockNodeView implements NodeView {
   private katexContainer: HTMLElement
   private node: Node
   private renderSeq = 0
+  private editBtn: HTMLButtonElement | null = null
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -212,6 +296,10 @@ class MathBlockNodeView implements NodeView {
     this.katexContainer.style.textAlign = 'center'
     this.dom.appendChild(this.katexContainer)
 
+    // PR-2 A1: 铅笔按钮 — hover 时显示,点击进入源码编辑
+    this.editBtn = createMathEditButton(this.dom, 'math_block')
+    appendEditHint(this.dom, '双击或点 ✎ 编辑')
+
     // 初始渲染
     this.scheduleRender()
   }
@@ -222,14 +310,20 @@ class MathBlockNodeView implements NodeView {
       if (seq !== this.renderSeq) return
       if (isInputPendingCompat()) { requestIdleCompat(() => { void doRender() }, 200); return }
       let katex: any
-      try { katex = await ensureKatexReady() } catch { return }
+      try { katex = await ensureKatexReady() } catch (e) {
+        try { showInlineErrorOn(this.dom, e) } catch {}
+        return
+      }
       if (seq !== this.renderSeq) return
       try {
         const valueRaw = this.node.attrs.value || this.node.textContent || ''
         const value = normalizeKatexLatexForInline(valueRaw)
         try { (this.dom as HTMLElement).dataset.value = valueRaw } catch {}
         this.katexContainer.innerHTML = renderKatexToHtmlCached(katex, value, true)
-      } catch {
+        // PR-2 A4: 渲染成功,清掉错误条
+        try { clearInlineErrorOn(this.dom) } catch {}
+      } catch (e) {
+        try { showInlineErrorOn(this.dom, e) } catch {}
         try { this.katexContainer.textContent = this.node.textContent || '' } catch {}
       }
     }
@@ -259,6 +353,10 @@ class MathBlockNodeView implements NodeView {
   destroy() {
     try { _mathIOHandlers.delete(this.dom) } catch {}
     try { _mathIO?.unobserve(this.dom) } catch {}
+    if (this.editBtn) {
+      try { this.editBtn.remove() } catch {}
+      this.editBtn = null
+    }
   }
 }
 

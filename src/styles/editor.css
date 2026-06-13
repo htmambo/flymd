@@ -365,6 +365,25 @@ body.dark-mode .editor-line-number.active {
 #md-wysiwyg-root .overlay-host .ov-mermaid > div,
 #md-wysiwyg-root .overlay-host .ov-katex > div,
 #md-wysiwyg-root .overlay-host .ov-codecopy > .code-copy { pointer-events: auto; }
+/* 所见模式浮层错误条：源码编辑 apply 失败时提示 */
+.ov-error-bar {
+  background: #fde68a;
+  color: #78350f;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  display: none;
+  word-break: break-word;
+  pointer-events: auto;
+}
+.ov-error-bar[data-visible="1"] { display: block; }
+body.dark-mode .ov-error-bar {
+  background: #422006;
+  color: #fde68a;
+  border-color: #b45309;
+}
 /* 所见模式：隔离 mermaid DOM 子树，避免全局段落/排版样式影响节点标签，导致中文最后一个字被裁剪 */
 #md-wysiwyg-root .mermaid-chart-display foreignObject,
 #md-wysiwyg-root .ov-mermaid .mmd-figure foreignObject {
@@ -754,4 +773,84 @@ body > .block-menu { display: none !important; }
 }
 .container.wysiwyg-v2 .ProseMirror blockquote p {
   white-space: pre-line;
+}
+
+/* PR-2 A1: 公式节点编辑按钮(铅笔),默认隐藏,hover 父元素显示 */
+.math-edit-btn {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--wysiwyg-bg, #fff);
+  border: 1px solid var(--border-color, #d0d0d0);
+  color: var(--text-color, #555);
+  cursor: pointer;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  opacity: 0.85;
+  transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.math-inline-wrapper:hover > .math-edit-btn,
+.math-block-wrapper:hover > .math-edit-btn,
+.math-inline-wrapper:hover > .math-edit-btn {
+  opacity: 1;
+  transform: scale(1.1);
+}
+.math-edit-btn {
+  display: flex;
+  opacity: 0.35;
+}
+.math-edit-btn:hover {
+  opacity: 1;
+}
+
+/* PR-2 A2: Mermaid 节点编辑按钮(图表右下角,默认低不透明度,hover 高亮) */
+.mermaid-edit-btn {
+  display: flex;
+  opacity: 0.4;
+}
+.mermaid-node-wrapper:hover > .mermaid-edit-btn {
+  opacity: 1;
+  transform: scale(1.1);
+}
+.mermaid-edit-btn:hover { transform: scale(1.1); }
+.ov-table-edit-btn {
+  display: flex;
+  opacity: 0.4;
+}
+.ov-table-edit-btn:hover { transform: scale(1.1); opacity: 1; }
+
+/* PR-2 A4: 内嵌错误条 — 与浮层共享样式,但强制 absolute 定位避免破坏 inline 布局 */
+.ov-error-bar.ov-error-bar-embedded {
+  margin-bottom: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+/* PR-2 UX: 在公式/图表节点内显示编辑提示,hover 时显示,平时隐藏 */
+.wysiwyg-edit-hint {
+  display: none;
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: 11px;
+  color: #888;
+  background: var(--wysiwyg-bg, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 3px;
+  padding: 1px 6px;
+  z-index: 4;
+  pointer-events: none;
+  font-style: italic;
+}
+.math-inline-wrapper:hover > .wysiwyg-edit-hint,
+.math-block-wrapper:hover > .wysiwyg-edit-hint,
+.mermaid-node-wrapper:hover > .wysiwyg-edit-hint {
+  display: block;
 }
