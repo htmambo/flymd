@@ -3,7 +3,7 @@
 
 import { t } from '../i18n'
 import { getLibraries, getActiveLibraryId, applyLibrariesSettings, getLibSwitcherPosition, setLibSwitcherPosition, upsertLibrary, renameLibrary, removeLibrary, type LibSwitcherPosition } from '../utils/library'
-import { getWebdavSyncConfigForLibrary, setWebdavSyncConfigForLibrary, openWebdavSyncDialog } from '../extensions/webdavSync'
+
 import { getFolderTemplates, saveFolderTemplates, scanLibraryForFoldersAndTemplates, type FolderTemplateConfig } from '../core/folderTemplates'
 import { DEFAULT_METADATA_LABELS, normalizeMetadataLabelMap, parseMetadataLabelMapText, stringifyMetadataLabelMap, type MetadataLabelMap } from '../core/metadataLabels'
 import { openRenameDialog } from './linkDialogs'
@@ -206,6 +206,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
     const lib = libs0.find(x => x.id === id)
     const cfg = await (async () => {
       try {
+        const { getWebdavSyncConfigForLibrary } = await import('../extensions/webdavSync')
         return await getWebdavSyncConfigForLibrary({ id, name: lib?.name, root: lib?.root })
       } catch {
         return null as any
@@ -794,6 +795,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   overlay.querySelector('#lib-settings-open-webdav')?.addEventListener('click', async () => {
     try {
       close()
+      const { openWebdavSyncDialog } = await import('../extensions/webdavSync')
       await openWebdavSyncDialog()
     } catch {}
   })
@@ -829,6 +831,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
         } else {
           next.rootPath = normalizeRootPathInput(rawInput)
         }
+        const { setWebdavSyncConfigForLibrary } = await import('../extensions/webdavSync')
         await setWebdavSyncConfigForLibrary(libId, next)
       }
 

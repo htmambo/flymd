@@ -4,7 +4,6 @@
  */
 
 import type { CommandPaletteCommand } from '../core/commandPalette'
-import { searchCommandPaletteCommands } from '../core/commandPalette'
 
 const OVERLAY_ID = 'command-palette-overlay'
 const INPUT_ID = 'command-palette-input'
@@ -49,7 +48,7 @@ function ensureOverlay(): HTMLDivElement | null {
     // 输入更新
     _input?.addEventListener('input', () => {
       _selected = 0
-      updateList()
+      void updateList()
     })
 
     // 键盘交互（只在输入框聚焦时处理）
@@ -195,10 +194,11 @@ function renderList(): void {
   } catch {}
 }
 
-function updateList(): void {
+async function updateList(): Promise<void> {
   try {
     if (!_input) return
     const q = _input.value || ''
+    const { searchCommandPaletteCommands } = await import('../core/commandPalette')
     _filtered = searchCommandPaletteCommands(_commands, q, 60)
     _selected = Math.max(0, Math.min(_selected, Math.max(0, _filtered.length - 1)))
     renderList()
@@ -250,7 +250,7 @@ export async function openCommandPalette(): Promise<void> {
     let cmds: CommandPaletteCommand[] = []
     try { cmds = (await p()) || [] } catch { cmds = [] }
     _commands = cmds
-    updateList()
+    await updateList()
   } catch {}
 }
 

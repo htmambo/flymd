@@ -17,7 +17,22 @@ import { getPasteRemoteImagesEnabled } from './core/pasteRemoteImages'
 import type MarkdownIt from 'markdown-it'
 import type { LocalePref } from './i18n'
 // WYSIWYG: 锚点插件与锚点同步（用于替换纯比例同步）
-import { enableWysiwygV2, disableWysiwygV2, wysiwygV2ToggleBold, wysiwygV2ToggleItalic, wysiwygV2ApplyLink, wysiwygV2GetSelectedText, wysiwygV2FindNext, wysiwygV2FindPrev, wysiwygV2ReplaceOne as wysiwygV2ReplaceOneSel, wysiwygV2ReplaceAllInDoc, wysiwygV2ReplaceAll, wysiwygV2HandleListTab, wysiwygV2DeleteTableRow, wysiwygV2DeleteTableColumn } from './wysiwyg/v2/index'
+import {
+  enableWysiwygV2,
+  disableWysiwygV2,
+  wysiwygV2ToggleBold,
+  wysiwygV2ToggleItalic,
+  wysiwygV2ApplyLink,
+  wysiwygV2GetSelectedText,
+  wysiwygV2FindNext,
+  wysiwygV2FindPrev,
+  wysiwygV2ReplaceOne as wysiwygV2ReplaceOneSel,
+  wysiwygV2ReplaceAllInDoc,
+  wysiwygV2ReplaceAll,
+  wysiwygV2HandleListTab,
+  wysiwygV2DeleteTableRow,
+  wysiwygV2DeleteTableColumn,
+} from './wysiwyg/v2/facade'
 import { setWysiwygPreload } from './wysiwyg/v2/silentTransition'
 // Tauri 插件（v2）
 // Tauri 对话框：使用 ask 提供原生确认，避免浏览器 confirm 在关闭事件中失效
@@ -75,9 +90,17 @@ import { ribbonIcons } from './icons'
 import { APP_VERSION } from './core/appInfo'
 import type { UpdateAssetInfo, CheckUpdateResp, UpdateExtra } from './core/updateTypes'
 // htmlToMarkdown 改为按需动态导入（仅在粘贴 HTML 时使用）
-import { initWebdavSync, openWebdavSyncDialog, getWebdavSyncConfig, isWebdavConfiguredForActiveLibrary, syncNow as webdavSyncNow, setOnSyncComplete, openSyncLog as webdavOpenSyncLog, appendSyncLog as webdavAppendSyncLog } from './extensions/webdavSync'
-import { initSpeechTranscribeFeature } from './extensions/speechTranscribe'
-import { initAsrNoteFeature } from './extensions/asrNote'
+import {
+  initWebdavSync,
+  openWebdavSyncDialog,
+  getWebdavSyncConfig,
+  isWebdavConfiguredForActiveLibrary,
+  syncNow as webdavSyncNow,
+  setOnSyncComplete,
+  openSyncLog as webdavOpenSyncLog,
+  appendSyncLog as webdavAppendSyncLog,
+} from './extensions/webdavSyncFacade'
+
 // 平台适配层（Android 支持）
 import { initPlatformIntegration, mobileSaveFile, isMobilePlatform } from './platform-integration'
 import { createImageUploader } from './core/imageUpload'
@@ -201,7 +224,7 @@ import {
   getPluginsMenuItemsSnapshot,
   getPluginDropdownItems,
 } from './extensions/pluginMenu'
-import { buildCommandPaletteCommands } from './core/commandPalette'
+
 import {
   setCommandPaletteProvider,
   openCommandPalette,
@@ -209,7 +232,12 @@ import {
   isCommandPaletteOpen,
 } from './ui/commandPalette'
 import { openLinkDialog, openRenameDialog } from './ui/linkDialogs'
-import { initExtensionsPanel, refreshExtensionsUI as panelRefreshExtensionsUI, showExtensionsOverlay as panelShowExtensionsOverlay, prewarmExtensionsPanel as panelPrewarmExtensionsPanel } from './extensions/extensionsPanel'
+import {
+  initExtensionsPanel,
+  refreshExtensionsUI as panelRefreshExtensionsUI,
+  showExtensionsOverlay as panelShowExtensionsOverlay,
+  prewarmExtensionsPanel as panelPrewarmExtensionsPanel,
+} from './extensions/extensionsPanelFacade'
 import { ensureUpdateOverlay, showUpdateOverlayLinux, showUpdateDownloadedOverlay, showInstallFailedOverlay, loadUpdateExtra, renderUpdateDetailsHTML } from './ui/updateOverlay'
 import { openInBrowser, upMsg } from './core/updateUtils'
 import { initLibraryContextMenu } from './ui/libraryContextMenu'
@@ -8110,7 +8138,7 @@ function bindEvents() {
     await initStore()
     // 初始化扩展管理面板宿主（依赖 store 等全局状态）
     try {
-      initExtensionsPanel({
+      await initExtensionsPanel({
         getStore: () => store,
         pluginNotice,
         showError,
@@ -8182,6 +8210,7 @@ function bindEvents() {
           initPluginsMenu()
           // 桌面端：语音转写（内置模块，入口收纳到“插件”菜单）
           try {
+            const { initSpeechTranscribeFeature } = await import('./extensions/speechTranscribe')
             initSpeechTranscribeFeature({
               getStore: () => store,
               insertAtCursor: (text: string) => { try { editorInsertApi?.insertAtCursor(text) } catch {} },
@@ -8191,6 +8220,7 @@ function bindEvents() {
           } catch {}
           // 桌面端：自动语音笔记（流式 ASR：登录/余额/充值/实时听写）
           try {
+            const { initAsrNoteFeature } = await import('./extensions/asrNote')
             initAsrNoteFeature({
               appVersion: APP_VERSION,
               getStore: () => store,
@@ -8608,6 +8638,7 @@ setPluginsMenuManagerOpener(() => {
 // 命令面板：聚合“扩展菜单 + 右键菜单”入口（不收录依赖 targetElement 的项）
 setCommandPaletteProvider(async () => {
   try {
+    const { buildCommandPaletteCommands } = await import('./core/commandPalette')
     return await buildCommandPaletteCommands({
       getDropdownItems: () => {
         try { return getPluginDropdownItems() || [] } catch { return [] }
