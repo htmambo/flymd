@@ -149,7 +149,6 @@ const pluginRuntimeProxy = new Proxy({} as PluginRuntimeHandles, {
     return value
   },
 }) as PluginRuntimeHandles
-import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
   toggleFocusMode,
@@ -239,7 +238,6 @@ import { ensureUpdateOverlay, showUpdateOverlayLinux, showUpdateDownloadedOverla
 import { openInBrowser, upMsg } from './core/updateUtils'
 import { initLibraryContextMenu } from './ui/libraryContextMenu'
 import { initLibraryVaultList } from './ui/libraryVaultList'
-import { openLibrarySettingsDialog } from './ui/librarySettingsDialog'
 import { showTopMenu, type TopMenuItemSpec } from './ui/topMenu'
 import { createMainTopMenus } from './ui/mainTopMenus'
 import { initCodeCopyEvents } from './ui/codeCopyEvents'
@@ -278,7 +276,6 @@ import { getUiZoom, setUiZoom, applyUiZoom, zoomIn, zoomOut, zoomReset, getPrevi
 import { showZoomBubble, showWidthBubble, NotificationManager, showModeChangeNotification, updateSyncStatus } from './core/uiNotifications'
 import type { NotificationType } from './core/uiNotifications'
 import { initAutoSave, type AutoSaveHandles } from './core/autoSave'
-import { initOnlineAnnouncements } from './core/onlineAnnouncements'
 
 // 滚动条自动隐藏
 import { initAutoHideScrollbar, destroyAutoHideScrollbar, rescanScrollContainers } from './core/scrollbar'
@@ -5651,18 +5648,24 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
   } catch {}
 }
 
-// 快速文件搜索（Quick Switcher）
-const _quickSearch = createQuickSearch({
-  getLibraryRoot: async () => {
-    try { return await getLibraryRoot() } catch { return null }
-  },
-  openFile: async (p: string) => { await openFile2(p) },
-  showError: (msg: string, err?: any) => showError(msg, err),
-  getPluginAPI: (ns: string) => {
-    try { return pluginHost.getPluginAPI(ns) } catch { return null }
-  },
-})
-async function showQuickSearch() { await _quickSearch.show() }
+// 快速文件搜索（Quick Switcher）：延迟初始化，减少入口包体积
+let _quickSearch: any = null
+async function ensureQuickSearch() {
+  if (_quickSearch) return _quickSearch
+  const { createQuickSearch } = await import('./ui/quickSearch')
+  _quickSearch = createQuickSearch({
+    getLibraryRoot: async () => {
+      try { return await getLibraryRoot() } catch { return null }
+    },
+    openFile: async (p: string) => { await openFile2(p) },
+    showError: (msg: string, err?: any) => showError(msg, err),
+    getPluginAPI: (ns: string) => {
+      try { return pluginHost.getPluginAPI(ns) } catch { return null }
+    },
+  })
+  return _quickSearch
+}
+async function showQuickSearch() { await (await ensureQuickSearch()).show() }
 
 // 库选择菜单：列出已保存库并切换；库的增删改名统一放到“库设置”
 async function showLibraryMenu() {
@@ -5687,6 +5690,7 @@ async function showLibraryMenu() {
     // 末尾操作项
     items.push({ label: (t('lib.settings.title') || '库设置') + '…', action: async () => {
       try {
+        const { openLibrarySettingsDialog } = await import('./ui/librarySettingsDialog')
         await openLibrarySettingsDialog({
           onRefreshUi: async (opt) => {
             await refreshLibraryUiAndTree(!!opt?.rebuildTree)
@@ -8249,7 +8253,7 @@ function bindEvents() {
     performance.mark('flymd-first-render')
     deferredStartupApi!.schedule()
     // 在线公告（官网 announcements.json）：不阻塞启动，失败静默
-    try { initOnlineAnnouncements() } catch {}
+    try { const { initOnlineAnnouncements } = await import('./core/onlineAnnouncements'); initOnlineAnnouncements() } catch {}
 
     // 绑定扩展按钮（立即绑定，但延迟加载扩展）
     try { const btnExt = document.getElementById('btn-extensions'); if (btnExt) btnExt.addEventListener('click', () => { void panelShowExtensionsOverlay(true) }) } catch {}
