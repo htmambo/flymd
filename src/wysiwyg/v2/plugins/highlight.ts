@@ -409,15 +409,27 @@ export class HighlightCodeBlockNodeView implements NodeView {
       const lang = this.node.attrs.language || ''
       console.log('[Highlight Plugin] 语言:', lang)
 
-      const hljs = await import('highlight.js')
-      console.log('[Highlight Plugin] highlight.js 已加载')
+      const hljs = await import('highlight.js/lib/core')
+      const hljsCore = hljs.default || hljs
+      console.log('[Highlight Plugin] highlight.js core 已加载')
+
+      // 按需注册指定语言模块
+      if (lang && !hljsCore.getLanguage(lang)) {
+        try {
+          const mod = await import(`highlight.js/lib/languages/${lang}`)
+          hljsCore.registerLanguage(lang, mod.default || mod)
+          console.log('[Highlight Plugin] 语言模块已注册:', lang)
+        } catch {
+          console.warn('[Highlight Plugin] 语言模块加载失败:', lang)
+        }
+      }
 
       let result: { value: string }
-      if (lang && hljs.default.getLanguage(lang)) {
-        result = hljs.default.highlight(code, { language: lang, ignoreIllegals: true })
+      if (lang && hljsCore.getLanguage(lang)) {
+        result = hljsCore.highlight(code, { language: lang, ignoreIllegals: true })
         console.log('[Highlight Plugin] 使用指定语言高亮')
       } else {
-        result = hljs.default.highlightAuto(code)
+        result = hljsCore.highlightAuto(code)
         console.log('[Highlight Plugin] 使用自动检测高亮')
       }
 

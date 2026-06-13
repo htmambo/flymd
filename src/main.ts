@@ -1810,6 +1810,8 @@ async function renderPreviewLight() {
       raw = normalizeCalloutMarkdown(raw)
     }
   } catch {}
+  // 按需加载文档中用到的 highlight.js 语言模块
+  try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
   const html = md!.render(raw)
   // 方案 A：占位符机制不需要 DOMPurify
   // KaTeX 占位符（data-math 属性）是安全的，后续会用 KaTeX.render() 替换
@@ -2585,38 +2587,69 @@ async function initStore() {
   }
 }
 
+// highlight.js 按需加载：核心 + 语言模块
+let hljsCore: any = null
+const loadedHljsLanguages = new Set<string>()
+
+async function ensureHljsCore(): Promise<any> {
+  if (hljsCore) return hljsCore
+  const mod = await import('highlight.js/lib/core')
+  hljsCore = mod.default || mod
+  return hljsCore
+}
+
+async function ensureHljsLanguage(lang: string): Promise<void> {
+  if (!lang) return
+  const hljs = await ensureHljsCore()
+  if (hljs.getLanguage(lang) || loadedHljsLanguages.has(lang)) return
+  try {
+    const mod = await import(`highlight.js/lib/languages/${lang}`)
+    hljs.registerLanguage(lang, mod.default || mod)
+    loadedHljsLanguages.add(lang)
+  } catch {
+    // 该语言模块不存在，忽略
+  }
+}
+
+function detectCodeLanguages(raw: string): string[] {
+  const langs = new Set<string>()
+  const fenceRE = /^ {0,3}(```+|~~~+)(\S*)/gm
+  let m: RegExpExecArray | null
+  while ((m = fenceRE.exec(raw)) !== null) {
+    const lang = m[2]?.trim().toLowerCase()
+    if (lang && lang !== 'mermaid') langs.add(lang)
+  }
+  return Array.from(langs)
+}
+
 // 延迟加载高亮库并创建 markdown-it
 // 任务列表（阅读模式）：将 "- [ ]" / "- [x]" 渲染为复选框
 async function ensureRenderer() {
   if (md) return
-  if (!hljsLoaded) {
-    // 按需加载 markdown-it 与 highlight.js
-    const [{ default: MarkdownItCtor }, hljs] = await Promise.all([
-      import('markdown-it'),
-      import('highlight.js')
-    ])
-    hljsLoaded = true
-    md = new MarkdownItCtor({
-      html: true,
-      linkify: true,
-      breaks: true, // 单个换行渲染为 <br>，与所见模式的“回车即提行”保持一致
-      highlight(code: string, lang: string): string {
-        // Mermaid 代码块保留为占位容器，稍后由 mermaid 渲染
-        const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
-        if (lang && lang.toLowerCase() === 'mermaid') {
-          const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
-          return `<pre class="mermaid">${esc}</pre>`
-        }
-        try {
-          if (lang && hljs.default.getLanguage(lang)) {
-            const r = hljs.default.highlight(code, { language: lang, ignoreIllegals: true })
-            return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
-          }
-        } catch {}
+  await ensureHljsCore()
+  hljsLoaded = true
+  const { default: MarkdownItCtor } = await import('markdown-it')
+  md = new MarkdownItCtor({
+    html: true,
+    linkify: true,
+    breaks: true, // 单个换行渲染为 <br>，与所见模式的“回车即提行”保持一致
+    highlight(code: string, lang: string): string {
+      // Mermaid 代码块保留为占位容器，稍后由 mermaid 渲染
+      const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;' }
+      if (lang && lang.toLowerCase() === 'mermaid') {
         const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
-        return `<pre><code class="hljs">${esc}</code></pre>`
+        return `<pre class="mermaid">${esc}</pre>`
       }
-    })
+      try {
+        if (lang && hljsCore && hljsCore.getLanguage(lang)) {
+          const r = hljsCore.highlight(code, { language: lang, ignoreIllegals: true })
+          return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
+        }
+      } catch {}
+      const esc = code.replace(/[&<>]/g, (ch: string) => escMap[ch] || ch)
+      return `<pre><code class="hljs">${esc}</code></pre>`
+    }
+  })
     // 启用脚注支持（[^1] / [^name] 语法）
     try {
       const footnoteMod = await import('./plugins/markdownItFootnote')
@@ -2646,7 +2679,6 @@ async function ensureRenderer() {
     } catch (e) {
       console.warn('markdown-it-callout 加载失败：', e)
     }
-  }
 }
 
 type RenderPreviewOptions = {
@@ -2808,6 +2840,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       raw = normalizeCalloutMarkdown(raw)
     }
   } catch {}
+  // 按需加载文档中用到的 highlight.js 语言模块
+  try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
   const html = md!.render(raw)
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
   try {
@@ -4541,6 +4575,8 @@ try {
         }
       } catch {}
 
+      // 按需加载文档中用到的 highlight.js 语言模块
+      try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
       return md.render(raw)
     }
     // 渲染 Markdown 到指定容器：在纯渲染基础上补全 Mermaid/KaTeX 等 DOM 后处理，
@@ -8503,7 +8539,7 @@ function bindEvents() {
           await Promise.allSettled([
             import('markdown-it'),
             import('dompurify'),
-            import('highlight.js'),
+            import('highlight.js/lib/core'),
           ])
         } catch {}
       })
