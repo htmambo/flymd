@@ -251,19 +251,10 @@ function bindContentSync(): void {
   const editor = document.querySelector('.editor') as HTMLTextAreaElement | null
   if (!editor) return
 
-  let timer: number | null = null
-
   editor.addEventListener('input', () => {
     if (!splitPreviewEnabled) return
     if (!isSupportedContext()) return
-    try {
-      if (timer != null) window.clearTimeout(timer)
-      // 轻微防抖：避免每个键都触发完整渲染
-      timer = window.setTimeout(() => {
-        timer = null
-        try { flymd.flymdRefreshPreview?.() } catch {}
-      }, 240)
-    } catch {}
+    try { flymd.flymdScheduleRenderPreview?.() } catch {}
   })
 }
 

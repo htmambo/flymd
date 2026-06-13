@@ -1001,7 +1001,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
           insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
           isPreviewMode: () => mode === 'preview',
           isWysiwygMode: () => wysiwyg,
-          renderPreview: () => renderPreview(),
+          renderPreview: () => scheduleRenderPreview(),
           scheduleWysiwygRender: () => scheduleWysiwygRender(),
         }
         await applyPlainTextPaste(text, env)
@@ -1619,7 +1619,7 @@ function onTaskCheckboxChange(ev: Event) {
         }
       }
     } catch {}
-    try { renderPreview() } catch {}
+    try { scheduleRenderPreview() } catch {}
     try { if (currentFilePath) { void saveFile() } else { void saveAs() } } catch {}
   } catch {}
 }
@@ -2649,6 +2649,21 @@ type RenderPreviewOptions = {
   forPrint?: boolean
 }
 
+let _renderPreviewTimer: number | null = null
+
+// 防抖调度预览渲染：快速连续输入/粘贴时只触发一次
+function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
+  try {
+    if (_renderPreviewTimer != null) {
+      window.clearTimeout(_renderPreviewTimer)
+    }
+    _renderPreviewTimer = window.setTimeout(() => {
+      _renderPreviewTimer = null
+      void renderPreview(opts)
+    }, 150)
+  } catch {}
+}
+
 // 渲染预览（带安全消毒）
 async function renderPreview(opts?: RenderPreviewOptions) {
   const seq = ++_renderPreviewSeq
@@ -3151,7 +3166,7 @@ const _imageUploader = createImageUploader({
   setEditorValue: (v: string) => { editor.value = v },
   getMode: () => mode,
   isWysiwyg: () => !!wysiwyg,
-  renderPreview: () => { void renderPreview() },
+  renderPreview: () => { try { scheduleRenderPreview() } catch {} },
   scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
   markDirtyAndRefresh: () => {
     dirty = true
@@ -4403,7 +4418,8 @@ try {
     ;(window as any).flymdGetEditorContent = () => editor?.value ?? ''
     // UI 刷新
     ;(window as any).flymdRefreshTitle = () => titlebarStatusApi?.refreshTitle()
-    ;(window as any).flymdRefreshPreview = () => { try { renderPreview() } catch {} }
+    ;(window as any).flymdRefreshPreview = () => { try { scheduleRenderPreview() } catch {} }
+    ;(window as any).flymdScheduleRenderPreview = (opts?: RenderPreviewOptions) => { try { scheduleRenderPreview(opts) } catch {} }
     ;(window as any).flymdRefreshFileTree = async () => {
       try {
         await fileTree.refresh()
@@ -5207,7 +5223,7 @@ const stickyNoteUi: StickyNoteUiHandles = createStickyNoteUi({
     } catch {}
   },
   flushAutoSave: () => _stickyAutoSaver.flush(),
-  renderPreview: () => renderPreview(),
+  renderPreview: () => scheduleRenderPreview(),
   syncToggleButton: () => { try { titlebarStatusApi?.syncToggleButton() } catch {} },
   notifyModeChange: () => { try { notifyModeChange() } catch {} },
   getStickyNoteLocked: () => stickyNoteLocked,
@@ -5244,7 +5260,7 @@ const stickyNoteModeDeps: StickyNoteModeDeps = {
   setMode: (m) => { mode = m },
   isWysiwygActive: () => !!wysiwyg || !!wysiwygV2Active,
   disableWysiwyg: () => setWysiwygEnabled(false),
-  renderPreview: () => renderPreview(),
+  renderPreview: () => scheduleRenderPreview(),
   showPreviewPanel: (show) => {
     try {
       preview.classList.toggle('hidden', !show)
@@ -7047,7 +7063,7 @@ function bindEvents() {
       e.preventDefault()
       await formatBold()
       if (mode === 'preview') {
-        void renderPreview()
+        scheduleRenderPreview()
       } else if (wysiwyg && !wysiwygV2Active) {
         // 仅旧所见模式需要从 Markdown 重渲染；V2 直接在编辑视图内部操作
         scheduleWysiwygRender()
@@ -7058,7 +7074,7 @@ function bindEvents() {
       e.preventDefault()
       await formatItalic()
       if (mode === 'preview') {
-        void renderPreview()
+        scheduleRenderPreview()
       } else if (wysiwyg && !wysiwygV2Active) {
         scheduleWysiwygRender()
       }
@@ -7407,7 +7423,7 @@ function bindEvents() {
             insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
             isPreviewMode: () => mode === 'preview',
             isWysiwygMode: () => wysiwyg,
-            renderPreview: () => renderPreview(),
+            renderPreview: () => scheduleRenderPreview(),
             scheduleWysiwygRender: () => scheduleWysiwygRender(),
           }
           await applyPlainTextPaste(plainText, env)
@@ -7493,7 +7509,7 @@ function bindEvents() {
             const finalText = (mdText && mdText.trim()) ? mdText : plainText
             if (finalText) {
               editorInsertApi?.insertAtCursor(finalText)
-              if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
+              if (mode === 'preview') scheduleRenderPreview(); else if (wysiwyg) scheduleWysiwygRender()
             }
             return
           }
@@ -7533,11 +7549,11 @@ function bindEvents() {
             },
           )
           editorInsertApi?.insertAtCursor(r.markdown || plainText)
-          if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
+          if (mode === 'preview') scheduleRenderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           return
         } catch {
           editorInsertApi?.insertAtCursor(plainText)
-          if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
+          if (mode === 'preview') scheduleRenderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           return
         } finally {
           try { if (noticeId) NotificationManager.hide(noticeId) } catch {}
@@ -7583,7 +7599,7 @@ function bindEvents() {
                 // 占位符已被用户编辑删除，退回为在当前位置插入最终文本
                 editorInsertApi?.insertAtCursor(finalText)
               }
-              if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
+              if (mode === 'preview') scheduleRenderPreview(); else if (wysiwyg) scheduleWysiwygRender()
             } catch {}
             return
           }
@@ -7627,8 +7643,7 @@ function bindEvents() {
           const safeFile = file as File
           const pub = await uploadImageToCloud(safeFile as any, fname, safeFile.type || 'application/octet-stream', upCfg as any)
           editorInsertApi?.insertAtCursor(`![${fname}](${pub.publicUrl})`)
-          if (mode === 'preview') await renderPreview(); else if (wysiwyg) scheduleWysiwygRender()
-          else if (wysiwyg) scheduleWysiwygRender()
+          if (mode === 'preview') scheduleRenderPreview(); else if (wysiwyg) scheduleWysiwygRender()
           return
         }
       } catch (e) {
@@ -8552,7 +8567,7 @@ const pluginRuntime: PluginRuntimeHandles = initPluginRuntime({
   getLibraryRoot: () => getLibraryRoot(),
   isPreviewMode: () => mode === 'preview',
   isWysiwyg: () => !!wysiwyg || !!wysiwygV2Active,
-  renderPreview: () => { void renderPreview() },
+  renderPreview: () => { try { scheduleRenderPreview() } catch {} },
   scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
   markDirtyAndRefresh: () => {
     try {
