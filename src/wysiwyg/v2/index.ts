@@ -2059,6 +2059,59 @@ function updateMilkdownMathFromDom(
     return (_editor as any)?.ctx?.get?.(editorViewCtx)
   }
 }
+
+// PR-2 A3: 块级↔行内公式互转
+// 把光标所在的 math_block / math_inline 节点替换为目标类型,保留 value
+function convertMathNodeType(mathEl: HTMLElement, targetType: 'math_inline' | 'math_block'): boolean {
+  try {
+    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    if (!view || !mathEl) return false
+    const pos = view.posAtDOM(mathEl, 0)
+    if (typeof pos !== 'number') return false
+    const state = view.state
+    const $pos = state.doc.resolve(pos)
+    const isMath = (n: any) => !!n && (n.type?.name === 'math_inline' || n.type?.name === 'math_block')
+    let from = -1, to = -1, current: any = null
+    for (let d = $pos.depth; d >= 0; d--) {
+      const node = $pos.node(d)
+      if (isMath(node)) {
+        from = $pos.before(d)
+        to = $pos.after(d)
+        current = node
+        break
+      }
+    }
+    if (from < 0) {
+      if ($pos.nodeAfter && isMath($pos.nodeAfter)) {
+        current = $pos.nodeAfter
+        from = pos
+        to = pos + current.nodeSize
+      } else if ($pos.nodeBefore && isMath($pos.nodeBefore)) {
+        current = $pos.nodeBefore
+        from = pos - current.nodeSize
+        to = pos
+      }
+    }
+    if (from < 0 || !current) return false
+    if (current.type.name === targetType) return true // 已经是目标类型
+    const schema = state.schema
+    const target = schema.nodes[targetType]
+    if (!target) return false
+    const value = String(current.attrs?.value || current.textContent || '')
+    let newNode: any
+    if (targetType === 'math_block') {
+      newNode = target.create({ value })
+    } else {
+      newNode = target.create({}, schema.text(value))
+    }
+    const tr = state.tr.replaceRangeWith(from, to, newNode)
+    view.dispatch(tr.scrollIntoView())
+    return true
+  } catch (e) {
+    console.error('[convertMathNodeType] 错误:', e)
+    return false
+  }
+}
 // 从图片 DOM 反向更新 Milkdown 文档中的 image 节点
 function updateMilkdownImageFromDom(imgEl: HTMLImageElement, newSrc: string, newAlt: string) {
   try {
@@ -2348,13 +2401,31 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
 
     const header = document.createElement('div')
     header.style.display = 'flex'
-    header.style.justifyContent = 'flex-end'
+    header.style.justifyContent = 'space-between'
+    header.style.alignItems = 'center'
     header.style.marginBottom = '4px'
+
+    // PR-2 A3: 块级↔行内互转按钮(仅当 schema 同时支持两种类型时显示)
+    const convertBtn = document.createElement('button')
+    convertBtn.type = 'button'
+    try {
+      const viewProbe: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+      if (viewProbe) {
+        const schema = viewProbe.state?.schema
+        const hasBoth = schema?.nodes?.['math_inline'] && schema?.nodes?.['math_block']
+        convertBtn.style.display = hasBoth ? '' : 'none'
+      } else {
+        convertBtn.style.display = 'none'
+      }
+    } catch { convertBtn.style.display = 'none' }
+    convertBtn.textContent = isBlock ? '→ 行内' : '→ 块级'
+    convertBtn.title = isBlock ? '转换为行内公式' : '转换为块级公式'
 
     const delBtn = document.createElement('button')
     delBtn.type = 'button'
     delBtn.textContent = 'Delete'
 
+    header.appendChild(convertBtn)
     header.appendChild(delBtn)
     inner.appendChild(header)
 
@@ -2470,6 +2541,19 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
       }
       deleteWysiwygNodeByDom(mathEl, ['math_inline', 'math_block'])
       closeOverlay()
+    })
+    // PR-2 A3: 块级↔行内互转
+    convertBtn.addEventListener('click', (ev) => {
+      ev.preventDefault()
+      try {
+        const ok = convertMathNodeType(mathEl, isBlock ? 'math_inline' : 'math_block')
+        if (ok) {
+          // 转换后节点已被替换,关闭当前浮层;新节点会触发 NodeView 重新创建
+          closeOverlay()
+        }
+      } catch (err) {
+        try { showOverlayError(wrap, err) } catch {}
+      }
     })
     // 删除按钮失焦时仅重置确认状态，不再负责关闭编辑框（关闭由文档级点击和 apply 控制）
     delBtn.addEventListener('blur', (ev) => {
@@ -2755,6 +2839,9 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
 
 // 暴露给 mermaid NodeView (B7 入口),供双击事件调用
 try { (window as any).__mdeditorEnterMermaidSourceEdit = enterMermaidSourceEdit } catch {}
+
+// PR-2 A1: 暴露给 math NodeView 的铅笔按钮
+try { (window as any).__mdeditorEnterLatexSourceEdit = enterLatexSourceEdit } catch {}
 
 // B8: HTML 表格源码编辑
 // 说明:htmlTable 插件在解析阶段已把 <table> HTML 转成 GFM Markdown 并交给 Milkdown 接管,

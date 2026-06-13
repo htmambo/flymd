@@ -774,3 +774,34 @@ body > .block-menu { display: none !important; }
 .container.wysiwyg-v2 .ProseMirror blockquote p {
   white-space: pre-line;
 }
+
+/* PR-2 A1: 公式节点编辑按钮(铅笔),默认隐藏,hover 父元素显示 */
+.math-edit-btn {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--wysiwyg-bg, #fff);
+  border: 1px solid var(--border-color, #d0d0d0);
+  color: var(--text-color, #555);
+  cursor: pointer;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  opacity: 0.85;
+  transition: opacity 0.15s ease-in, transform 0.15s ease-in;
+}
+.math-inline-wrapper:hover > .math-edit-btn,
+.math-block-wrapper:hover > .math-edit-btn {
+  display: flex;
+  opacity: 1;
+}
+.math-edit-btn:hover {
+  transform: scale(1.1);
+  opacity: 1;
+}

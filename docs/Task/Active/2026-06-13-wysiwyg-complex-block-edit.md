@@ -1,6 +1,6 @@
 # 任务:所见模式复杂块(KaTeX / Mermaid)编辑稳定性改造
 
-**状态**: 🔄 进行中 (开始时间: 2026-06-13)
+**状态**: ✅ 已完成 (完成时间: 2026-06-13)
 **创建日期**: 2026-06-13
 **责任人**: Claude + 用户
 **范围**: `src/wysiwyg/v2/` 下的复杂块编辑通路(数学公式、流程图)
@@ -8,6 +8,31 @@
 - 当前分支 `perf/bundle-runtime-optimizations` 已包含 `6842e88` 的阅读模式 math/mermaid 修复
 - README 索引: `docs/Task/README.md` 中 `2026-06-13-math-and-mermaid-render-fix.md`
 - 实际工作分支: `fix/wysiwyg-complex-block-edit` (从 `perf/bundle-runtime-optimizations` 拉出)
+
+---
+
+## 1. 进度
+
+### PR-1 冻结锁(已完成 2026-06-13,commit 961605c)
+- B1 ✅ editLock 工具
+- B2 ✅ enterLatexSourceEdit 接入冻结锁
+- B3 ✅ focusout 替换全局 mousedown
+- B4 ✅ overlay 位置实时跟随
+- B5 ✅ 反序列化改用 dataset.value
+- B6 ✅ _mathEditingActive 节点标记
+- B7 ✅ enterMermaidSourceEdit 入口
+- B8 ✅ enterTableSourceEdit 入口
+- B9 ✅ overlay 错误条
+- B10 ✅ 10 用例 (587/587 全套通过)
+
+### PR-2 体验优化(已完成 2026-06-13)
+- A1 ✅ math NodeView 铅笔按钮(亲自执行,子代理早退)
+- A2 ✅ mermaid 编辑按钮(节点右下角悬浮)
+- A3 ✅ 块级↔行内公式互转命令(convertMathNodeType + 浮层按钮)
+- A4 ✅ 错误条与 NodeView 顶部集成(math 节点 inline error)
+- A5 ✅ 测试扩展(新增 7 用例,594/594 全套通过)
+
+**执行备注**:PR-2 子代理(ae5988a1a3、a058bddb13b)异常早退(11-12 秒,无有效输出),按 fullauto 协议切换为父任务亲自执行,落地后 tsc 0 错误 + 594/594 测试通过。
 
 ---
 

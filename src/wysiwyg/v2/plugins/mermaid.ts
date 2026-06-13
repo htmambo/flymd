@@ -152,6 +152,7 @@ class MermaidNodeView implements NodeView {
   contentDOM: HTMLElement | null
   private chartContainer: HTMLElement
   private preWrapper: HTMLElement
+  private editBtn: HTMLButtonElement | null = null
   private node: Node
   private view: EditorView
   private getPos: () => number | undefined
@@ -233,6 +234,52 @@ class MermaidNodeView implements NodeView {
     this.chartContainer.style.cursor = 'pointer'
     this.chartContainer.textContent = '渲染中...'
 
+    // PR-2 A2: 显式"编辑源码"按钮(无需双击),位置在图表右下角
+    this.editBtn = document.createElement('button')
+    this.editBtn.type = 'button'
+    this.editBtn.className = 'mermaid-edit-btn'
+    this.editBtn.title = '编辑 Mermaid 源码'
+    this.editBtn.setAttribute('aria-label', '编辑 Mermaid 源码')
+    this.editBtn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3l8.5-8.5z"/><path d="M10 3l3 3"/></svg>'
+    this.editBtn.style.position = 'absolute'
+    this.editBtn.style.bottom = '6px'
+    this.editBtn.style.right = '6px'
+    this.editBtn.style.width = '22px'
+    this.editBtn.style.height = '22px'
+    this.editBtn.style.borderRadius = '11px'
+    this.editBtn.style.background = 'var(--wysiwyg-bg, #fff)'
+    this.editBtn.style.border = '1px solid var(--border-color, #d0d0d0)'
+    this.editBtn.style.color = 'var(--text-color, #555)'
+    this.editBtn.style.cursor = 'pointer'
+    this.editBtn.style.padding = '0'
+    this.editBtn.style.display = 'none'
+    this.editBtn.style.alignItems = 'center'
+    this.editBtn.style.justifyContent = 'center'
+    this.editBtn.style.zIndex = '5'
+    this.editBtn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.12)'
+    this.editBtn.style.opacity = '0.85'
+    this.editBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    this.editBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      try {
+        const fn = (window as any).__mdeditorEnterMermaidSourceEdit
+        if (typeof fn === 'function') fn(this.dom)
+      } catch (err) {
+        try { console.error('[mermaid edit btn]', err) } catch {}
+      }
+    })
+    // 由父容器 hover 触发显示
+    this.dom.addEventListener('mouseenter', () => {
+      try { if (this.editBtn) this.editBtn.style.display = 'flex' } catch {}
+    })
+    this.dom.addEventListener('mouseleave', () => {
+      try { if (this.editBtn) this.editBtn.style.display = 'none' } catch {}
+    })
+
     // 双击切换到源代码编辑
     this.chartContainer.addEventListener('dblclick', (e) => {
       e.stopPropagation()
@@ -274,6 +321,8 @@ class MermaidNodeView implements NodeView {
     document.addEventListener('click', this.handleClickOutside)
 
     this.dom.appendChild(this.chartContainer)
+    // PR-2 A2: 显式编辑按钮(浮在 chartContainer 右下角)
+    this.dom.appendChild(this.editBtn)
 
     // 初始渲染：空内容时自动进入编辑模式
     const code = this.node.textContent

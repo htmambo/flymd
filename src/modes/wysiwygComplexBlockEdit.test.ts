@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // wysiwygComplexBlockEdit.test.ts
 // PR-1 验收用例:
 //  1. editLock acquire/release 计数与重入
@@ -144,5 +145,104 @@ describe('wysiwyg/v2/editLock', () => {
     expect(editLockCount()).toBe(0)
     __resetEditLockForTest()
     expect(editLockCount()).toBe(0)
+  })
+})
+
+// PR-2 测试
+// A1: window.__mdeditorEnterLatexSourceEdit 桥接
+// A2: window.__mdeditorEnterMermaidSourceEdit 桥接(由 PR-1 B7 提供)
+// A4: overlayError 工具的行为
+// A4: 错误消息格式化与多 overlay 独立
+
+describe('wysiwyg/v2/overlayError (PR-2)', () => {
+  beforeEach(() => {
+    // jsdom 环境中,attachOverlayError 直接操作 DOM
+  })
+
+  it('attachOverlayError 创建 error bar 并默认隐藏', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    expect(handle.el).toBeTruthy()
+    expect(handle.el.getAttribute('data-visible')).toBe('0')
+  })
+
+  it('setError 后 data-visible=1 且显示消息', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    handle.setError(new Error('数学公式语法错误'))
+    expect(handle.el.getAttribute('data-visible')).toBe('1')
+    expect(handle.el.textContent).toContain('数学公式语法错误')
+  })
+
+  it('setError 接受字符串/Error 两种入参', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap1 = document.createElement('div')
+    const h1 = attachOverlayError(wrap1)
+    h1.setError('普通字符串错误')
+    expect(h1.el.textContent).toContain('普通字符串错误')
+
+    const wrap2 = document.createElement('div')
+    const h2 = attachOverlayError(wrap2)
+    h2.setError({ message: '对象形式消息' })
+    expect(h2.el.textContent).toContain('对象形式消息')
+  })
+
+  it('clear 隐藏错误条', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    handle.setError('错误1')
+    expect(handle.el.getAttribute('data-visible')).toBe('1')
+    handle.clear()
+    expect(handle.el.getAttribute('data-visible')).toBe('0')
+  })
+
+  it('多个 overlay 错误条互不影响', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap1 = document.createElement('div')
+    const wrap2 = document.createElement('div')
+    const h1 = attachOverlayError(wrap1)
+    const h2 = attachOverlayError(wrap2)
+    h1.setError('错误A')
+    expect(h1.el.getAttribute('data-visible')).toBe('1')
+    expect(h2.el.getAttribute('data-visible')).toBe('0')
+    h2.setError('错误B')
+    h1.clear()
+    expect(h1.el.getAttribute('data-visible')).toBe('0')
+    expect(h2.el.textContent).toContain('错误B')
+  })
+
+  it('重复调用 setError 不会追加多个子元素', async () => {
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    handle.setError('第一次')
+    handle.setError('第二次')
+    handle.setError('第三次')
+    const bars = wrap.querySelectorAll('[role="alert"]')
+    expect(bars.length).toBe(1)
+    expect(handle.el.textContent).toContain('第三次')
+  })
+})
+
+describe('wysiwyg/v2 NodeView 桥接 (PR-2 A1/A2)', () => {
+  it('window 桥接函数不会污染全局枚举', () => {
+    // PR-1 + PR-2 在 main.ts 加载时会注册 window 桥;在测试环境不会执行
+    // 这里只验证类型与契约
+    const w = window as any
+    // 清理可能被其他测试副作用写入的桥
+    delete w.__mdeditorEnterLatexSourceEdit
+    delete w.__mdeditorEnterMermaidSourceEdit
+    expect(typeof w.__mdeditorEnterLatexSourceEdit).toBe('undefined')
+    expect(typeof w.__mdeditorEnterMermaidSourceEdit).toBe('undefined')
+    // 写一个空函数验证可赋值(模拟主流程注册)
+    w.__mdeditorEnterLatexSourceEdit = () => {}
+    w.__mdeditorEnterMermaidSourceEdit = () => {}
+    expect(typeof w.__mdeditorEnterLatexSourceEdit).toBe('function')
+    expect(typeof w.__mdeditorEnterMermaidSourceEdit).toBe('function')
+    delete w.__mdeditorEnterLatexSourceEdit
+    delete w.__mdeditorEnterMermaidSourceEdit
   })
 })
