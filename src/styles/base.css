@@ -1,0 +1,284 @@
+/*
+  flymd 样式（中文注释）
+  目标：极简、即开即见，默认全屏编辑；预览为覆盖层，Ctrl+E 切换
+*/
+
+
+:root {
+  color-scheme: light dark;
+  /* 中性灰配色方案 */
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  /* 阅读模式背景（中性灰，现代简约） */
+  --preview-bg: #fafafa;
+  /* 更清晰的边框与代码背景（所见模式用） */
+  --border-strong: #d1d5db;
+  --panel-bg: #f9fafb;
+  /* 所见模式变量 */
+  --wysiwyg-bg: #f3f4f6;
+  --wysiwyg-status-h: 24px;
+  --wysiwyg-status-bg: #e5e7eb;
+  --code-bg: #f3f4f6;
+  /* 便签模式背景色（默认白） */
+  --sticky-rgb: 255, 255, 255;
+  /* 便签模式前景色（可选覆盖） */
+  --sticky-fg: ;
+  /* 表格颜色变量（自动适配亮/暗主题） */
+  --table-border: #cbd5e1;
+  --table-header-bg: #f1f5f9;
+  --table-header-fg: #1e293b;
+  --table-row-hover: #f8fafc;
+
+  /* 编辑体验：文末留白（约 3~4 行），避免最后一行贴底 */
+  --scroll-past-end: 3.5em;
+
+  /* ========== 设计系统变量 ========== */
+  /* 主色调 */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-light: rgba(37, 99, 235, 0.1);
+  --accent-dark: #60a5fa;  /* 深色模式用 */
+
+  /* 圆角规范 */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* 间距规范 */
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 12px;
+  --space-xl: 16px;
+
+  /* 交互状态 */
+  --hover-bg: rgba(127, 127, 127, 0.08);
+  --active-bg: rgba(127, 127, 127, 0.12);
+  --hover-bg-light: rgba(255, 255, 255, 0.08);  /* 深色模式用 */
+
+  /* 过渡动画 */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease;
+
+  /* 阴影规范 */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.16);
+
+  /* 库树 — 5 色调色板(scheme 0 = 原配色兜底;scheme 1-5 = 彩虹循环)
+     scheme 由 JS 算 (level % 5) + 1 写入 .lib-node 的 data-scheme,深树自动循环;rail 颜色由 CSS 用 :has() 自取首个子节点 scheme
+     关闭"彩色库树"开关时,body 不带 lib-color-depth class,5 条 scheme 规则全不生效,沿用 --muted/--accent 原配色 */
+  --lib-color-0: var(--muted);       /* 兜底:关闭开关时回退到原配色 */
+  --lib-color-1: #ef4444;             /* red-500 */
+  --lib-color-2: #22c55e;             /* green-500 */
+  --lib-color-3: #f97316;             /* orange-500 */
+  --lib-color-4: #3b82f6;             /* blue-500 */
+  --lib-color-5: #eab308;             /* yellow-500 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0c0e;
+    --fg: #e5e7eb;
+    --muted: #9ca3af;
+    --border: #1f2937;
+    /* 深色阅读模式背景（暖黑，降低刺激） */
+    --preview-bg: #12100d;
+    --border-strong: #374151;      /* slate-700 */
+    --panel-bg: #0e1217;
+    /* 深色所见模式变量 */
+    --wysiwyg-bg: #0b1016;         /* 更深的蓝黑 */
+    --wysiwyg-status-bg: #0f1a24;  /* 状态条背景 */
+    --code-bg: #111827;            /* 代码块背景（暗） */
+    /* 深色表格颜色变量 */
+    --table-border: #4b5563;
+    --table-header-bg: #374151;
+    --table-header-fg: #ffffff;
+    --table-row-hover: rgba(55, 65, 81, 0.3);
+
+    /* 设计系统变量 - 深色模式覆盖 */
+    --accent: #60a5fa;
+    --accent-hover: #3b82f6;
+    --accent-light: rgba(96, 165, 250, 0.15);
+    --hover-bg: rgba(255, 255, 255, 0.08);
+    --active-bg: rgba(255, 255, 255, 0.12);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    /* 库树 — 5 色调色板(暗色模式用 400 调色板,略浅) */
+    --lib-color-0: var(--muted);
+    --lib-color-1: #f87171;  /* red-400 */
+    --lib-color-2: #4ade80;  /* green-400 */
+    --lib-color-3: #fb923c;  /* orange-400 */
+    --lib-color-4: #60a5fa;  /* blue-400 */
+    --lib-color-5: #facc15;  /* yellow-400 */
+  }
+  body.platform-windows #app {
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45),
+                0 1px 1px rgba(0, 0, 0, 0.65);
+  }
+}
+
+/* 强制浅色模式：覆盖系统深色偏好（当用户在系统深色模式下选择浅色主题时） */
+body.light-mode {
+  /* 中性灰配色 */
+  --bg: #ffffff;
+  --fg: #1f2328;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --preview-bg: #fafafa;
+  --border-strong: #d1d5db;
+  --panel-bg: #f9fafb;
+  --wysiwyg-bg: #f3f4f6;
+  --wysiwyg-status-bg: #e5e7eb;
+  --code-bg: #f3f4f6;
+  --table-border: #cbd5e1;
+  --table-header-bg: #f1f5f9;
+  --table-header-fg: #1e293b;
+  --table-row-hover: #f8fafc;
+  /* 代码高亮浅色变量 */
+  --code-border: #e5e7eb;
+  --code-fg: #1f2328;
+  --code-muted: #6b7280;
+  --c-key: #1d4ed8;
+  --c-str: #059669;
+  --c-num: #059669;
+  --c-fn: #db2777;
+  --c-com: #9ca3af;
+
+  /* 库树 — 5 色调色板(强制浅色用 500) */
+  --lib-color-0: var(--muted);
+  --lib-color-1: #ef4444;
+  --lib-color-2: #22c55e;
+  --lib-color-3: #f97316;
+  --lib-color-4: #3b82f6;
+  --lib-color-5: #eab308;
+}
+
+html, body, #app { height: 100%; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui, inherit);
+  /* 改进字体渲染 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+#app {
+  background: var(--bg);
+}
+
+/* 通用隐藏类 */
+.hidden {
+  display: none !important;
+}
+
+/* Windows：保持 1.0.4 的透明窗口 + 圆角阴影；Mac/Linux 回退到 673c 之前的纯色窗口 */
+body.platform-windows {
+  /* 
+   * Windows + WebView2 透明窗口在拖动/重绘时可能漏出系统合成层（表现为顶部浅色条/白边）。
+   * 给窗口一个极低 alpha 的底色，确保每个像素都有内容可合成，避免“全透明像素”被 DWM 用默认色填充。
+   */
+  /* 取 >= 1/255 的 alpha，避免被量化成 0 导致“仍然是全透明”。 */
+  background: rgba(0, 0, 0, 0.004);
+  padding: 2px; /* 透明边越小越好：只留出足够的圆角/轻微阴影空间 */
+  box-sizing: border-box;
+}
+/* Windows 透明窗口拖动后偶发的“顶部白条/残影”兜底：轻微改变背景触发合成层刷新 */
+body.platform-windows.win-compositor-poke {
+  /* sticky-note-mode 使用了 background: transparent !important，这里必须用 !important 才能覆盖并触发合成刷新 */
+  background: rgba(0, 0, 0, 0.008) !important;
+}
+body.platform-windows #app {
+  /* 阴影必须“收敛”到 padding 里，否则就是被裁剪或者被迫加大透明边 */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12),
+              0 1px 1px rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+}
+
+#app {
+  display: flex;
+  flex-direction: row; /* 水平布局：ribbon + main-content */
+  overflow: hidden; /* 防止内容溢出影响布局 */
+}
+
+/* 全局选中文本样式 */
+::selection {
+  background: rgba(37, 99, 235, 0.25);
+  color: var(--fg);
+}
+::-moz-selection {
+  background: rgba(37, 99, 235, 0.25);
+  color: var(--fg);
+}
+@media (prefers-color-scheme: dark) {
+  ::selection {
+    background: rgba(96, 165, 250, 0.3);
+  }
+  ::-moz-selection {
+    background: rgba(96, 165, 250, 0.3);
+  }
+}
+
+/* 预览区域选中文本样式 */
+.preview ::selection {
+  background: rgba(37, 99, 235, 0.2);
+}
+.preview ::-moz-selection {
+  background: rgba(37, 99, 235, 0.2);
+}
+
+/* 代码块内选中样式 */
+.preview pre ::selection,
+.preview code ::selection {
+  background: rgba(37, 99, 235, 0.3);
+}
+.preview pre ::-moz-selection,
+.preview code ::-moz-selection {
+  background: rgba(37, 99, 235, 0.3);
+}
+/* === 额外的视觉增强 === */
+
+/* 按钮通用美化 */
+button {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+button:active {
+  transform: scale(0.98);
+}
+/* 输入框焦点美化 */
+input[type="text"]:focus,
+input[type="url"]:focus,
+input[type="password"]:focus,
+textarea:focus {
+  outline: none;
+}
+/* 平滑滚动 */
+.preview,
+#md-wysiwyg-root,
+#md-wysiwyg-root .scrollView,
+.library {
+  scroll-behavior: smooth;
+}
+
+/* 减少动画偏好设置 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

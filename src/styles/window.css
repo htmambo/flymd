@@ -1,0 +1,387 @@
+/* 标签页栏行（替代原 titlebar） */
+.tabbar-row {
+  height: 36px;
+  min-height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  -webkit-app-region: drag;
+  background: var(--chrome-bg, var(--bg));
+  border-bottom: 1px solid var(--border);
+}
+
+/* macOS：无边框窗口下 -webkit-app-region: drag 可能吞掉点击（窗口按钮“没反应”），
+   统一交给 JS 的 startDragging() 处理拖动；其它平台保持现状，避免回归。 */
+body.platform-mac .tabbar-row {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.tabbar-placeholder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
+}
+
+.tabbar-row .filename {
+  display: none; /* 隐藏文件名显示，标签页已包含文件名 */
+}
+
+/* tabbar-row 内的标签栏容器 */
+.tabbar-row .tabbar {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* window-controls 固定在右侧 */
+.tabbar-row .window-controls {
+  flex-shrink: 0;
+}
+
+/* 旧标题栏（兼容） */
+.titlebar {
+    height: 36px;
+    min-height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: stretch;
+    -webkit-app-region: drag;
+    background: var(--chrome-bg, var(--bg));
+    border-bottom: 1px solid var(--border);
+  }
+
+/* 菜单栏样式 - 类似 Windows 记事本 */
+.menubar {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: stretch;
+}
+
+.menu-item {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+  user-select: none;
+  border: none;
+  background: transparent;
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+
+.menu-item:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+/* 窗口控制按钮（紧凑标题栏模式） */
+.window-controls {
+  display: none;
+  align-items: center;
+  -webkit-app-region: no-drag;
+  margin-left: auto; /* 固定到最右侧 */
+  flex-shrink: 0;
+}
+
+/* Windows 平台：移除原生边框后默认显示窗口控制按钮 */
+body.platform-windows.no-native-decorations .window-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  gap: 8px;
+  position: relative;
+  z-index: 100;
+  background: var(--chrome-bg, var(--bg));
+}
+
+body.compact-titlebar .window-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 12px;
+  gap: 8px;
+}
+
+/* 窗口控制按钮 - 现代简约风格 */
+.window-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  width: 36px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  padding: 0;
+  margin-left: 1px;
+  transition: all var(--transition-fast);
+}
+
+.window-btn svg {
+  width: 10px;
+  height: 10px;
+  stroke-width: 1.5;
+}
+
+.window-btn:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+
+.window-btn.window-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* 紧凑标题栏模式下的窗口控制按钮 - 纯符号样式 */
+body.compact-titlebar .window-btn {
+  width: auto;
+  height: auto;
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1;
+  opacity: 0.7;
+  border-radius: 0;
+  margin: 0;
+  padding: 4px 8px;
+  background: transparent;
+}
+
+body.compact-titlebar .window-btn:hover {
+  background: var(--active-bg);
+  opacity: 1;
+  border-radius: var(--radius-sm);
+}
+
+body.compact-titlebar .window-btn.window-close:hover {
+  background: #e81123;
+  color: #fff;
+  border-radius: var(--radius-sm);
+}
+
+/* 更新红点提示：为有更新的菜单项显示小圆点 */
+.menu-item.has-update::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 0 0 0 2px var(--bg), 0 0 8px rgba(239, 68, 68, 0.6);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+}
+
+/* 插件下拉菜单样式 */
+#plugin-dropdown-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 2147483601;
+}
+
+#plugin-dropdown-panel {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 200px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  padding: 6px 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  #plugin-dropdown-panel {
+    background: #1e293b;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+}
+
+#plugin-dropdown-panel button,
+#plugin-dropdown-panel .plugin-menu-item {
+  width: auto;
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--fg);
+  padding: 6px 12px;
+  cursor: pointer;
+  display: block;
+}
+
+#plugin-dropdown-panel button:hover:not(:disabled) {
+  background: var(--active-bg);
+}
+
+#plugin-dropdown-panel button:disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.plugin-menu-group-title {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 4px 16px 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.plugin-menu-divider {
+  height: 1px;
+  background: #e2e8f0;
+  margin: 4px 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .plugin-menu-divider {
+    background: #334155;
+  }
+}
+
+.plugin-menu-note {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-left: 8px;
+}
+
+/* 插件菜单 - 通用菜单项样式 */
+.plugin-menu-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--fg);
+  padding: 8px 16px;
+  cursor: pointer;
+  display: block;
+  position: relative;
+}
+
+.plugin-menu-item:hover:not(.disabled) {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.plugin-menu-item.disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 插件菜单 - 子菜单支持 */
+.plugin-menu-item.has-children {
+  position: relative;
+}
+
+.plugin-menu-label {
+  flex: 1;
+}
+
+.plugin-menu-arrow {
+  margin-left: 8px;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.plugin-menu-submenu {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  padding: 4px 0;
+  min-width: 180px;
+  max-width: 280px;
+  z-index: 2147483602;
+  pointer-events: auto;
+  /* 溢出自适应：支持滚动 */
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* 插件子菜单滚动条样式 */
+.plugin-menu-submenu::-webkit-scrollbar {
+  width: 6px;
+}
+.plugin-menu-submenu::-webkit-scrollbar-track {
+  background: transparent;
+}
+.plugin-menu-submenu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.plugin-menu-submenu::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted, #64748b);
+}
+
+@media (prefers-color-scheme: dark) {
+  .plugin-menu-submenu {
+    background: #1e293b;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* 向左展开的子菜单 */
+.plugin-menu-submenu.expand-left {
+  left: auto;
+  right: 100%;
+}
+
+/* 父菜单项悬停时显示子菜单 */
+.plugin-menu-item.has-children:hover > .plugin-menu-submenu {
+  display: block;
+}
+
+/* 确保子菜单本身悬停时保持显示 */
+.plugin-menu-submenu:hover {
+  display: block;
+}
+
+.titlebar .filename {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: 0.01em;
+  transition: color var(--transition-normal);
+  visibility: hidden; /* 仅隐藏文本显示，保留结构以兼容依赖逻辑 */
+}
+
+.titlebar .filename:hover {
+  color: var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .titlebar .filename:hover {
+    color: var(--accent);
+  }
+}
+.titlebar { position: relative; z-index: 100; }
+

@@ -1,0 +1,184 @@
+.statusbar {
+  position: absolute;
+  right: 14px;
+  bottom: 50px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+/* 阅读模式和所见模式下隐藏状态栏 */
+.container.wysiwyg-v2 .statusbar,
+.preview:not(.hidden) ~ .statusbar {
+  display: none;
+}
+
+/* 通知容器：支持多消息堆叠 */
+.notification-container {
+  position: fixed;
+  right: 26px;  /* 14 + 12px body padding */
+  bottom: 22px; /* 10 + 12px body padding */
+  z-index: 999999; /* 最高层级，确保不被任何弹窗遮挡 */
+  display: flex;
+  flex-direction: column-reverse; /* 新消息从下往上堆叠 */
+  gap: 8px;
+  pointer-events: none; /* 容器本身不拦截事件 */
+}
+
+/* 便签模式：隐藏所有右下角通知/气泡（别打扰用户盯便签） */
+body.sticky-note-mode #notification-container,
+body.sticky-note-mode .notification-container,
+body.sticky-note-mode #sync-status,
+body.sticky-note-mode .width-bubble {
+  display: none !important;
+}
+
+/* 通知项 */
+.notification-item {
+  pointer-events: auto;
+  font-size: 12px;
+  color: var(--fg);
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  max-width: 400px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-item .notification-icon {
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.notification-item .notification-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 通知动作按钮 */
+.notification-item .notification-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.notification-item .notification-action-btn {
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(127,127,127,0.06);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.notification-item .notification-action-btn:hover {
+  background: rgba(127,127,127,0.12);
+}
+
+.notification-item .notification-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 可点击的通知 */
+.notification-item.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 向后兼容：旧的 sync-status ID */
+#sync-status {
+  /* 保持为空，已被 notification-container 替代 */
+}
+
+.sync-status:empty {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .statusbar:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  }
+}
+
+/* 缩放状态显示，避免覆盖现有 status 文本（单独节点） */
+.status-zoom { display: none; }
+.status-zoom button {
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.status-zoom button:hover { background: var(--active-bg); color: var(--fg); }
+
+/* 缩放气泡 */
+.zoom-bubble {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 9999;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(30, 30, 30, 0.95);
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.zoom-bubble.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.zoom-bubble.hidden {
+  opacity: 0;
+}
+
+.zoom-bubble .zoom-reset-btn {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  border: none;
+}
+
+.zoom-bubble .zoom-reset-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+
+
+/* 阅读宽度气泡：靠近状态栏右侧显示 */
+.width-bubble {
+  left: auto;
+  right: 24px;
+  bottom: 56px;
+  transform: translateY(0) scale(1);
+}
+.width-bubble.hidden {
+  transform: translateY(8px) scale(0.95);
+}
+

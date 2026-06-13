@@ -1,0 +1,871 @@
+/* 预览正文容器：定宽居中，类似 Typora/Word 的阅读宽度 */
+.preview-body {
+  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));   /* 与所见模式一致 */
+  margin: 0 auto;
+  padding: 14px 16px 20px 16px; /* 与所见模式保持一致 */
+  /* 添加过渡动画，配合侧栏展开 */
+  transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.preview-meta {
+  margin: 0 auto 12px auto;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: rgba(127,127,127,0.04);
+  font-size: 12px;
+  color: var(--muted);
+}
+.md-footnote-tooltip {
+  position: fixed;
+  z-index: 9999;
+  max-width: 360px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--preview-bg, #ffffff);
+  color: var(--fg, #0f172a);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  text-align: left;
+  word-wrap: break-word;
+  word-break: break-word;
+}
+.preview-meta-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.preview-meta-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-meta-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.preview-meta-toggle:hover {
+  background: rgba(127,127,127,0.08);
+}
+.preview-meta-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+}
+.preview-meta-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.preview-meta-label {
+  flex: 0 0 auto;
+  font-weight: 500;
+}
+.preview-meta-value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.preview-meta-chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: rgba(127,127,127,0.1);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg);
+}
+.preview-meta.collapsed .preview-meta-body {
+  display: none;
+}
+@media (max-width: 720px) {
+  .preview-meta-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Markdown 基础排版（预览） */
+.preview h1 {
+  margin: 1.8em 0 0.8em;
+  font-size: 2.2em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.preview h2 {
+  margin: 1.6em 0 0.7em;
+  font-size: 1.8em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25em;
+}
+.preview h3 {
+  margin: 1.4em 0 0.6em;
+  font-size: 1.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.preview h4 {
+  margin: 1.2em 0 0.5em;
+  font-size: 1.2em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.preview h5 {
+  margin: 1.1em 0 0.4em;
+  font-size: 1.05em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.preview h6 {
+  margin: 1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* 任务列表（GFM） */
+.preview-body ul.task-list, .preview-body ol.task-list { list-style: none; padding-left: 1.2em; }
+.preview-body li.task-list-item { list-style: none; }
+.preview-body input.task-list-item-checkbox { margin-right: .5em; vertical-align: middle; }
+.preview p {
+  margin: var(--layout-paragraph-spacing, 1em) 0;
+  text-align: justify;
+  text-justify: inter-character;
+}
+/* 首行缩进：只对 preview-body 的直接子段落生效，避免影响 mermaid/代码块等 */
+.preview-body > p {
+  text-indent: var(--layout-text-indent, 0);
+}
+/* 预览模式代码样式在后面统一定义，这里暂时保留基础样式 */
+.preview blockquote {
+  border-left: 4px solid var(--border-strong);
+  margin: 1.2em 0;
+  padding: 0.8em 1.2em;
+  background: rgba(127,127,127,0.04);
+  border-radius: 0 8px 8px 0;
+  color: var(--fg);
+  font-style: italic;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+.preview blockquote p {
+  margin: 0.4em 0;
+}
+.preview blockquote p:first-child {
+  margin-top: 0;
+}
+.preview blockquote p:last-child {
+  margin-bottom: 0;
+}
+/* 表格包装器：处理横向滚动 */
+.preview .table-wrapper {
+  overflow-x: auto;
+  margin: 1.5em 0;
+  border: 1.5px solid var(--table-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.preview .table-wrapper > table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: auto;        /* 允许表格自然宽度 */
+  min-width: 100%;    /* 窄表格填满容器 */
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 保持表格内部圆角 */
+.preview .table-wrapper > table tr:first-child th:first-child {
+  border-top-left-radius: 7px;
+}
+.preview .table-wrapper > table tr:first-child th:last-child {
+  border-top-right-radius: 7px;
+}
+.preview .table-wrapper > table tr:last-child td:first-child {
+  border-bottom-left-radius: 7px;
+}
+.preview .table-wrapper > table tr:last-child td:last-child {
+  border-bottom-right-radius: 7px;
+}
+
+/* 单元格样式（保持不变） */
+.preview table th {
+  border-right: 1px solid var(--table-border);
+  border-bottom: 2px solid var(--table-border);
+  padding: 12px 16px;
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  color: var(--table-header-fg);
+}
+.preview table th:last-child {
+  border-right: none;
+}
+.preview table td {
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  padding: 10px 16px;
+  transition: background var(--transition-fast);
+}
+.preview table td:last-child {
+  border-right: none;
+}
+.preview table tr:last-child td {
+  border-bottom: none;
+}
+.preview table tr:hover td {
+  background: var(--table-row-hover);
+}
+.preview table tbody tr:nth-child(even) {
+  background: rgba(127,127,127,0.02);
+}
+
+/* 表格内代码和图片处理 */
+.preview table td code,
+.preview table th code {
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.preview table td img,
+.preview table th img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* 滚动条样式优化 */
+
+/* Mermaid 图右上角缩放控件 */
+.mmd-figure { position: relative; display: block; }
+.mmd-figure > svg { display: block; }
+.mmd-tools {
+  position: absolute;
+  top: 6px; right: 6px;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: rgba(40,40,40,0.55);
+  border: 1px solid rgba(255,255,255,0.25);
+  color: #fff;
+  z-index: 2;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+.mmd-figure:hover .mmd-tools { opacity: 1; pointer-events: auto; }
+.mmd-tools .tools-row { display: inline-flex; gap: 4px; justify-content: flex-end; }
+.mmd-tools button {
+  min-width: 20px; height: 20px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #fff;
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+}
+.mmd-tools button:hover { background: rgba(255,255,255,0.12); }
+.mmd-tools button:active { background: rgba(255,255,255,0.18); }
+/* 列表样式优化 */
+.preview ul,
+.preview ol {
+  margin: 1em 0;
+  padding-left: 2em;
+  line-height: 1.8;
+}
+.preview li {
+  margin: 0.4em 0;
+}
+.preview ul ul,
+.preview ol ol,
+.preview ul ol,
+.preview ol ul {
+  margin: 0.3em 0;
+}
+
+/* 链接样式 */
+.preview a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all var(--transition-normal);
+  font-weight: 500;
+}
+.preview a:hover {
+  color: #1e40af;
+  border-bottom-color: #1e40af;
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .preview a {
+    color: var(--accent);
+  }
+  body:not(.light-mode) .preview a:hover {
+    color: #93c5fd;
+    border-bottom-color: #93c5fd;
+  }
+}
+
+/* 图片样式优化 */
+.preview img {
+  display: block;
+  margin: 1.5em auto;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.preview img:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.preview img:not([width]):not([height]) { max-width: 70%; height: auto; }
+
+/* 分割线样式 */
+.preview hr {
+  border: none;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--border-strong), transparent);
+  margin: 2em 0;
+  opacity: 0.6;
+}
+
+/* 最近文件 面板 */
+.recent-panel {
+  position: absolute;
+  top: 38px;
+  left: 10px;
+  min-width: 280px;
+  max-width: 520px;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  z-index: 20;
+}
+.recent-panel.hidden { display: none; }
+.recent-panel .empty { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.recent-panel .item { padding: 8px 12px; cursor: pointer; font-size: 13px; }
+.recent-panel .item:hover { background: rgba(127,127,127,0.08); }
+.recent-panel .path { font-size: 11px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 关于 弹窗 */
+.about-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  animation: fadeIn 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+.about-overlay.hidden {
+  display: none;
+}
+.about-dialog {
+  width: 680px;
+  max-width: calc(100% - 40px);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.about-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+.about-close { cursor: pointer; border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 4px; border-radius: var(--radius-md); }
+.about-close:hover { background: var(--active-bg); }
+.about-body { flex: 1; overflow-y: auto; padding: 14px 16px 16px 16px; font-size: 13px; line-height: 1.6; scrollbar-width: thin; scrollbar-color: rgba(127,127,127,0.3) transparent; }
+.about-body::-webkit-scrollbar { width: 8px; }
+.about-body::-webkit-scrollbar-track { background: transparent; }
+.about-body::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.3); border-radius: var(--radius-sm); }
+.about-body::-webkit-scrollbar-thumb:hover { background: rgba(127,127,127,0.5); }
+.about-body p { margin: 0.4em 0; }
+.about-subtitle { margin-top: 10px; font-weight: 600; font-size: 13px; }
+.about-shortcuts { margin-top: 8px; display: grid; grid-template-columns: 1fr auto; column-gap: 16px; row-gap: 6px; align-items: center; }
+.about-shortcuts .sc-act { color: var(--fg); }
+.about-shortcuts .sc-keys { color: var(--muted); }
+.about-body kbd { display: inline-block; padding: 3px 7px; margin-left: 4px; border: 1px solid rgba(127,127,127,0.2); background: linear-gradient(to bottom, rgba(127,127,127,0.05), rgba(127,127,127,0.12)); box-shadow: 0 1px 2px rgba(0,0,0,0.05); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 11px; font-weight: 500; color: var(--fg); }
+.about-sc-keys-wrapper kbd:first-child { margin-left: 0; }
+.about-sc-table { width: 100%; margin-top: 8px; border-collapse: collapse; table-layout: fixed; }
+.about-sc-table td { padding: 5px 6px; border-bottom: 1px solid rgba(127,127,127,0.06); vertical-align: middle; }
+.about-sc-table td:nth-child(1) { width: 26%; }
+.about-sc-table td:nth-child(2) { width: 24%; text-align: right; padding-right: 12px; }
+.about-sc-table td:nth-child(3) { width: 26%; padding-left: 12px; }
+.about-sc-table td:nth-child(4) { width: 24%; text-align: right; }
+.about-sc-table tbody tr:last-child td { border-bottom: none; }
+.about-sc-table tbody tr:hover { background: rgba(127,127,127,0.03); }
+.about-sc-action { color: var(--fg); font-size: 12.5px; }
+.about-sc-keys { }
+.about-sc-keys-wrapper { display: inline-block; }
+.about-footer { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.about-footer #about-version { font-size: 12px; color: var(--muted); }
+.about-footer a { color: var(--accent); text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.about-footer a:hover { text-decoration: underline; }
+.about-footer .sep { color: var(--muted); font-size: 12px; }
+.about-footer .favicon { width: 16px; height: 16px; border-radius: 3px; }
+
+/* 隐藏正文中的关于链接区域（已移至底部右侧） */
+.about-body .about-links { display: none; }
+.about-links { margin-top: 10px; }
+.about-links a { color: var(--accent); text-decoration: none; }
+.about-links a:hover { text-decoration: underline; }
+/* 任务列表复选框美化 */
+.preview-body input.task-list-item-checkbox {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  transition: transform 0.15s ease;
+}
+.preview-body input.task-list-item-checkbox:hover {
+  transform: scale(1.1);
+}
+.preview-body input.task-list-item-checkbox:checked {
+  transform: scale(1.05);
+}
+
+/* 已完成的任务列表项添加删除线 */
+.preview-body li.task-list-item:has(input.task-list-item-checkbox:checked) {
+  text-decoration: line-through;
+  opacity: 0.65;
+  transition: opacity 0.2s ease;
+}
+
+/* 强调文本样式优化 */
+.preview strong,
+.preview b {
+  font-weight: 700;
+  color: var(--fg);
+}
+.preview em,
+.preview i {
+  font-style: italic;
+  color: var(--fg);
+}
+.preview mark {
+  background: rgba(250, 204, 21, 0.3);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .preview mark {
+    background: rgba(250, 204, 21, 0.2);
+  }
+}
+
+/* 删除线文本 */
+.preview del,
+.preview s {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+/* 键盘按键样式 */
+.preview kbd {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 0.85em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--code-bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 2px 0 var(--border-strong), 0 1px 2px rgba(0,0,0,0.1);
+  white-space: nowrap;
+}
+
+/* 注脚样式 */
+.preview sup,
+.preview sub {
+  font-size: 0.75em;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+.preview sup {
+  top: -0.5em;
+}
+.preview sub {
+  bottom: -0.25em;
+}
+
+/* 缩写文本 */
+.preview abbr[title] {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+/* ========== Obsidian Callout 样式 ========== */
+
+/* 基础结构 */
+.callout {
+  --callout-info-rgb: 59, 130, 246;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 124, 58, 237;
+  --callout-accent-rgb: var(--callout-info-rgb);
+
+  border-radius: var(--radius-md, 6px);
+  padding: 12px 16px;
+  margin: 1em 0;
+  background: rgba(var(--callout-accent-rgb), 0.07);
+  border-left: 4px solid rgb(var(--callout-accent-rgb));
+  position: relative;
+}
+
+.callout-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.95em;
+  margin-bottom: 8px;
+  color: rgb(var(--callout-accent-rgb));
+  user-select: none;
+}
+
+.callout-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.callout-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.callout-title-inner {
+  flex: 1;
+  min-width: 0;
+}
+
+.callout-fold-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 4px);
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.callout-fold-icon:hover {
+  background: rgba(var(--callout-accent-rgb), 0.12);
+}
+
+.callout-fold-icon svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+
+.callout.folded .callout-fold-icon svg {
+  transform: rotate(-90deg);
+}
+
+.callout-content > *:first-child {
+  margin-top: 0;
+}
+
+.callout-content > *:last-child {
+  margin-bottom: 0;
+}
+
+/* 类型 -> 语义色映射 */
+.callout[data-callout="note"],
+.callout[data-callout="quote"],
+.callout[data-callout="cite"] {
+  --callout-accent-rgb: var(--callout-info-rgb);
+}
+
+.callout[data-callout="abstract"],
+.callout[data-callout="summary"],
+.callout[data-callout="tldr"],
+.callout[data-callout="info"],
+.callout[data-callout="todo"],
+.callout[data-callout="question"],
+.callout[data-callout="help"],
+.callout[data-callout="faq"] {
+  --callout-accent-rgb: var(--callout-info-rgb);
+}
+
+.callout[data-callout="tip"],
+.callout[data-callout="hint"],
+.callout[data-callout="important"],
+.callout[data-callout="success"],
+.callout[data-callout="check"],
+.callout[data-callout="done"] {
+  --callout-accent-rgb: var(--callout-success-rgb);
+}
+
+.callout[data-callout="warning"],
+.callout[data-callout="caution"],
+.callout[data-callout="attention"] {
+  --callout-accent-rgb: var(--callout-warning-rgb);
+}
+
+.callout[data-callout="failure"],
+.callout[data-callout="fail"],
+.callout[data-callout="missing"],
+.callout[data-callout="danger"],
+.callout[data-callout="error"],
+.callout[data-callout="bug"] {
+  --callout-accent-rgb: var(--callout-danger-rgb);
+}
+
+.callout[data-callout="example"] {
+  --callout-accent-rgb: var(--callout-example-rgb);
+}
+
+/* ---- 各主题配色覆盖 ---- */
+
+/* GitHub 风 */
+.container.md-github .callout {
+  --callout-info-rgb: 9, 105, 218;
+  --callout-success-rgb: 31, 136, 61;
+  --callout-warning-rgb: 154, 103, 0;
+  --callout-danger-rgb: 207, 34, 46;
+  --callout-example-rgb: 130, 80, 223;
+}
+
+/* Notion 风 */
+.container.md-notion .callout {
+  --callout-info-rgb: 59, 130, 246;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 139, 92, 246;
+  background: rgba(var(--callout-accent-rgb), 0.04);
+  border-left-width: 3px;
+}
+
+/* Journal 风（暖色调） */
+.container.md-journal .callout {
+  --callout-info-rgb: 70, 130, 180;
+  --callout-success-rgb: 60, 150, 100;
+  --callout-warning-rgb: 200, 150, 60;
+  --callout-danger-rgb: 190, 70, 70;
+  --callout-example-rgb: 130, 90, 170;
+}
+
+/* Card 风 */
+.container.md-card .callout {
+  --callout-info-rgb: 37, 99, 235;
+  --callout-success-rgb: 22, 163, 74;
+  --callout-warning-rgb: 217, 119, 6;
+  --callout-danger-rgb: 220, 38, 38;
+  --callout-example-rgb: 124, 58, 237;
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+/* Docs 风 */
+.container.md-docs .callout {
+  --callout-info-rgb: 29, 78, 216;
+  --callout-success-rgb: 21, 128, 61;
+  --callout-warning-rgb: 194, 100, 20;
+  --callout-danger-rgb: 185, 28, 28;
+  --callout-example-rgb: 109, 40, 217;
+}
+
+/* Typora 风 */
+.container.md-typora .callout {
+  --callout-info-rgb: 66, 133, 244;
+  --callout-success-rgb: 52, 168, 83;
+  --callout-warning-rgb: 251, 188, 5;
+  --callout-danger-rgb: 234, 67, 53;
+  --callout-example-rgb: 123, 83, 223;
+  background: rgba(var(--callout-accent-rgb), 0.04);
+}
+
+/* Obsidian 风（紫色主调） */
+.container.md-obsidian .callout {
+  --callout-info-rgb: 99, 102, 241;
+  --callout-success-rgb: 34, 197, 94;
+  --callout-warning-rgb: 245, 158, 11;
+  --callout-danger-rgb: 239, 68, 68;
+  --callout-example-rgb: 139, 92, 246;
+  background: rgba(var(--callout-accent-rgb), 0.08);
+  border-left-width: 3px;
+}
+
+/* Bear 风（红色主调） */
+.container.md-bear .callout {
+  --callout-info-rgb: 60, 120, 180;
+  --callout-success-rgb: 50, 140, 90;
+  --callout-warning-rgb: 190, 140, 50;
+  --callout-danger-rgb: 210, 60, 60;
+  --callout-example-rgb: 140, 80, 180;
+}
+
+/* Minimalist 风 */
+.container.md-minimalist .callout {
+  --callout-info-rgb: 100, 116, 139;
+  --callout-success-rgb: 71, 160, 100;
+  --callout-warning-rgb: 180, 140, 60;
+  --callout-danger-rgb: 190, 80, 80;
+  --callout-example-rgb: 130, 100, 170;
+  background: transparent;
+  border-left-width: 2px;
+  padding: 8px 14px;
+}
+
+/* ---- 暗色模式覆盖 ---- */
+body.dark-mode .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-github .callout {
+  --callout-info-rgb: 83, 155, 245;
+  --callout-success-rgb: 87, 171, 90;
+  --callout-warning-rgb: 210, 153, 34;
+  --callout-danger-rgb: 248, 81, 73;
+  --callout-example-rgb: 161, 123, 243;
+}
+
+body.dark-mode .container.md-notion .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-journal .callout {
+  --callout-info-rgb: 100, 160, 210;
+  --callout-success-rgb: 90, 180, 130;
+  --callout-warning-rgb: 220, 180, 90;
+  --callout-danger-rgb: 220, 100, 100;
+  --callout-example-rgb: 170, 130, 210;
+}
+
+body.dark-mode .container.md-card .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-docs .callout {
+  --callout-info-rgb: 147, 197, 253;
+  --callout-success-rgb: 134, 239, 172;
+  --callout-warning-rgb: 253, 186, 116;
+  --callout-danger-rgb: 252, 165, 165;
+  --callout-example-rgb: 216, 180, 254;
+}
+
+body.dark-mode .container.md-typora .callout {
+  --callout-info-rgb: 96, 165, 250;
+  --callout-success-rgb: 74, 222, 128;
+  --callout-warning-rgb: 251, 191, 36;
+  --callout-danger-rgb: 248, 113, 113;
+  --callout-example-rgb: 167, 139, 250;
+}
+
+body.dark-mode .container.md-obsidian .callout {
+  --callout-info-rgb: 129, 140, 248;
+  --callout-success-rgb: 134, 239, 172;
+  --callout-warning-rgb: 253, 186, 116;
+  --callout-danger-rgb: 252, 165, 165;
+  --callout-example-rgb: 192, 132, 252;
+}
+
+body.dark-mode .container.md-bear .callout {
+  --callout-info-rgb: 120, 170, 220;
+  --callout-success-rgb: 100, 190, 140;
+  --callout-warning-rgb: 210, 170, 80;
+  --callout-danger-rgb: 230, 100, 100;
+  --callout-example-rgb: 180, 140, 220;
+}
+
+body.dark-mode .container.md-minimalist .callout {
+  --callout-info-rgb: 148, 163, 184;
+  --callout-success-rgb: 110, 190, 140;
+  --callout-warning-rgb: 200, 170, 90;
+  --callout-danger-rgb: 210, 110, 110;
+  --callout-example-rgb: 170, 140, 200;
+}
+
+/* ---- WYSIWYG 模式下的 Callout ---- */
+.container.wysiwyg-v2 .ProseMirror .callout {
+  margin: 0.8em 0;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-title {
+  pointer-events: auto;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-content > * {
+  margin: 0.4em 0;
+}
+
+.container.wysiwyg-v2 .ProseMirror .callout-content > *:first-child {
+  margin-top: 0;
+}
+
+/* 预览模式嵌套 callout 修复 */
+.preview .callout .callout {
+  margin: 0.6em 0;
+}
+
+/* 打印导出时保持 callout 可见 */
+@media print {
+  .callout-content {
+    display: block !important;
+  }
+  .callout-fold-icon {
+    display: none !important;
+  }
+}
+

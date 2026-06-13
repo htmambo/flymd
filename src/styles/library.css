@@ -1,0 +1,793 @@
+.ribbon {
+  width: 40px;
+  min-width: 40px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* 不用 space-between，ribbon-bottom 用 margin-top: auto 固定底部 */
+  background: var(--chrome-bg, var(--bg));
+  border-right: 1px solid var(--border);
+  -webkit-app-region: drag;
+  z-index: 100;
+}
+
+.ribbon-top,
+.ribbon-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  gap: 2px;
+}
+
+.ribbon-bottom {
+  margin-top: auto;
+}
+
+.ribbon-top {
+  padding-top: 8px;
+}
+
+.ribbon-btn {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--muted);
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.ribbon-btn:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+
+.ribbon-btn:active {
+  background: var(--active-bg);
+  transform: scale(0.95);
+}
+
+.ribbon-btn.active {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.ribbon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ribbon-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.5;
+}
+
+/* 插件 Ribbon 按钮：文字图标样式 */
+.ribbon-btn.text-icon {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Ribbon 更新提示红点 */
+.ribbon-btn.has-update::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ========== Ribbon 库切换区 ========== */
+.ribbon-libs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 0 0 0;
+  gap: 2px;
+}
+
+.ribbon-libs.hidden {
+  display: none;
+}
+
+/* 库按钮：简洁风格，与 ribbon-btn 一致 */
+.ribbon-lib-btn {
+  -webkit-app-region: no-drag;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  position: relative;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.ribbon-lib-btn:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+
+.ribbon-lib-btn:active {
+  background: var(--active-bg);
+  transform: scale(0.95);
+}
+
+/* 激活状态：与 ribbon-btn.active 一致 */
+.ribbon-lib-btn.active {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+/* Ribbon 分隔线 */
+.ribbon-divider {
+  width: 20px;
+  height: 1px;
+  background: var(--border);
+  margin: 2px auto;
+}
+
+.ribbon-divider.hidden {
+  display: none;
+}
+
+/* 主内容区 */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+/* 文档库侧栏 */
+.library {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--library-width, 240px);
+    background: var(--chrome-panel-bg, var(--panel-bg));
+    color: var(--fg);
+    overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 15;
+  /* 强制阻止网格背景图案，确保库侧栏在任何情况下都只显示纯色背景 */
+  background-image: none !important;
+}
+.library.side-left {
+  left: 0;
+  right: auto;
+  border-right: 1px solid var(--border);
+}
+.library.side-right {
+  right: 0;
+  left: auto;
+  border-left: 1px solid var(--border);
+}
+.lib-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px; /* 命中区：别做成 1px，用户拖不到就是垃圾交互 */
+  z-index: 16; /* 高于库(15)与大纲列(14)，避免被遮挡 */
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+  /* 禁止被选中/拖拽：这是分隔条，不是内容 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.lib-resize-handle.side-left {
+  /* 贴在“库内侧边界”，并略微压到编辑区，保证好拖 */
+  left: calc(var(--library-width, 240px) - 4px);
+}
+.lib-resize-handle.side-right {
+  right: calc(var(--library-width, 240px) - 4px);
+}
+.lib-resize-handle:hover,
+.lib-resize-handle.dragging {
+  background: rgba(127,127,127,0.14);
+}
+body.lib-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.library.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.library.side-left.hidden {
+  transform: translateX(-100%);
+}
+.library.side-right.hidden {
+  transform: translateX(100%);
+}
+.library .lib-header { position: sticky; top: 0; background: var(--chrome-panel-bg, var(--panel-bg)); border-bottom: none; padding: 8px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }
+/* 库选择器行：Obsidian 风格 vault 按钮 + 搜索 */
+.library .lib-vault-row { display: flex; align-items: center; gap: 4px; }
+.library .lib-vault-btn { -webkit-app-region: no-drag; flex: 1; display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; border: none; border-radius: var(--radius-md); cursor: pointer; color: var(--fg); font-size: 13px; font-weight: 500; text-align: left; min-width: 0; transition: background 0.15s; font-family: inherit; }
+.library .lib-vault-btn:hover { background: var(--hover-bg); }
+.library .lib-vault-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; opacity: 0.7; }
+.library .lib-vault-icon svg { width: 16px; height: 16px; }
+.library .lib-vault-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library .lib-vault-arrow { flex-shrink: 0; display: flex; align-items: center; opacity: 0.5; }
+.library .lib-vault-arrow svg { width: 12px; height: 12px; }
+.library .lib-search-btn { -webkit-app-region: no-drag; flex-shrink: 0; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: transparent; border: none; border-radius: var(--radius-md); cursor: pointer; color: var(--fg); opacity: 0.6; transition: opacity var(--transition-fast), background var(--transition-fast); }
+.library .lib-search-btn:hover { opacity: 1; background: var(--hover-bg); }
+.library .lib-search-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; opacity: 1; }
+.library .lib-search-btn svg { width: 16px; height: 16px; }
+
+/* 库侧栏：库列表（多库快速切换）- 可通过设置切换显示位置 */
+/* 库图标栏 */
+.library .lib-vault-list { display: flex; flex-direction: row; gap: 4px; padding: 2px 8px; }
+.library .lib-vault-list.hidden { display: none; }
+.library .lib-vault-item { -webkit-app-region: no-drag; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; font-size: 10px; font-weight: 500; transition: all var(--transition-fast); }
+.library .lib-vault-item:hover { background: var(--hover-bg); color: var(--fg); }
+.library .lib-vault-item.active { border-color: var(--accent, #2563eb); color: var(--accent, #2563eb); background: transparent; }
+
+/* 快速文件搜索 Quick Switcher */
+.quick-search-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+  z-index: 9999;
+}
+.quick-search-overlay.show {
+  display: flex;
+}
+.quick-search-dialog {
+  width: 500px;
+  max-width: 90vw;
+  background: var(--chrome-panel-bg, var(--panel-bg));
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.quick-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.quick-search-input {
+  flex: 1;
+  width: auto;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 15px;
+  outline: none;
+  box-sizing: border-box;
+}
+.quick-search-cloud-btn {
+  flex-shrink: 0;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.quick-search-cloud-btn:hover {
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--fg);
+}
+.quick-search-cloud-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.quick-search-cloud-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.quick-search-input::placeholder {
+  color: var(--muted);
+}
+.quick-search-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(127, 127, 127, 0.04);
+}
+.quick-search-status-text {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-search-action-btn {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.quick-search-action-btn:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+.quick-search-results {
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.quick-search-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.quick-search-item:hover,
+.quick-search-item.selected {
+  background: var(--hover-bg);
+}
+.quick-search-item.selected {
+  background: var(--accent);
+  color: #fff;
+}
+.quick-search-item.selected .quick-search-path {
+  color: rgba(255, 255, 255, 0.7);
+}
+.quick-search-item.selected .quick-search-snippet {
+  color: rgba(255, 255, 255, 0.82);
+}
+.quick-search-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+.quick-search-path {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-search-snippet {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.quick-search-loading {
+  padding: 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 命令面板 Command Palette（Ctrl+Shift+P） */
+.command-palette-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 10001;
+}
+.command-palette-overlay.show {
+  display: flex;
+}
+.command-palette-dialog {
+  width: 560px;
+  max-width: 92vw;
+  background: var(--chrome-panel-bg, var(--panel-bg));
+  border-radius: 10px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.command-palette-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  font-size: 15px;
+  outline: none;
+  box-sizing: border-box;
+}
+.command-palette-input::placeholder {
+  color: var(--muted);
+}
+.command-palette-list {
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.command-palette-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.command-palette-item:hover {
+  background: var(--hover-bg);
+}
+.command-palette-item.selected {
+  background: var(--accent);
+  color: #fff;
+}
+.command-palette-item.selected .command-palette-detail {
+  color: rgba(255, 255, 255, 0.7);
+}
+.command-palette-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.command-palette-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.command-palette-detail {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-palette-hint {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.command-palette-loading,
+.command-palette-empty {
+  padding: 18px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.lib-float-toggle { -webkit-app-region: no-drag; cursor: pointer; border: none; background: none; color: var(--fg); font-size: 18px; width: 30px; height: 30px; display: none; align-items: center; justify-content: center; border-radius: var(--radius-sm); padding: 0; line-height: 1; opacity: 0.5; font-family: monospace; position: fixed; top: 12px; left: 12px; z-index: 90; }
+.lib-float-toggle.side-left { left: 12px; right: auto; }
+.lib-float-toggle.side-right { left: auto; right: 12px; }
+.lib-float-toggle:hover { opacity: 0.8; }
+body.focus-mode .lib-float-toggle.show { display: flex; }
+/* 文件树操作栏 - 现代简约风格 */
+.library .lib-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+}
+.library .lib-action-btn {
+  -webkit-app-region: no-drag;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 12px;
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  font-family: inherit;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+.library .lib-action-btn:hover {
+  color: var(--fg);
+}
+.library .lib-action-btn.active {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* 图标按钮样式 */
+.library .lib-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border-radius: var(--radius-sm);
+}
+.library .lib-icon-btn svg {
+  width: 16px;
+  height: 16px;
+  opacity: 0.5;
+  transition: opacity var(--transition-fast);
+}
+.library .lib-icon-btn:hover {
+  background: var(--hover-bg);
+}
+.library .lib-icon-btn:hover svg {
+  opacity: 0.9;
+}
+.library .lib-icon-btn.active svg {
+  opacity: 0.9;
+}
+
+.library .hidden { display: none !important; }
+.library { -webkit-app-region: no-drag; }
+.library .lib-tree { padding: 8px 6px 14px 6px; font-size: 13px; -webkit-app-region: no-drag; }
+/* 大纲面板：支持嵌入库内与剥离布局 */
+.lib-outline {
+  padding: 10px 8px 16px 8px;
+  font-size: 13px;
+}
+/* 剥离布局下的大纲列：绝对定位在容器内边，与库/编辑区并排 */
+.lib-outline.outline-floating {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 260px;
+  z-index: 14;
+  overflow-y: auto;
+  overflow-x: hidden;
+    background: var(--chrome-panel-bg, var(--panel-bg));
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.lib-outline.outline-floating.side-left {
+  /* 左侧：贴在库占位之后；库为抽屉且可见时，再额外避让其宽度 */
+  left: calc(var(--gap-left-library, 0px) + var(--outline-left-offset, 0px));
+}
+.lib-outline.outline-floating.side-right {
+  /* 右侧：始终贴在右侧 dock/插件面板的左边缘；若无插件则贴容器右侧 */
+  /* 注意：自动隐藏热区会覆盖到预览滚动条，额外留出一条“滚动条安全带”（由 JS 按需写入） */
+  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px) + var(--outline-right-offset, 0px) + var(--outline-edge-gutter, 0px));
+}
+
+/* 大纲自动隐藏：不占位，通过 transform 滑入/滑出（类似侧栏） */
+.lib-outline.outline-floating.outline-autohide {
+  transition: transform var(--transition-normal), opacity var(--transition-normal);
+  will-change: transform, opacity;
+}
+.lib-outline.outline-floating.outline-autohide:not(.outline-autohide-open) {
+  opacity: 0;
+  pointer-events: none;
+}
+.lib-outline.outline-floating.side-left.outline-autohide:not(.outline-autohide-open) {
+  transform: translateX(calc(-100% - 2px));
+}
+.lib-outline.outline-floating.side-right.outline-autohide:not(.outline-autohide-open) {
+  transform: translateX(calc(100% + 2px));
+}
+.lib-outline.outline-floating.outline-autohide.outline-autohide-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+/* 大纲自动隐藏唤醒热区：仅在自动隐藏且收起时显示 */
+.outline-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 36px;
+  z-index: 14;
+  pointer-events: auto;
+  background: transparent;
+  display: none;
+}
+.outline-edge.side-left {
+  left: calc(var(--gap-left-library, 0px) + var(--outline-left-offset, 0px));
+}
+.outline-edge.side-right {
+  /* 给预览滚动条留空，不然 hover 到最右侧时滚动条永远出不来 */
+  right: calc(var(--gap-right-library, 0px) + var(--dock-right-gap, 0px) + var(--outline-right-offset, 0px) + var(--outline-edge-gutter, 0px));
+}
+
+.lib-outline .ol-item {
+  padding: 4px 8px;
+  cursor: pointer;
+  line-height: 1.5;
+  margin: 1px 0;
+  position: relative;
+  color: var(--muted);
+}
+
+.lib-outline .ol-item:hover {
+  color: var(--fg);
+}
+
+.lib-outline .ol-item.active {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* 大纲折叠/展开开关（H1/H2 有子级时显示） */
+.lib-outline .ol-tg {
+  display: inline-block;
+  width: 14px;
+  margin-right: 4px;
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+.lib-outline .ol-tg[data-idx] { cursor: pointer; }
+.lib-outline .ol-tg:not([data-idx]) { opacity: 0; pointer-events: none; }
+
+.lib-outline .lvl-1 {
+  margin-left: 0;
+  font-weight: 600;
+  font-size: 14px;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.lib-outline .lvl-2 {
+  margin-left: 12px;
+  font-size: 13px;
+}
+
+.lib-outline .lvl-3 {
+  margin-left: 24px;
+  font-size: 13px;
+  opacity: 0.95;
+}
+
+.lib-outline .lvl-4 {
+  margin-left: 36px;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+.lib-outline .lvl-5 {
+  margin-left: 48px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.lib-outline .lvl-6 {
+  margin-left: 60px;
+  font-size: 11px;
+  opacity: 0.8;
+}
+/* 文件树节点 - 现代简约风格 */
+.library .lib-node {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 0 3px 12px;
+  margin: 1px 4px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+  user-select: none;
+  transition: background var(--transition-fast), color var(--transition-fast);
+  color: var(--muted);
+}
+.library .lib-node:hover {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.library .lib-node.selected {
+  background: var(--accent-light);
+  color: var(--fg);
+}
+.library .lib-dir { cursor: pointer; }
+.library .lib-file { cursor: pointer; }
+.library .lib-toggle {
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  opacity: 0.5;
+  transition: transform var(--transition-fast), opacity var(--transition-fast);
+}
+.library .lib-node:hover .lib-toggle { opacity: 0.8; }
+.library .lib-node.expanded .lib-toggle { transform: rotate(90deg); }
+/* 库侧栏图标：VS Code 风格 SVG 黑白图标 */
+.lib-ico { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: 0 0 auto; }
+.lib-ico-svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.lib-ico-svg path {
+  vector-effect: non-scaling-stroke;
+  /* WebKitGTK 偶发不解析 SVG presentation attr 的 currentColor;改走 CSS 显式声明 */
+  stroke: currentColor;
+}
+.lib-ico-folder-open path { fill: currentColor; }
+.lib-ico-svg text { stroke: none; fill: currentColor; }
+.lib-ico-folder { /* 文件夹图标 */ }
+.lib-ico-file { /* 普通文件图标 */ }
+.lib-ico-pdf .pdf-badge { fill: currentColor; }
+.lib-ico-pdf .pdf-text { fill: var(--bg); stroke: none; }
+.library .lib-ico { color: var(--muted); }
+.library .lib-node:hover .lib-ico { color: var(--fg); }
+.library .lib-node.selected .lib-ico { color: var(--fg); }
+/* 彩色库树图标配色 — scheme 载体只设 CSS 变量,图标 path 从「最近的 [data-scheme] 祖先」就近继承。
+   旧版用后代选择器 [data-scheme=N] .lib-ico path 直写 stroke:深层图标祖先链含多个 scheme 载体,
+   5 条规则同特异性 (0,3,2),同特异性下源码末条([data-scheme=5])恒胜 → ≥5 级图标被钉死第 5 色。
+   自定义属性走「就近继承」(与源码顺序无关),图标最近的 [data-scheme] 祖先即自身行 → 各级正确循环。
+   path 仍直写 stroke/fill 绕开 WebKitGTK 偶发失效的 SVG currentColor 链;var() 第二参兜底。
+   关闭开关时本块不生效,回退 .library .lib-ico{color:var(--muted)} + SVG currentColor 原配色。 */
+body.lib-color-depth .library [data-scheme="1"] { --lib-ico-stroke: var(--lib-color-1); }
+body.lib-color-depth .library [data-scheme="2"] { --lib-ico-stroke: var(--lib-color-2); }
+body.lib-color-depth .library [data-scheme="3"] { --lib-ico-stroke: var(--lib-color-3); }
+body.lib-color-depth .library [data-scheme="4"] { --lib-ico-stroke: var(--lib-color-4); }
+body.lib-color-depth .library [data-scheme="5"] { --lib-ico-stroke: var(--lib-color-5); }
+
+body.lib-color-depth .library .lib-ico-folder path,
+body.lib-color-depth .library .lib-ico-file path,
+body.lib-color-depth .library .lib-ico-library path { stroke: var(--lib-ico-stroke, currentColor); }
+
+/* 打开态:同色描边 + 22% 透明填充 + 提亮(brightness 无 scheme 依赖,合并为一条) */
+body.lib-color-depth .library .lib-ico-folder-open path {
+  stroke: var(--lib-ico-stroke, currentColor);
+  fill: var(--lib-ico-stroke, currentColor);
+  fill-opacity: 0.22;
+}
+body.lib-color-depth .library .lib-ico-folder-open { filter: brightness(1.25); }
+
+/* 关闭开关时的原配色兜底:打开态文件夹图标走 --accent(008ce14 commit 的原规则) */
+.library .lib-ico-folder-open,
+.library .lib-node:hover .lib-ico-folder-open,
+.library .lib-node.selected .lib-ico-folder-open { color: var(--accent); }
+
+/* 文档库/AI 助手占用空间通过 CSS 变量告知容器 */
+.container.with-library-left { --gap-left-library: var(--library-width, 240px); }
+.container.with-library-right { --gap-right-library: var(--library-width, 240px); }
+/* 大纲独立列占用空间（通过类名声明左右占位） */
+.container.with-outline-left { --gap-left-outline: 260px; }
+.container.with-outline-right { --gap-right-outline: 260px; }
+/* 兼容旧版 AI 助手：仍可通过类名写入 dock 间距 */
+.container.with-ai-left { --dock-left-gap: var(--ai-left, 300px); }
+.container.with-ai-right { --dock-right-gap: var(--ai-right, 300px); }
+

@@ -1,0 +1,146 @@
+/* 自定义滚动条样式 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(127,127,127,0.25);
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.2);
+  }
+}
+
+/* ===== 滚动条自动隐藏功能 ===== */
+
+/* 隐藏状态：所有滚动条组件透明 */
+body[data-scrollbar-visible="false"] ::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] ::-webkit-scrollbar-track {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
+/* 显示状态：滚动条恢复可见 */
+body[data-scrollbar-visible="true"] ::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="true"] ::-webkit-scrollbar-track {
+  opacity: 1;
+  transition: opacity 0.15s ease-in;
+}
+
+/* Firefox 兼容：使用透明颜色而非 opacity */
+body[data-scrollbar-visible="false"] .preview,
+body[data-scrollbar-visible="false"] #md-wysiwyg-root,
+body[data-scrollbar-visible="false"] #md-wysiwyg-root .scrollView,
+body[data-scrollbar-visible="false"] .library {
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease-out;
+}
+
+body[data-scrollbar-visible="true"] .preview,
+body[data-scrollbar-visible="true"] #md-wysiwyg-root,
+body[data-scrollbar-visible="true"] #md-wysiwyg-root .scrollView,
+body[data-scrollbar-visible="true"] .library {
+  scrollbar-color: rgba(127,127,127,0.4) transparent;
+  transition: scrollbar-color 0.15s ease-in;
+}
+
+/* 暗色模式适配 */
+@media (prefers-color-scheme: dark) {
+  body[data-scrollbar-visible="true"] .preview,
+  body[data-scrollbar-visible="true"] #md-wysiwyg-root,
+  body[data-scrollbar-visible="true"] #md-wysiwyg-root .scrollView,
+  body[data-scrollbar-visible="true"] .library {
+    scrollbar-color: rgba(255,255,255,0.3) transparent;
+  }
+}
+
+.preview .table-wrapper::-webkit-scrollbar {
+  height: 8px;
+  background: transparent;
+}
+.preview .table-wrapper::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.03);
+  border-radius: var(--radius-sm);
+}
+.preview .table-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-normal);
+}
+.preview .table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.25);
+}
+
+/* 暗色主题滚动条 */
+.dark .preview .table-wrapper::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.05);
+}
+.dark .preview .table-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+}
+.dark .preview .table-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.3);
+}
+/* === 全局滚动控制：去掉窗口级滚动，仅内部滚动 === */
+html, body { overflow: hidden; }
+html::-webkit-scrollbar:horizontal,
+body::-webkit-scrollbar:horizontal,
+#app::-webkit-scrollbar:horizontal,
+.container::-webkit-scrollbar:horizontal,
+.preview::-webkit-scrollbar:horizontal,
+#md-wysiwyg-root::-webkit-scrollbar:horizontal,
+.library::-webkit-scrollbar:horizontal { height: 0 !important; }
+
+/* 为主要滚动容器显式展示竖向滚动条（跨浏览器） */
+/* Firefox */
+.preview,
+#md-wysiwyg-root,
+#md-wysiwyg-root .scrollView,
+.library {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(127,127,127,0.4) transparent;
+}
+/* WebKit/Chromium - 美化滚动条 */
+.preview::-webkit-scrollbar:vertical,
+#md-wysiwyg-root .scrollView::-webkit-scrollbar:vertical,
+#md-wysiwyg-root::-webkit-scrollbar:vertical {
+  width: 16px;
+}
+/* 侧栏滚动条更细 */
+.library::-webkit-scrollbar:vertical {
+  width: 4px;
+}
+.preview::-webkit-scrollbar-thumb,
+#md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb,
+#md-wysiwyg-root::-webkit-scrollbar-thumb {
+  background: rgba(127,127,127,0.3);
+  border-radius: var(--radius-lg);
+  transition: background var(--transition-normal);
+}
+.library::-webkit-scrollbar-thumb {
+  background: rgba(127,127,127,0.2);
+  border-radius: 2px;
+}
+.preview::-webkit-scrollbar-thumb:hover,
+#md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb:hover,
+#md-wysiwyg-root::-webkit-scrollbar-thumb:hover {
+  background: rgba(127,127,127,0.5);
+}
+.library::-webkit-scrollbar-thumb:hover {
+  background: rgba(127,127,127,0.35);
+}
+.preview::-webkit-scrollbar-track,
+#md-wysiwyg-root .scrollView::-webkit-scrollbar-track,
+#md-wysiwyg-root::-webkit-scrollbar-track,
+.library::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 4px 0;
+}

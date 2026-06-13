@@ -55,3 +55,13 @@ body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-sch
 body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="4"])::after { background: var(--lib-color-4); }
 body.lib-color-depth .lib-node.expanded:has(+ .lib-children > .lib-node[data-scheme="5"])::after { background: var(--lib-color-5); }
 
+/* 树形缩进：竖线 + ├─ / └─ 连接线 */
+.library .lib-children {
+  margin-left: 0;
+  padding-left: 10px;
+  position: relative;
+}
+/* lib-node 统一建立定位上下文（根行不在 .lib-children 内，也需要它来定位 ::after 分支线） */
+.library .lib-node {
+  position: relative;
+}

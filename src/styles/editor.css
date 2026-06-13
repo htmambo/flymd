@@ -1,0 +1,757 @@
+.container {
+  --library-width: 240px;
+  --gap-left-library: 0px;
+  --gap-right-library: 0px;
+  /* 大纲独立布局左右占位宽度（默认 0，仅在剥离模式下使用） */
+  --gap-left-outline: 0px;
+  --gap-right-outline: 0px;
+  /* 大纲定位偏移：仅用于避让“抽屉式侧栏”，不推挤编辑区 */
+  --outline-left-offset: 0px;
+  --outline-right-offset: 0px;
+  /* 插件侧边/底部 Panel 推挤间距（包含 AI 助手等） */
+  --ai-left: 300px;   /* 向后兼容旧 AI 助手：左侧宽度 */
+  --ai-right: 300px;  /* 向后兼容旧 AI 助手：右侧宽度 */
+  --dock-left-gap: 0px;
+  --dock-right-gap: 0px;
+  --dock-bottom-gap: 0px;
+  --workspace-left-gap: calc(var(--gap-left-library) + var(--gap-left-outline) + var(--dock-left-gap));
+  --workspace-right-gap: calc(var(--gap-right-library) + var(--gap-right-outline) + var(--dock-right-gap));
+  --workspace-bottom-gap: var(--dock-bottom-gap);
+  flex: 1; /* 在flex布局中填充剩余空间 */
+  min-height: 0; /* 允许flex子元素正确收缩和滚动 */
+  height: calc(100% - 36px);
+  overflow: hidden; /* 防止内容溢出影响外部布局 */
+  position: relative;
+  background: var(--bg);
+}
+/* 所见模式：整体容器背景替换为专用色 */
+.container.wysiwyg { /* legacy overlay 标记，保留但不隐藏容器，避免误伤 */ }
+.container.wysiwyg-v2 { background: var(--wysiwyg-bg) !important; }
+
+/* 源码模式网格背景 - 应用到整个容器，包括左右留白 */
+.container.edit-grid-bg:not(.wysiwyg-v2) {
+  background-image:
+    linear-gradient(rgba(127,127,127,0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127,127,127,0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: -1px -1px;
+}
+
+/* 编辑器背景透明，显示容器的网格 */
+.container.edit-grid-bg:not(.wysiwyg-v2) .editor {
+  background: transparent;
+}
+
+.editor-shell {
+  --editor-line-gutter-width: 56px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--editor-line-gutter-width) minmax(0, 1fr);
+  align-items: stretch;
+  min-width: 0;
+}
+
+.editor-gutter {
+  position: relative;
+  overflow: hidden;
+  color: rgba(15, 23, 42, 0.14);
+  user-select: none;
+  pointer-events: none;
+}
+
+.editor-shell.line-numbers-disabled {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.editor-shell.line-numbers-disabled .editor-gutter {
+  display: none;
+}
+
+.editor-line-numbers {
+  position: relative;
+  transform: translateY(0);
+  will-change: transform;
+  counter-reset: flymd-line;
+}
+
+.editor-line-number {
+  box-sizing: border-box;
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding-right: 12px;
+  font-size: 0.84em;
+  white-space: nowrap;
+}
+
+.editor-line-number::before {
+  counter-increment: flymd-line;
+  content: counter(flymd-line);
+}
+
+.editor-line-number.active {
+  color: rgba(15, 23, 42, 0.24);
+  font-weight: 500;
+}
+
+body.dark-mode .editor-gutter {
+  color: rgba(255, 255, 255, 0.09);
+}
+
+body.dark-mode .editor-line-number.active {
+  color: rgba(255, 255, 255, 0.17);
+}
+
+.editor-surface {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+}
+
+.editor-line-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  white-space: normal;
+}
+
+.editor-line-measure-row {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-height: var(--editor-line-height, 1.7em);
+}
+
+.editor {
+  width: 100%;
+  height: 100%;
+  border: none; outline: none; resize: none;
+  overflow-y: auto; /* 确保内容超出时显示滚动条 */
+  overflow-x: hidden; /* 隐藏横向滚动条，composing 期间 wrap=off 也不露出 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 16px; line-height: 1.7; color: var(--fg);
+  background: var(--bg);
+  --editor-pad-top: 20px;
+  --editor-pad-x: 24px;
+  --editor-pad-bottom: calc(40px + var(--scroll-past-end, 0px));
+  padding: var(--editor-pad-top) var(--editor-pad-x) var(--editor-pad-bottom) var(--editor-pad-x);
+  box-sizing: border-box;
+  letter-spacing: normal; /* 非零 letter-spacing 会禁用 Chromium 文本布局快速路径，显著影响大文本性能 */
+  text-rendering: optimizeSpeed; /* 跳过字距调整，提升大文本输入性能 */
+  font-kerning: none; /* 禁用字距对，减少文本整形开销 */
+  /* 添加侧栏展开的过渡动画 */
+  transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 源码模式：定宽居中（与阅读/所见一致） */
+.container:not(.wysiwyg):not(.wysiwyg-v2) .editor-shell {
+  display: grid;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: content-box;
+  height: calc(100% - var(--workspace-bottom-gap, 0px));
+  width: min(
+    calc(var(--preview-max-width, 960px) + var(--editor-line-gutter-width, 56px)),
+    max(0px, calc(100% - var(--workspace-left-gap, 0px) - var(--workspace-right-gap, 0px)))
+  );
+  padding-left: var(--workspace-left-gap, 0px);
+  padding-right: var(--workspace-right-gap, 0px);
+}
+
+.container:not(.wysiwyg):not(.wysiwyg-v2) .editor {
+  display: block;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.preview {
+  position: absolute;
+  top: 0;
+  /* 预览区本身也要“让出”左右占位：否则滚动条会被右侧剥离大纲/插件面板遮住 */
+  left: var(--workspace-left-gap, 0px);
+  right: var(--workspace-right-gap, 0px);
+  bottom: var(--workspace-bottom-gap, 0px);
+  /* 仅显示竖向滚动条，隐藏横向滚动条，避免页面抖动且更清爽 */
+  overflow-y: auto;
+  overflow-x: auto; /* 允许宽内容横向滚动 */
+  padding-top: 16px;
+  padding-bottom: calc(40px + var(--scroll-past-end, 0px));
+  /* 内容 padding 保持固定值；左右占位由 left/right 负责，避免“占位被算两次” */
+  padding-left: 20px;
+  padding-right: 20px;
+  background: var(--bg); color: var(--fg);
+  /* 改进预览区域的字体和可读性 */
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji");
+  font-size: 16px;
+  line-height: var(--layout-line-height, 1.75);
+  letter-spacing: 0.01em;
+  /* 添加侧栏展开的过渡动画 */
+  transition: padding-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-top 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-right 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding-bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.preview.hidden { display: none; }
+/* 分屏模式下：允许预览在逻辑上带有 hidden 标记但仍保持可见（仅源码分屏使用） */
+.container.split-preview:not(.wysiwyg):not(.wysiwyg-v2) .preview.hidden { display: block; }
+
+/* 修复：阅读(预览)模式下 Ctrl+F 计数翻倍
+   原因：预览遮罩显示时，底下的 textarea 仍可被浏览器“页面查找”命中，
+         导致同一段文本在编辑器与预览各匹配一次，计数翻倍。
+   方案：当预览可见时，将编辑器彻底从可见渲染树移除。
+   注意：所见(WYSIWYG)模式已单独隐藏预览，不受本规则影响。 */
+.container:not(.wysiwyg-v2):not(.split-preview):has(#preview:not(.hidden)) .editor-shell {
+  display: none !important; /* 从布局和查找目标中移除 */
+  visibility: hidden !important; /* 进一步确保不被 find-in-page 计入 */
+}
+
+/* 源码 + 阅读分屏布局：仅在非所见模式下生效 */
+.container.split-preview:not(.wysiwyg):not(.wysiwyg-v2) .editor-shell {
+  display: grid;
+  margin: 0;
+  box-sizing: border-box;
+  height: calc(100% - var(--workspace-bottom-gap, 0px));
+  width: var(--split-ratio, 55%);
+  padding-left: var(--workspace-left-gap, 0px);
+  padding-right: 0;
+}
+
+.container.split-preview:not(.wysiwyg):not(.wysiwyg-v2) .editor {
+  padding-right: 16px;
+}
+.container.split-preview:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+  left: var(--split-ratio, 55%);
+  right: var(--workspace-right-gap, 0px);
+  padding-left: 16px;
+  padding-right: 20px;
+}
+/* 分屏模式：中间竖直分割线 */
+.container.split-preview:not(.wysiwyg):not(.wysiwyg-v2)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: var(--workspace-bottom-gap, 0px);
+  left: var(--split-ratio, 55%);
+  width: 0;
+  border-left: 1px solid rgba(127,127,127,0.4);
+  pointer-events: none;
+  z-index: 3;
+}
+/* 分屏模式：可拖拽调整手柄 */
+.split-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: var(--workspace-bottom-gap, 0px);
+  left: var(--split-ratio, 55%);
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+}
+.split-resize-handle:hover,
+.split-resize-handle.dragging {
+  background: rgba(100, 150, 255, 0.3);
+}
+
+/* 分屏模式：缩小库侧栏自动唤醒热区，避免左侧编辑区误触发 */
+.container.split-preview #lib-edge {
+  width: 8px !important;
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .container.split-preview:not(.wysiwyg):not(.wysiwyg-v2)::before {
+    border-left-color: rgba(255,255,255,0.25);
+  }
+}
+
+/* 阅读模式（非所见）背景：中性灰简约风格 */
+.container:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+  background-color: var(--preview-bg);
+  background-image: none;
+  box-shadow: none;
+}
+
+/* 阅读模式纯白背景：当用户选择“纯白”时，关闭羊皮纸纹理，仅保留纯色背景，保证视觉上是真正的纯白纸面 */
+.container.preview-plain:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+  background-color: var(--preview-bg);
+  background-image: none;
+  box-shadow: none;
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .container.preview-plain:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+    background-image: none;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview {
+    /* 深色模式：纯色背景 */
+    background-image: none;
+    box-shadow: none;
+  }
+}
+
+/* 阅读模式下的代码块配色：中性灰风格 */
+.container:not(.wysiwyg):not(.wysiwyg-v2) .preview pre {
+  background: var(--code-bg);
+  border-color: var(--border);
+}
+.container:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code {
+  background: var(--code-bg);
+  border-color: var(--border);
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview pre {
+    background: var(--code-bg);
+    border-color: var(--border);
+  }
+  body:not(.light-mode) .container:not(.wysiwyg):not(.wysiwyg-v2) .preview :not(pre) > code {
+    background: var(--code-bg);
+    border-color: var(--border);
+  }
+}
+
+/* 所见 V2：真实所见视图容器 */
+#md-wysiwyg-root, #md-wysiwyg-root * { box-sizing: border-box; }
+#md-wysiwyg-root {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: none;
+  /* 只作为容器本身，不再承担滚动职责，避免与内部 scrollView 嵌套产生双滚动条 */
+  overflow-y: hidden;
+  overflow-x: hidden;
+  z-index: 2;
+  /* 添加侧栏展开的过渡动画 */
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.container:not(.wysiwyg-v2) #md-wysiwyg-root {
+  left: var(--workspace-left-gap, 0px);
+  right: var(--workspace-right-gap, 0px);
+  bottom: var(--workspace-bottom-gap, 0px);
+  width: auto;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root {
+  left: var(--workspace-left-gap, 0px);
+  right: var(--workspace-right-gap, 0px);
+  bottom: var(--workspace-bottom-gap, 0px);
+  width: auto;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root { display: block; }
+.container.wysiwyg-v2-loading #md-wysiwyg-root { display: none; }
+.container.wysiwyg-v2 .editor-shell { display: none; }
+.container.wysiwyg-v2 .editor { display: none; }
+.container.wysiwyg-v2-loading .editor-shell { display: grid; }
+.container.wysiwyg-v2-loading .editor { display: block; }
+.container.wysiwyg-v2 .preview { display: none !important; }
+
+/* 所见模式无感切换：后台预热/探测/忙碌态（仅影响打开/自动切换时序，不改变功能） */
+.container.wysiwyg-v2-preload #md-wysiwyg-root {
+  display: block !important;
+  opacity: 0;
+  pointer-events: none;
+}
+/* 所见模式覆盖渲染容器：在 ProseMirror 之上渲染 Mermaid/KaTeX 预览 */
+#md-wysiwyg-root .overlay-host { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+#md-wysiwyg-root .overlay-host .ov-mermaid,
+#md-wysiwyg-root .overlay-host .ov-katex,
+#md-wysiwyg-root .overlay-host .ov-codecopy { pointer-events: none; }
+#md-wysiwyg-root .overlay-host .ov-mermaid > div,
+#md-wysiwyg-root .overlay-host .ov-katex > div,
+#md-wysiwyg-root .overlay-host .ov-codecopy > .code-copy { pointer-events: auto; }
+/* 所见模式：隔离 mermaid DOM 子树，避免全局段落/排版样式影响节点标签，导致中文最后一个字被裁剪 */
+#md-wysiwyg-root .mermaid-chart-display foreignObject,
+#md-wysiwyg-root .ov-mermaid .mmd-figure foreignObject {
+  overflow: visible;
+}
+#md-wysiwyg-root .mermaid-chart-display p,
+#md-wysiwyg-root .ov-mermaid .mmd-figure p {
+  margin: 0;
+  padding: 0;
+  text-indent: 0;
+  text-align: center;
+  text-justify: auto;
+}
+/* 所见模式：强制 mermaid 标签水平排版，禁止竖排/自动换行，保持与阅读模式一致 */
+#md-wysiwyg-root .mermaid-chart-display,
+#md-wysiwyg-root .mermaid-chart-display * ,
+#md-wysiwyg-root .ov-mermaid .mmd-figure,
+#md-wysiwyg-root .ov-mermaid .mmd-figure * {
+  writing-mode: horizontal-tb !important;
+  white-space: nowrap !important;
+}
+/* 保证所见 V2 的滚动容器占满并可滚动（唯一滚动宿主，消除双滚动条） */
+#md-wysiwyg-root .scrollView {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+/* 兜底：Milkdown 根容器（通常为 .milkdown）与其第一级子元素占满高度 */
+#md-wysiwyg-root > .milkdown { display: block; min-height: 100%; height: 100%; }
+#md-wysiwyg-root > div { display: block; min-height: 100%; }
+
+/* V2 状态提示（右下角） */
+/* 右下角提示已取消 */
+
+/* 如有富文本工具条，默认隐藏，纯所见编辑 */
+#md-wysiwyg-root [role="toolbar"] { display: none !important; }
+/* 隐藏 Milkdown block/slash 插件的 UI 组件（更精确的选择器，不影响内容块） */
+#md-wysiwyg-root .milkdown-menu { display: none !important; }
+#md-wysiwyg-root [data-block-handle] { display: none !important; }
+#md-wysiwyg-root [data-slash-menu] { display: none !important; }
+#md-wysiwyg-root .slash-dropdown { display: none !important; }
+#md-wysiwyg-root .block-menu { display: none !important; }
+/* 隐藏全局的浮动 UI 面板（portal 到 body 的元素） */
+body > [data-tippy-root] { display: none !important; }
+body > [data-block-handle] { display: none !important; }
+body > [data-slash-menu] { display: none !important; }
+body > .milkdown-menu { display: none !important; }
+body > .slash-dropdown { display: none !important; }
+body > .block-menu { display: none !important; }
+
+/* ProseMirror 基础样式，确保 V2 视图可编辑、可滚动、行距正常 */
+.container.wysiwyg-v2 .ProseMirror {
+  min-height: 100%;
+  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+  /* 居中与阅读宽度（对齐预览的 preview-body） */
+  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));
+  margin: 0 auto;
+  background: transparent;
+  box-sizing: border-box;
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
+  font-size: 16px;
+  line-height: var(--layout-line-height, 1.75);
+  letter-spacing: 0.01em;
+}
+.container.wysiwyg-v2 .ProseMirror img,
+.container.wysiwyg-v2 .ProseMirror video { max-width: 100%; height: auto; }
+/* 所见模式图片排版：尽量对齐阅读模式的 .preview img 样式 */
+.container.wysiwyg-v2 .ProseMirror img {
+  display: block;
+  margin: 1.5em auto;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.container.wysiwyg-v2 .ProseMirror img:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.container.wysiwyg-v2 .ProseMirror img:not([width]):not([height]) {
+  max-width: 70%;
+  height: auto;
+}
+.container.wysiwyg-v2 .ProseMirror table {
+  width: auto;
+  max-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1.5px solid var(--table-border);
+  margin: 1.5em 0;
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.container.wysiwyg-v2 .ProseMirror th,
+.container.wysiwyg-v2 .ProseMirror td {
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: middle;
+  transition: background var(--transition-fast);
+}
+.container.wysiwyg-v2 .ProseMirror th:last-child,
+.container.wysiwyg-v2 .ProseMirror td:last-child {
+  border-right: none;
+}
+.container.wysiwyg-v2 .ProseMirror tr:last-child td {
+  border-bottom: none;
+}
+.container.wysiwyg-v2 .ProseMirror th {
+  background: var(--table-header-bg);
+  color: var(--table-header-fg);
+  font-weight: 600;
+}
+.container.wysiwyg-v2 .ProseMirror tbody tr:nth-child(even) {
+  background: rgba(241, 245, 249, 0.5);
+}
+.container.wysiwyg-v2 .ProseMirror tbody tr:hover {
+  background: var(--table-row-hover);
+}
+.container.wysiwyg-v2 .ProseMirror:focus { outline: none; }
+.container.wysiwyg-v2 .ProseMirror p { margin: var(--layout-paragraph-spacing, 1em) 0; }
+/* 首行缩进：只对顶层段落生效，避免影响 mermaid/代码块等 */
+.container.wysiwyg-v2 .ProseMirror > p {
+  text-indent: var(--layout-text-indent, 0);
+}
+
+/* 所见模式标题样式 */
+.container.wysiwyg-v2 .ProseMirror h1 {
+  font-size: 2.2em;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 1.8em 0 0.8em;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.container.wysiwyg-v2 .ProseMirror h2 {
+  font-size: 1.8em;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.6em 0 0.7em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25em;
+}
+.container.wysiwyg-v2 .ProseMirror h3 {
+  font-size: 1.4em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 1.4em 0 0.6em;
+}
+.container.wysiwyg-v2 .ProseMirror h4,
+.container.wysiwyg-v2 .ProseMirror h5,
+.container.wysiwyg-v2 .ProseMirror h6 {
+  font-weight: 600;
+  margin: 1.2em 0 0.5em;
+}
+
+.container.wysiwyg-v2 .ProseMirror pre {
+  background: var(--code-bg);
+  padding: 20px;
+  border-radius: var(--radius-xl);
+  overflow: auto;
+  border: none;
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  margin: 16px 0;
+}
+.container.wysiwyg-v2 .ProseMirror code {
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  background: var(--code-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-md);
+  border: none;
+  font-weight: 500;
+}
+/* 代码块内的 code 不需要单独背景，避免双层框 */
+.container.wysiwyg-v2 .ProseMirror pre code {
+  background: transparent !important;
+  padding: 0;
+  border-radius: 0;
+}
+.container.wysiwyg-v2 .ProseMirror blockquote {
+  border-left: 4px solid var(--border-strong);
+  padding-left: 1.2em;
+  padding-top: 0.8em;
+  padding-bottom: 0.8em;
+  margin: 1.2em 0;
+  background: rgba(127,127,127,0.04);
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+}
+
+/* 所见模式的临时预览 UI 提升可见性 */
+#wysi-preview-popover { border-color: var(--border-strong) !important; }
+#wysi-float-preview { border-color: var(--border-strong) !important; }
+#md-wysiwyg-root .mmd-preview { border-color: var(--border-strong) !important; }
+
+/* 所见模式覆盖：即使预览带有 hidden 类，也强制显示 */
+.container.wysiwyg .preview.hidden { display: block; }
+
+/* 所见模式：预览在下，编辑器在上（透明文字，仅显示光标） */
+.container.wysiwyg .preview {
+  z-index: 1;
+  opacity: 1;
+  pointer-events: none; /* 不拦截点击，V1 仅显示 */
+  /* 与编辑器对齐（避免文字看起来在光标“下面”） */
+  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px; /* 与 .editor 一致 */
+  /* 使用与编辑器完全一致的等宽字体，保证 ch 宽度一致 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 16px; /* 与 .editor 一致 */
+  /* 微调变量（如需细调可在运行时动态注入样式覆盖） */
+  --w-nudge-x: 0.5ch;   /* 标题横向整体微调，默认约半个西文字符 */
+  --w-head-top: -0.10em;/* 标题纵向上移，缓解“在下方”感受 */
+}
+.container.wysiwyg .editor {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  color: transparent;          /* 隐藏文本 */
+  caret-color: var(--fg);      /* 仍显示光标 */
+  /* 使用与常规编辑相同的等宽字体，确保字符宽度匹配 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  line-height: 1.6;            /* 与预览一致 */
+}
+
+/* 可选：所见模式隐藏光标，结合“高亮当前行”使用 */
+/* 所见模式：显式要求隐藏系统插入符（取消光标） */
+.container.wysiwyg.no-caret .editor { caret-color: transparent !important; }
+/* 同时禁用自定义覆盖光标 */
+.container.wysiwyg.no-caret .wysiwyg-caret { display: none !important; }
+
+/* 所见模式：高亮当前编辑的逻辑行（整页宽，指示当前位置） */
+.container.wysiwyg .wysiwyg-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1.6em;
+  background: linear-gradient(90deg,
+    rgba(127,127,127,0.08) 0%,
+    rgba(127,127,127,0.12) 50%,
+    rgba(127,127,127,0.08) 100%);
+  z-index: 2;
+  pointer-events: none;
+  display: none;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 0 1px rgba(127,127,127,0.08);
+}
+.container.wysiwyg .wysiwyg-line.show {
+  display: block;
+}
+
+/* 所见模式：点状光标（替代竖线光标） */
+.container.wysiwyg .wysiwyg-caret {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  /* 采用"终端式"下划线光标：宽度等于 1 个字符宽，厚度稍微增加 */
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  width: 1ch;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--fg);
+  /* 以 left 顶边为锚点，不再居中偏移 */
+  transform: none;
+  display: none;
+  box-shadow: 0 0 4px rgba(0,0,0,0.3);
+  transition: opacity 0.1s ease;
+}
+.container.wysiwyg .wysiwyg-caret.show { display: block; }
+/* 光标闪烁动画（所见模式） */
+@keyframes caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.container.wysiwyg .wysiwyg-caret.show {
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .container.wysiwyg .wysiwyg-caret.show { animation: none; }
+}
+/* 注入到预览中的点状“光标”样式 */
+.container.wysiwyg .preview .caret-dot {
+  color: var(--fg);
+  animation: caret-blink 1s steps(1, end) infinite;
+}
+
+/* 取消预览正文的居中与段落外边距，使与 textarea 行基线更贴合 */
+.container.wysiwyg .preview-body { max-width: none; margin: 0; }
+.container.wysiwyg .preview p { margin: 0; }
+/* 使段落/标题换行行为更贴近 textarea */
+.container.wysiwyg .preview p,
+.container.wysiwyg .preview h1,
+.container.wysiwyg .preview h2,
+.container.wysiwyg .preview h3,
+.container.wysiwyg .preview h4,
+.container.wysiwyg .preview h5,
+.container.wysiwyg .preview h6 { white-space: pre-wrap; word-break: break-word; }
+/* 所见模式：代码块与编辑器严格对齐 */
+.container.wysiwyg .preview pre {
+  margin-top: 0; margin-bottom: 0;
+  padding-top: 0; padding-bottom: 0;
+  line-height: 1.6; /* 与 .editor 相同 */
+  /* 所见模式下去掉代码块自身的卡片背景，只保留外层预览背景，避免出现“双层框” */
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.container.wysiwyg .preview pre code {
+  font-size: 14px; /* 与 .editor 相同 */
+  line-height: 1.6;
+}
+
+/* 标题在所见模式下的对齐优化：
+   - 移除上下外边距，避免块级顶部下坠
+   - 统一行高到与编辑器一致
+   - 使用 text-indent + padding-left 抵消 Markdown 源中 "# " 前缀在横向上的差异
+*/
+.container.wysiwyg .preview h1,
+.container.wysiwyg .preview h2,
+.container.wysiwyg .preview h3,
+.container.wysiwyg .preview h4,
+.container.wysiwyg .preview h5,
+.container.wysiwyg .preview h6 {
+  margin: 0;
+  line-height: 1.6;        /* 使用与编辑器一致的行高（单位less）*/
+  position: relative;
+  top: var(--w-head-top);
+  font-size: 1em;          /* 基准字体大小与编辑器一致 */
+  font-weight: 700;        /* 保留“标题感” */
+  display: block;          /* 块级，避免多个标题同排显示 */
+  transform-origin: left top;
+}
+
+/* 标题放大采用 transform，不改变行框高度，从而与输入光标保持一致。
+   同时将左侧缩进按比例缩放前反向抵消，保证“# ”被移除后起点对齐。*/
+.container.wysiwyg .preview h1 {
+  --hscale: 1.60;
+  transform: scale(var(--hscale));
+  text-indent: calc((-2ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((2ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.60em; /* 为放大后的视觉高度预留空间，避免压住下一行 */
+}
+.container.wysiwyg .preview h2 {
+  --hscale: 1.40;
+  transform: scale(var(--hscale));
+  text-indent: calc((-3ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((3ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.45em;
+}
+.container.wysiwyg .preview h3 {
+  --hscale: 1.20;
+  transform: scale(var(--hscale));
+  text-indent: calc((-4ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((4ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.30em;
+}
+.container.wysiwyg .preview h4 {
+  --hscale: 1.10;
+  transform: scale(var(--hscale));
+  text-indent: calc((-5ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((5ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.20em;
+}
+.container.wysiwyg .preview h5 {
+  --hscale: 1.00;
+  transform: scale(var(--hscale));
+  text-indent: calc((-6ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((6ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.10em;
+}
+.container.wysiwyg .preview h6 {
+  --hscale: 1.00;
+  transform: scale(var(--hscale));
+  text-indent: calc((-7ch - var(--w-nudge-x)) / var(--hscale));
+  padding-left: calc((7ch + var(--w-nudge-x)) / var(--hscale));
+  padding-bottom: 0.10em;
+}
+
+/* WYSIWYG：单换行视觉一致性（方案A：UI 层） */
+.container.wysiwyg-v2 .ProseMirror p,
+.container.wysiwyg-v2 .ProseMirror li {
+  white-space: pre-line; /* 将换行符渲染为换行，不改变 Markdown 语义 */
+}
+.container.wysiwyg-v2 .ProseMirror blockquote p {
+  white-space: pre-line;
+}
