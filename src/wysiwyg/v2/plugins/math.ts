@@ -93,44 +93,33 @@ function observeMathOnce(el: Element, onVisible: () => void) {
 // PR-2 A1: 公式节点编辑按钮(铅笔图标)
 // 默认隐藏,hover 父元素时显示,点击调用 window.__mdeditorEnterLatexSourceEdit
 // 通过 window 桥接避免 NodeView 静态依赖编辑器实例(同 mermaid 模式)
-// PR-2 A4: 节点内嵌错误条
-function ensureInlineErrorEl(host: HTMLElement): HTMLDivElement {
-  let el = host.querySelector<HTMLDivElement>(':scope > .math-inline-error')
-  if (!el) {
-    el = document.createElement('div')
-    el.className = 'math-inline-error'
-    el.style.display = 'none'
-    el.style.background = '#fee'
-    el.style.color = '#900'
-    el.style.border = '1px solid #fbb'
-    el.style.borderRadius = '3px'
-    el.style.padding = '2px 6px'
-    el.style.marginBottom = '4px'
-    el.style.fontSize = '11px'
-    el.style.wordBreak = 'break-word'
-    el.style.position = 'absolute'
-    el.style.top = '-22px'
-    el.style.left = '0'
-    el.style.right = '0'
-    el.style.zIndex = '6'
-    host.appendChild(el)
+// PR-2 A4: 节点内嵌错误条 — 复用 overlayError.handle,默认隐藏,渲染失败时显示
+// 给 host 附加一个 OverlayErrorHandle,WeakMap 缓存,避免重复附加
+const _inlineErrHandles = new WeakMap<HTMLElement, ReturnType<typeof attachOverlayError>>()
+function ensureInlineErrorOnHandle(host: HTMLElement): ReturnType<typeof attachOverlayError> {
+  let h = _inlineErrHandles.get(host)
+  if (!h) {
+    h = attachOverlayError(host as unknown as HTMLDivElement)
+    try {
+      h.el.classList.add('ov-error-bar-embedded')
+      h.el.style.position = 'absolute'
+      h.el.style.top = '-22px'
+      h.el.style.left = '0'
+      h.el.style.right = '0'
+      h.el.style.zIndex = '6'
+      h.el.style.marginBottom = '0'
+    } catch {}
+    _inlineErrHandles.set(host, h)
   }
-  return el
+  return h
 }
 
 function showInlineErrorOn(host: HTMLElement, e: unknown): void {
-  try {
-    const el = ensureInlineErrorEl(host)
-    el.textContent = '⚠ ' + String((e as any)?.message || e || '渲染失败')
-    el.style.display = 'block'
-  } catch {}
+  try { ensureInlineErrorOnHandle(host).setError(e) } catch {}
 }
 
 function clearInlineErrorOn(host: HTMLElement): void {
-  try {
-    const el = host.querySelector<HTMLDivElement>(':scope > .math-inline-error')
-    if (el) el.style.display = 'none'
-  } catch {}
+  try { ensureInlineErrorOnHandle(host).clear() } catch {}
 }
 function createMathEditButton(parent: HTMLElement, type: 'math_inline' | 'math_block'): HTMLButtonElement {
   const btn = document.createElement('button')
