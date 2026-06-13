@@ -46,7 +46,10 @@
   top: auto;
   right: auto;
 }
-.codebox pre { margin: 0; position: relative; /* 让行号层可绝对定位 */   padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)); /* 给语言角标让位 */
+.codebox pre {
+  margin: 0; position: relative; /* 让行号层可绝对定位 */
+  /* 使用 !important 防止被后续 .preview pre { padding: ... } 与主题样式覆盖，导致代码与行号重叠 */
+  padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)) !important; /* 给语言角标让位 */
 }
 /* 行号列：绝对定位在 pre 内部左侧，随内容滚动 */
 .codebox .code-lnums {
@@ -73,7 +76,9 @@
 }
 .codebox .code-lnums .ln { display: block; }
 /* 为行号列让出内边距，避免覆盖代码文本 */
-.codebox pre { padding-left: calc(20px + 3.5em + 0.8em + 1px);   padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)); /* 给语言角标让位 */
+.codebox pre {
+  /* 使用 !important 防止被后续 .preview pre { padding: ... } 与主题样式覆盖 */
+  padding-left: calc(var(--code-pre-pad-y, 20px) + 3.5em + 0.8em + 1px) !important;
 }
 /* 提升角标/复制按钮层级，避免被行号列覆盖 */
 .codebox .code-lang, .codebox .code-copy { z-index: 2; }

@@ -68,14 +68,9 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('dompurify')) return 'dompurify'
             if (id.includes('highlight')) return 'highlightjs'
             if (id.includes('mermaid')) {
-              // 核心入口单独成块；内部 chunk 由 Rollup 按动态 import 自动拆分
-              if (id.includes('mermaid.core.mjs') || id.includes('mermaid.esm.mjs') || id.includes('mermaid/dist/mermaid.js')) return 'mermaid'
-              // 将每个图表/共享 chunk 拆成独立小块，避免一次性拉入全部
-              const chunkName = id.match(/mermaid\/dist\/chunks\/mermaid\.core\/(.+?)\.mjs$/)
-              if (chunkName) {
-                const name = chunkName[1].replace(/-[A-Z0-9]{8,}$/, '').toLowerCase()
-                return `mermaid-${name}`
-              }
+              // 把 mermaid 所有模块合并到一个 chunk，避免 Rollup 拆分后
+              // 图表子 chunk 与共享 chunk 之间出现循环依赖，导致生产包
+              // 在 WebKit/Tauri 下出现 "g is not a function" 等初始化错误。
               return 'mermaid'
             }
             if (id.includes('katex')) return 'katex'

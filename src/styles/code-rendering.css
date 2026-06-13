@@ -63,11 +63,69 @@
 }
 
 /* hljs token 颜色（不依赖外部主题）*/
-.preview code.hljs .hljs-keyword, .preview code.hljs .hljs-selector-tag { color: var(--c-key); }
-.preview code.hljs .hljs-title, .preview code.hljs .hljs-section, .preview code.hljs .hljs-function { color: var(--c-fn); }
-.preview code.hljs .hljs-string, .preview code.hljs .hljs-attr, .preview code.hljs .hljs-template-variable { color: var(--c-str); }
-.preview code.hljs .hljs-number, .preview code.hljs .hljs-literal, .preview code.hljs .hljs-bullet { color: var(--c-num); }
-.preview code.hljs .hljs-comment, .preview code.hljs .hljs-quote { color: var(--c-com); font-style: italic; }
+/* 同时用 .preview / .codebox / .preview-body 选择器，避免容器类名差异导致高亮失效 */
+.preview code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
+.preview code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
+.preview code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: var(--c-key); }
+.preview code.hljs .hljs-title, .codebox code.hljs .hljs-title,
+.preview code.hljs .hljs-section, .codebox code.hljs .hljs-section,
+.preview code.hljs .hljs-function, .codebox code.hljs .hljs-function,
+.preview code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: var(--c-fn); }
+.preview code.hljs .hljs-string, .codebox code.hljs .hljs-string,
+.preview code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
+.preview code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: var(--c-str); }
+.preview code.hljs .hljs-number, .codebox code.hljs .hljs-number,
+.preview code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
+.preview code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: var(--c-num); }
+.preview code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
+.preview code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: var(--c-com); font-style: italic; }
+.preview code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
+.preview code.hljs .hljs-params, .codebox code.hljs .hljs-params,
+.preview code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: var(--c-fn); }
+.preview code.hljs .hljs-class, .codebox code.hljs .hljs-class,
+.preview code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: var(--c-key); }
+.preview code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
+.preview code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: var(--code-fg); }
+.preview code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
+.preview code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: var(--c-key); }
+.preview code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: var(--c-str); }
+.preview code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
+.preview code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: var(--c-num); }
+.preview code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: var(--c-com); }
+.preview code.hljs .hljs-strong, .codebox code.hljs .hljs-strong { font-weight: bold; }
+.preview code.hljs .hljs-emphasis, .codebox code.hljs .hljs-emphasis { font-style: italic; }
+
+/* 系统暗色偏好下给阅读模式 token 显式配色（不依赖 body.dark-mode 类） */
+@media (prefers-color-scheme: dark) {
+  .preview code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
+  .preview code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
+  .preview code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: #a78bfa !important; }
+  .preview code.hljs .hljs-title, .codebox code.hljs .hljs-title,
+  .preview code.hljs .hljs-section, .codebox code.hljs .hljs-section,
+  .preview code.hljs .hljs-function, .codebox code.hljs .hljs-function,
+  .preview code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: #f472b6 !important; }
+  .preview code.hljs .hljs-string, .codebox code.hljs .hljs-string,
+  .preview code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
+  .preview code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: #60a5fa !important; }
+  .preview code.hljs .hljs-number, .codebox code.hljs .hljs-number,
+  .preview code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
+  .preview code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: #34d399 !important; }
+  .preview code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
+  .preview code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: #6b7280 !important; font-style: italic; }
+  .preview code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
+  .preview code.hljs .hljs-params, .codebox code.hljs .hljs-params,
+  .preview code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: #9cdcfe !important; }
+  .preview code.hljs .hljs-class, .codebox code.hljs .hljs-class,
+  .preview code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: #4ec9b0 !important; }
+  .preview code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
+  .preview code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: #d4d4d4 !important; }
+  .preview code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
+  .preview code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: #a78bfa !important; }
+  .preview code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: #60a5fa !important; }
+  .preview code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
+  .preview code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: #34d399 !important; }
+  .preview code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: #6b7280 !important; }
+}
 
 /* 所见模式代码块：亮色模式（VS Code Light+ 风格） */
 /* 覆盖所有主题的代码块边框 */

@@ -10,6 +10,15 @@
   </head>
   <body>
     <div id="app"></div>
+    <div id="startup-errors" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#000;color:#f87171;font-family:monospace;white-space:pre-wrap;padding:20px;z-index:99999;overflow:auto;"></div>
+    <script>
+      (function(){
+        var box = document.getElementById('startup-errors');
+        function show(msg) { box.style.display = 'block'; box.textContent += msg + '\n'; }
+        window.addEventListener('error', function(e) { show('ERROR: ' + e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || 0)); });
+        window.addEventListener('unhandledrejection', function(e) { show('UNHANDLED REJECTION: ' + (e.reason && e.reason.stack ? e.reason.stack : String(e.reason))); });
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
   </html>

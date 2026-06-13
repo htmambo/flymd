@@ -112,6 +112,10 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 dpkg-deb -R "$DEB_FILE" "$WORK_DIR"
 
+# 0. 统一 control 文件版本号，避免文件名版本与 dpkg 显示版本不一致
+echo "==> Setting package version to $VERSION"
+sed -i "s/^Version: .*/Version: $VERSION/" "$WORK_DIR/DEBIAN/control"
+
 # 1. 替换 .desktop（用项目中更完整的版本）
 echo "==> Replacing desktop entry"
 cp "$ROOT_DIR/flymd.desktop" "$WORK_DIR/usr/share/applications/flymd.desktop"

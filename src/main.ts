@@ -2586,26 +2586,71 @@ async function initStore() {
 
 // highlight.js 按需加载：核心 + 语言模块
 let hljsCore: any = null
-const loadedHljsLanguages = new Set<string>()
+
+// 常见语言别名 -> highlight.js 模块名（模块文件名与注册名一致）
+// 解决用户写 `js`、`ts`、`py` 等别名时无法命中模块的问题
+const HLJS_LANGUAGE_ALIASES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript',
+  ts: 'typescript', tsx: 'typescript',
+  py: 'python', python3: 'python',
+  rb: 'ruby',
+  'c++': 'cpp', cpp: 'cpp', hpp: 'cpp',
+  'c#': 'csharp', cs: 'csharp',
+  go: 'go', golang: 'go',
+  rs: 'rust', rustlang: 'rust',
+  sh: 'bash', shell: 'bash', zsh: 'bash', bash: 'bash',
+  ps1: 'powershell', ps: 'powershell', powershell: 'powershell',
+  yml: 'yaml', yaml: 'yaml',
+  md: 'markdown', mkd: 'markdown', markdown: 'markdown',
+  jsonc: 'json',
+  html: 'xml', htm: 'xml', xhtml: 'xml', svg: 'xml',
+  php: 'php',
+  sql: 'sql', mysql: 'sql', mariadb: 'sql',
+  postgresql: 'pgsql', postgres: 'pgsql', pgsql: 'pgsql',
+  lua: 'lua',
+  kt: 'kotlin', kts: 'kotlin', kotlin: 'kotlin',
+  swift: 'swift',
+  objc: 'objectivec', objcpp: 'objectivec', objectivec: 'objectivec',
+  scala: 'scala',
+  r: 'r',
+  matlab: 'matlab',
+  dart: 'dart', flutter: 'dart',
+  elixir: 'elixir', ex: 'elixir', exs: 'elixir',
+  erlang: 'erlang', erl: 'erlang',
+  haskell: 'haskell', hs: 'haskell',
+  clojure: 'clojure', cljs: 'clojure', clj: 'clojure',
+  groovy: 'groovy',
+  perl: 'perl', pl: 'perl',
+  latex: 'latex', tex: 'latex',
+  docker: 'dockerfile', dockerfile: 'dockerfile',
+  nginx: 'nginx',
+  apache: 'apache', httpd: 'apache',
+  vim: 'vim', viml: 'vim',
+  diff: 'diff', patch: 'diff',
+  ini: 'ini', toml: 'ini', cfg: 'ini',
+  makefile: 'makefile', make: 'makefile', mk: 'makefile',
+  cmake: 'cmake'
+}
+
+function normalizeHljsLang(lang: string): string {
+  const normalized = lang.trim().toLowerCase()
+  return HLJS_LANGUAGE_ALIASES[normalized] || normalized
+}
 
 async function ensureHljsCore(): Promise<any> {
   if (hljsCore) return hljsCore
-  const mod = await import('highlight.js/lib/core')
+  // 使用 highlight.js/lib/common 一次性加载常用语言包，
+  // 避免动态 import 语言模块在生产环境分包/路径问题导致应用白屏或高亮失效。
+  const mod = await import('highlight.js/lib/common')
   hljsCore = mod.default || mod
   return hljsCore
 }
 
 async function ensureHljsLanguage(lang: string): Promise<void> {
+  // common 包已预注册常用语言；非 common 语言暂不支持动态加载，
+  // 避免运行时模板路径 import 在打包后 404 导致高亮失效。
   if (!lang) return
-  const hljs = await ensureHljsCore()
-  if (hljs.getLanguage(lang) || loadedHljsLanguages.has(lang)) return
-  try {
-    const mod = await import(`highlight.js/lib/languages/${lang}`)
-    hljs.registerLanguage(lang, mod.default || mod)
-    loadedHljsLanguages.add(lang)
-  } catch {
-    // 该语言模块不存在，忽略
-  }
+  await ensureHljsCore()
 }
 
 function detectCodeLanguages(raw: string): string[] {
@@ -2638,8 +2683,9 @@ async function ensureRenderer() {
         return `<pre class="mermaid">${esc}</pre>`
       }
       try {
-        if (lang && hljsCore && hljsCore.getLanguage(lang)) {
-          const r = hljsCore.highlight(code, { language: lang, ignoreIllegals: true })
+        const normalizedLang = lang ? normalizeHljsLang(lang) : ''
+        if (normalizedLang && hljsCore && hljsCore.getLanguage(normalizedLang)) {
+          const r = hljsCore.highlight(code, { language: normalizedLang, ignoreIllegals: true })
           return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
         }
       } catch {}
