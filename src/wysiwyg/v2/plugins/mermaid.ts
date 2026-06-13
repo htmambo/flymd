@@ -237,6 +237,14 @@ class MermaidNodeView implements NodeView {
     this.chartContainer.addEventListener('dblclick', (e) => {
       e.stopPropagation()
       e.preventDefault()
+      // 优先走浮层源码编辑(B7 入口);浮层不可用时回退到内嵌编辑模式
+      try {
+        const mod: any = (window as any).__mdeditorEnterMermaidSourceEdit
+        if (typeof mod === 'function') {
+          mod(this.dom)
+          return
+        }
+      } catch {}
       this.enterEditMode()
     })
 

@@ -365,6 +365,25 @@ body.dark-mode .editor-line-number.active {
 #md-wysiwyg-root .overlay-host .ov-mermaid > div,
 #md-wysiwyg-root .overlay-host .ov-katex > div,
 #md-wysiwyg-root .overlay-host .ov-codecopy > .code-copy { pointer-events: auto; }
+/* 所见模式浮层错误条：源码编辑 apply 失败时提示 */
+.ov-error-bar {
+  background: #fde68a;
+  color: #78350f;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  display: none;
+  word-break: break-word;
+  pointer-events: auto;
+}
+.ov-error-bar[data-visible="1"] { display: block; }
+body.dark-mode .ov-error-bar {
+  background: #422006;
+  color: #fde68a;
+  border-color: #b45309;
+}
 /* 所见模式：隔离 mermaid DOM 子树，避免全局段落/排版样式影响节点标签，导致中文最后一个字被裁剪 */
 #md-wysiwyg-root .mermaid-chart-display foreignObject,
 #md-wysiwyg-root .ov-mermaid .mmd-figure foreignObject {

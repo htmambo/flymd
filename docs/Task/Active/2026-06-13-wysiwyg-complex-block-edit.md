@@ -1,12 +1,13 @@
 # 任务:所见模式复杂块(KaTeX / Mermaid)编辑稳定性改造
 
-**状态**: ⏳ 待执行(方案待定)
+**状态**: 🔄 进行中 (开始时间: 2026-06-13)
 **创建日期**: 2026-06-13
 **责任人**: Claude + 用户
 **范围**: `src/wysiwyg/v2/` 下的复杂块编辑通路(数学公式、流程图)
 **前置依赖**:
 - 当前分支 `perf/bundle-runtime-optimizations` 已包含 `6842e88` 的阅读模式 math/mermaid 修复
 - README 索引: `docs/Task/README.md` 中 `2026-06-13-math-and-mermaid-render-fix.md`
+- 实际工作分支: `fix/wysiwyg-complex-block-edit` (从 `perf/bundle-runtime-optimizations` 拉出)
 
 ---
 
