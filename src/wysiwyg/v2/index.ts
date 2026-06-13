@@ -811,6 +811,56 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   try { bindEditLockEditor(() => _editor) } catch {}
   // 初次内容渲染完成后再刷一次代码块按钮覆盖层，避免“打开文件按钮不出现直到首次编辑”
   try { setTimeout(() => { try { scheduleCodeCopyRefresh() } catch {} }, 0) } catch {}
+  // 围栏 math/katex/latex 代码块转换为 math_block 节点,让所见模式正确显示公式
+  try { void transformMathFencesToMathBlocks(editor) } catch {}
+}
+
+// 围栏 math/katex/latex 代码块 → math_block 节点转换
+// 所见模式的 code_block 节点走 hljs 高亮,不能直接渲染公式;
+// 转换到 math_block 后由 milkdown-plugin-math + KaTeX 接管。
+// 转换在 enable 完成后做一次,用户在所见模式下改 lang 不会自动同步
+// (后续可加 post-processor)。
+async function transformMathFencesToMathBlocks(editor: any): Promise<void> {
+  try {
+    const view: any = editor?.ctx?.get?.(editorViewCtx)
+    if (!view) return
+    const state = view.state
+    const schema = state.schema
+    const mathBlock = schema.nodes['math_block']
+    const codeBlock = schema.nodes['code_block']
+    if (!mathBlock || !codeBlock) return
+    // 找到所有 lang=math|katex|latex 的 code_block
+    const targets: Array<{ from: number; to: number; value: string }> = []
+    state.doc.descendants((node: any, pos: number) => {
+      if (node.type === codeBlock) {
+        const lang = (node.attrs?.language || '').toLowerCase()
+        if (lang === 'math' || lang === 'katex' || lang === 'latex') {
+          const value = String(node.textContent || '')
+          // 去掉围栏代码块常见的 $$..$$ 或 $..$ 包装
+          let stripped = value.trim()
+          stripped = stripped.replace(/^\\?\$\$([\s\S]*?)\\?\$\$/m, '$1').trim()
+          stripped = stripped.replace(/^\\?\$(.*?)\\?\$/m, '$1').trim()
+          // 还原 markdown 常见的 \_  转义(用户从 markdown 复制围栏时常会带,
+          // KaTeX 不会自动去掉 \_  反斜杠,需要显式还原)
+          stripped = stripped.replace(/\\\(/g, '(').replace(/\\\)/g, ')')
+          stripped = stripped.replace(/\\_/g, '_')
+          stripped = stripped.replace(/\\\[/g, '[').replace(/\\\]/g, ']')
+          targets.push({ from: pos, to: pos + node.nodeSize, value: stripped })
+        }
+      }
+    })
+    if (!targets.length) return
+    let tr = state.tr
+    // 倒序替换,避免位置漂移
+    for (const t of targets.reverse()) {
+      const node = mathBlock.create({ value: t.value })
+      tr = tr.replaceRangeWith(t.from, t.to, node)
+    }
+    view.dispatch(tr)
+    console.log('[wysiwyg] 已转换', targets.length, '个 math/katex/latex 围栏为 math_block')
+  } catch (e) {
+    console.warn('[wysiwyg] 转换 math 围栏失败:', e)
+  }
 }
 
 export async function disableWysiwygV2() {
