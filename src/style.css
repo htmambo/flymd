@@ -1788,7 +1788,7 @@ body.lib-resizing {
 .library.side-right.hidden {
   transform: translateX(100%);
 }
-.library .lib-header { position: sticky; top: 0; background: var(--chrome-panel-bg, var(--panel-bg)); border-bottom: none; padding: 8px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; z-index: 1; }
+.library .lib-header { position: sticky; top: 0; background: var(--chrome-panel-bg, var(--panel-bg)); border-bottom: none; padding: 8px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }
 /* 库选择器行：Obsidian 风格 vault 按钮 + 搜索 */
 .library .lib-vault-row { display: flex; align-items: center; gap: 4px; }
 .library .lib-vault-btn { -webkit-app-region: no-drag; flex: 1; display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; border: none; border-radius: var(--radius-md); cursor: pointer; color: var(--fg); font-size: 13px; font-weight: 500; text-align: left; min-width: 0; transition: background 0.15s; font-family: inherit; }
