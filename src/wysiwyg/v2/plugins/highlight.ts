@@ -416,7 +416,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
       // 按需注册指定语言模块
       if (lang && !hljsCore.getLanguage(lang)) {
         try {
-          const mod = await import(`highlight.js/lib/languages/${lang}`)
+          const mod = await import(/* @vite-ignore */ `highlight.js/lib/languages/${lang}`)
           hljsCore.registerLanguage(lang, mod.default || mod)
           console.log('[Highlight Plugin] 语言模块已注册:', lang)
         } catch {
