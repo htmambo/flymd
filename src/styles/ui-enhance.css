@@ -1,6 +1,6 @@
 /* === UI 美化补充（库侧栏与图床设置）=== */
 /* 库侧栏：紧凑模式 */
-.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 8px 2px 14px; }
+.library .lib-node { min-height: 26px; gap: 5px; padding: 2px 2px 2px 4px; }
 .library .lib-node .lib-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; padding-left: 0; font-size: 13px; }
 .library .lib-node .lib-tg { width: 14px; height: 14px; color: var(--muted); opacity: 0.3; }
 .library .lib-node.expanded .lib-tg { transform: rotate(90deg); color: var(--muted); opacity: 0.5; }

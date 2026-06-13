@@ -24,8 +24,8 @@ body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="5"])::before { b
   content: '';
   position: absolute;
   left: -6px;
-  top: 13px;
-  width: 20px;
+  top: 16px;
+  width: 16px;
   height: 1px;
   background: rgba(127, 127, 127, 0.4);
   z-index: 1;
@@ -43,8 +43,8 @@ body.lib-color-depth .lib-children > .lib-node[data-scheme="5"]::before { backgr
   content: '';
   position: absolute;
   left: 4px;
-  top: 13px;
-  bottom: -2px;
+  top: 17px;
+  bottom: -1px;
   width: 1px;
   background: rgba(127, 127, 127, 0.4);
   z-index: 1;

@@ -1183,7 +1183,7 @@ function updateTreeLine(parent: HTMLElement): void {
   const childNodes = parent.querySelectorAll(':scope > .lib-node')
   if (childNodes.length > 0) {
     const lastNode = childNodes[childNodes.length - 1] as HTMLElement
-    const lineHeight = lastNode.offsetTop + 13
+    const lineHeight = lastNode.offsetTop + lastNode.offsetHeight / 2
     parent.style.setProperty('--tree-line-height', `${lineHeight}px`)
   } else {
     parent.style.setProperty('--tree-line-height', '0px')
@@ -1203,7 +1203,7 @@ function updateAllTreeLines(): void {
     const kids = el.querySelectorAll(':scope > .lib-node')
     if (kids.length === 0) return 0
     const last = kids[kids.length - 1] as HTMLElement
-    return last.offsetTop + 13
+    return last.offsetTop + last.offsetHeight / 2
   })
   levels.forEach((el, i) => el.style.setProperty('--tree-line-height', `${heights[i]}px`))
 }

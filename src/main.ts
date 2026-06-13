@@ -132,6 +132,23 @@ let katexCacheApi: KatexCacheApi | null = null
 let katexCriticalStyleApi: KatexCriticalStyleApi | null = null
 let dotBlinkApi: DotBlinkApi | null = null
 let deferredStartupApi: DeferredStartupApi | null = null
+// 插件运行时宿主：延迟初始化，避免把 extensions/runtime.ts 及其依赖压入启动包。
+let pluginRuntime: PluginRuntimeHandles | null = null
+const pluginRuntimeProxy = new Proxy({} as PluginRuntimeHandles, {
+  get(_target, prop: string) {
+    const runtime = pluginRuntime
+    if (!runtime) {
+      return (..._args: any[]) => {
+        console.warn(`[PluginRuntime] ${String(prop)} 在初始化前被调用`)
+      }
+    }
+    const value = (runtime as any)[prop]
+    if (typeof value === 'function') {
+      return value.bind(runtime)
+    }
+    return value
+  },
+}) as PluginRuntimeHandles
 import { createQuickSearch } from './ui/quickSearch'
 import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
@@ -189,32 +206,12 @@ import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
 } from './modes/focusModeUi'
-import {
-  ensurePluginsDir,
-  parseRepoInput,
-  compareVersions,
-  getHttpClient,
-  fetchTextSmart,
-  fetchBinarySmart,
-  resolvePluginManifestUrl,
-  getPluginUpdateStates,
-  loadInstalledPlugins,
-  saveInstalledPlugins,
-  installPluginFromGitCore,
-  installPluginFromLocalCore,
-  type PluginManifest,
-  type InstalledPlugin,
-  type PluginUpdateState,
+import type {
+  PluginManifest,
+  InstalledPlugin,
+  PluginUpdateState,
 } from './extensions/runtime'
-import {
-  initPluginRuntime,
-  type PluginRuntimeHandles,
-} from './extensions/pluginRuntimeHost'
-import {
-  CORE_AI_EXTENSION_ID,
-  ensureCoreExtensionsAfterStartup,
-  markCoreExtensionBlocked,
-} from './extensions/coreExtensions'
+import type { PluginRuntimeHandles } from './extensions/pluginRuntimeHost'
 import {
   initPluginsMenu,
   addToPluginsMenu,
@@ -4701,6 +4698,7 @@ async function getTranscodePrefs(): Promise<{ convertToWebp: boolean; webpQualit
 // 抓取网页 <title>，用于将纯 URL 粘贴转换为 [标题](url)
 async function fetchPageTitle(url: string): Promise<string | null> {
   try {
+    const { fetchTextSmart } = await import('./extensions/runtime')
     const html = await fetchTextSmart(url)
     if (!html) return null
     const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
@@ -8168,6 +8166,8 @@ function bindEvents() {
     await initStore()
     // 初始化扩展管理面板宿主（依赖 store 等全局状态）
     try {
+      // 动态加载核心扩展常量/函数，避免在启动包中静态引入 runtime 依赖。
+      const { CORE_AI_EXTENSION_ID, markCoreExtensionBlocked } = await import('./extensions/coreExtensions')
       await initExtensionsPanel({
         getStore: () => store,
         pluginNotice,
@@ -8177,24 +8177,16 @@ function bindEvents() {
         openWebdavSyncDialog,
         getWebdavSyncConfig,
         openInBrowser,
-        // 5 个函数名在文件下方 const { ... } = pluginRuntime 中解构，TS 严格模式
-        // 把这里视为 TDZ 引用。原代码靠 try/catch 静默吃掉 ReferenceError，导致
-        // 实际 initExtensionsPanel 永远拿不到这几个方法（真实 bug：Task A.1
-        // Batch 4 暂用 @ts-ignore 通过编译，结构性修复放在后续拆分重构里）。
-        // @ts-ignore
-        installPluginFromGit,
-        // @ts-ignore
-        installPluginFromLocal,
-        // @ts-ignore
-        activatePlugin,
-        // @ts-ignore
-        deactivatePlugin,
-        getActivePluginModule: (id: string) => pluginHost.getActivePluginModule(id),
+        // 插件运行时延迟初始化：通过 Proxy 把实际调用转发到初始化后的 pluginRuntime。
+        installPluginFromGit: (ref, opt) => pluginRuntimeProxy.installPluginFromGit(ref, opt),
+        installPluginFromLocal: (path, opt) => pluginRuntimeProxy.installPluginFromLocal(path, opt),
+        activatePlugin: (p) => pluginRuntimeProxy.activatePlugin(p),
+        deactivatePlugin: (id) => pluginRuntimeProxy.deactivatePlugin(id),
+        getActivePluginModule: (id: string) => pluginRuntimeProxy.pluginHost.getActivePluginModule(id),
         coreAiExtensionId: CORE_AI_EXTENSION_ID,
         markCoreExtensionBlocked: (id: string) => markCoreExtensionBlocked(store, id),
-        removePluginDir: (dir: string) => removePluginDir(dir),
-        // @ts-ignore
-        openPluginSettings,
+        removePluginDir: (dir: string) => pluginRuntimeProxy.removePluginDir(dir),
+        openPluginSettings: (p) => pluginRuntimeProxy.openPluginSettings(p),
       })
     } catch {}
     await maybeAutoImportPortableBackup()
@@ -8234,8 +8226,56 @@ function bindEvents() {
     const ric: any = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 100))
       ric(async () => {
         try {
+          // 动态加载扩展运行时宿主，避免把 extensions/runtime.ts 及其依赖压入启动包。
+          const [runtimeMod, pluginRuntimeHostMod, coreExtensionsMod] = await Promise.all([
+            import('./extensions/runtime'),
+            import('./extensions/pluginRuntimeHost'),
+            import('./extensions/coreExtensions'),
+          ])
           // 扩展：初始化目录并激活已启用扩展（此时 Store 已就绪）
-          await ensurePluginsDir()
+          await runtimeMod.ensurePluginsDir()
+          pluginRuntime = pluginRuntimeHostMod.initPluginRuntime({
+            getStore: () => store,
+            getEditor: () => editor,
+            getPreviewRoot: () => preview,
+            getCurrentFilePath: () => currentFilePath,
+            getLibraryRoot: () => getLibraryRoot(),
+            isPreviewMode: () => mode === 'preview',
+            isWysiwyg: () => !!wysiwyg || !!wysiwygV2Active,
+            renderPreview: () => { try { scheduleRenderPreview() } catch {} },
+            scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
+            markDirtyAndRefresh: () => {
+              try {
+                dirty = true
+                titlebarStatusApi?.refreshTitle()
+                titlebarStatusApi?.refreshStatus()
+              } catch {}
+            },
+            splitYamlFrontMatter: (raw: string) => splitYamlFrontMatter(raw),
+            yamlLoad: (raw: string) => yamlLoad(raw),
+            pluginNotice: (msg: string, level?: 'ok' | 'err', ms?: number) => pluginNotice(msg, level, ms),
+            confirmNative: (message: string, title?: string) => confirmNative(message, title),
+            exportCurrentDocToPdf: (target: string) => exportCurrentDocToPdf(target),
+            openFileByPath: (path: string) => openFile2(path),
+            createStickyNote: async (filePath: string) => {
+              try {
+                const fn = (window as any).flymdCreateStickyNote
+                if (typeof fn !== 'function') {
+                  throw new Error('当前环境不支持便签功能')
+                }
+                await fn(filePath)
+              } catch (e) {
+                console.error('createStickyNote 失败', e)
+                throw e
+              }
+            },
+            openUploaderSettings: () => { void openUploaderDialog() },
+            openWebdavSettings: () => { void openWebdavSyncDialog() },
+            getWebdavConfigSnapshot: async () => {
+              try { return await getWebdavSyncConfig() } catch { return null }
+            },
+            wysiwygV2ApplyLink: wysiwygV2ApplyLink,
+          })
           // 初始化统一的"插件"菜单按钮
           initPluginsMenu()
           // 桌面端：语音转写（内置模块，入口收纳到“插件”菜单）
@@ -8264,12 +8304,12 @@ function bindEvents() {
               openInBrowser: (url: string) => { try { void openInBrowser(url) } catch {} },
             })
           } catch {}
-          await loadAndActivateEnabledPlugins()
+          await pluginRuntime.loadAndActivateEnabledPlugins()
           // 插件可能注册了额外后缀（ASP），刷新文件树以应用过滤与图标规则
           try { if (fileTreeReady) await fileTree.refresh() } catch {}
-          await ensureCoreExtensionsAfterStartup(store, APP_VERSION, activatePlugin)
+          await coreExtensionsMod.ensureCoreExtensionsAfterStartup(store, APP_VERSION, (p) => pluginRuntime!.activatePlugin(p))
           // 启动后后台检查一次扩展更新（仅提示，不自动更新）
-          await checkPluginUpdatesOnStartup()
+          await pluginRuntime.checkPluginUpdatesOnStartup()
         } catch (e) {
           console.warn('[Extensions] 延迟初始化失败:', e)
         }
@@ -8573,49 +8613,8 @@ function startAsyncUploadFromBlob(blob: Blob, fname: string, mime: string): Prom
 
 // ========== 扩展/插件：运行时与 UI ==========
 
-// 插件运行时宿主：通过 initPluginRuntime 集中管理 PluginHost / 安装 / 更新 等逻辑
-const pluginRuntime: PluginRuntimeHandles = initPluginRuntime({
-  getStore: () => store,
-  getEditor: () => editor,
-  getPreviewRoot: () => preview,
-  getCurrentFilePath: () => currentFilePath,
-  getLibraryRoot: () => getLibraryRoot(),
-  isPreviewMode: () => mode === 'preview',
-  isWysiwyg: () => !!wysiwyg || !!wysiwygV2Active,
-  renderPreview: () => { try { scheduleRenderPreview() } catch {} },
-  scheduleWysiwygRender: () => { try { scheduleWysiwygRender() } catch {} },
-  markDirtyAndRefresh: () => {
-    try {
-      dirty = true
-      titlebarStatusApi?.refreshTitle()
-      titlebarStatusApi?.refreshStatus()
-    } catch {}
-  },
-  splitYamlFrontMatter: (raw: string) => splitYamlFrontMatter(raw),
-  yamlLoad: (raw: string) => yamlLoad(raw),
-  pluginNotice: (msg: string, level?: 'ok' | 'err', ms?: number) => pluginNotice(msg, level, ms),
-  confirmNative: (message: string, title?: string) => confirmNative(message, title),
-  exportCurrentDocToPdf: (target: string) => exportCurrentDocToPdf(target),
-  openFileByPath: (path: string) => openFile2(path),
-  createStickyNote: async (filePath: string) => {
-    try {
-      const fn = (window as any).flymdCreateStickyNote
-      if (typeof fn !== 'function') {
-        throw new Error('当前环境不支持便签功能')
-      }
-      await fn(filePath)
-    } catch (e) {
-      console.error('createStickyNote 失败', e)
-      throw e
-    }
-  },
-  openUploaderSettings: () => { void openUploaderDialog() },
-  openWebdavSettings: () => { void openWebdavSyncDialog() },
-  getWebdavConfigSnapshot: async () => {
-    try { return await getWebdavSyncConfig() } catch { return null }
-  },
-  wysiwygV2ApplyLink: wysiwygV2ApplyLink,
-})
+// 插件运行时宿主：延迟到 requestIdleCallback 中初始化，避免把 extensions/runtime.ts
+// 及其依赖（pluginHost、market 等）压入启动包。见 initApp() 中的延迟初始化块。
 
 const {
   pluginHost,
@@ -8632,7 +8631,7 @@ const {
   updateInstalledPlugin,
   removePluginDir,
   loadAndActivateEnabledPlugins,
-} = pluginRuntime
+} = pluginRuntimeProxy
 
 // ASP：提供给文件树使用的“额外后缀展示配置”查询入口（避免在 fileTree.ts 中直接依赖插件运行时）
 try {
