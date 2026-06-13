@@ -571,6 +571,25 @@
   text-decoration: underline dotted;
   cursor: help;
 }
+
+/* 所见模式 sub/sup/abbr 样式 */
+.container.wysiwyg-v2 .ProseMirror sub,
+.container.wysiwyg-v2 .ProseMirror sup {
+  font-size: 0.75em;
+  line-height: 0;
+  position: relative;
+  vertical-align: baseline;
+}
+.container.wysiwyg-v2 .ProseMirror sup {
+  top: -0.5em;
+}
+.container.wysiwyg-v2 .ProseMirror sub {
+  bottom: -0.25em;
+}
+.container.wysiwyg-v2 .ProseMirror abbr[title] {
+  text-decoration: underline dotted;
+  cursor: help;
+}
 /* ========== Obsidian Callout 样式 ========== */
 
 /* 基础结构 */

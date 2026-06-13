@@ -29,6 +29,7 @@ import { htmlToMarkdown } from '../../html2md'
 import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
 import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
+import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -66,7 +67,7 @@ let _rootMouseDownHandler: ((ev: MouseEvent) => void) | null = null
 
 // 所见模式 preprocessor:只处理所见模式不原生支持但有等价 GFM 语法的标签
 // - <s>x</s>     → ~~x~~  (GFM strikethrough,preset-gfm 已支持,等价不污染)
-// - <sub>/<sup>/<abbr> 等不转换(后续通过 milkdown 节点扩展支持,不动源 markdown)
+// - <sub>/<sup>/<abbr> 通过 remark 插件 + $mark 扩展渲染,不动源 markdown
 function transformInlineHtmlForWysiwyg(md: string): string {
   try {
     return md.replace(/<s>([^<]*?)<\/s>/g, (_m, inner) => `~~${inner}~~`)
@@ -506,7 +507,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   const content0 = normalizeTabIndentText((initialMd || '').toString())
   // 把 <s>/<sub>/<sup> 三个所见模式不原生识别的 HTML 标签转成等价形式
   // - <s>...</s>     -> ~~...~~      (GFM strikethrough,preset-gfm 支持)
-  // - <sub>...</sub> -> 保留 HTML    (raw HTML inline 节点,浏览器原生渲染)
+  // - <sub>...</sub> -> 保留 HTML    (remark 插件 + $mark 渲染)
   // - <sup>...</sup> -> 保留 HTML    (同上)
   // 只对 inline 形式做转换(行内非 <table> 等块级),不影响块级 HTML
   const content1 = transformInlineHtmlForWysiwyg(content0)
@@ -541,6 +542,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
         ctx.update(remarkStringifyOptionsCtx, (prev) => ({
           ...prev,
           bullet: '-',
+          handlers: { ...(prev as any)?.handlers, ...htmlInlineTagStringifyHandlers },
         } as any))
       } catch {}
       try {
@@ -574,6 +576,10 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(calloutNode)
     .use(calloutRemark)
     .use(calloutViewPlugin)
+    .use(remarkHtmlInlineTags)
+    .use(subMark)
+    .use(supMark)
+    .use(abbrMark)
     .use(automd)
     .use(listener)
     .use(history)
