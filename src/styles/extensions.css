@@ -1018,3 +1018,10 @@
   color: #818cf8;
 }
 
+.mmd-figure,
+.md-math-block,
+.md-math-inline,
+.math-block-wrapper,
+.math-inline-wrapper {
+  cursor: pointer;
+}
