@@ -4,14 +4,13 @@
 import { describe, it, expect } from 'vitest'
 import { unified } from 'unified'
 import remarkParse from 'remark-parse'
-import remarkStringify from 'remark-stringify'
 import { toMarkdown } from 'mdast-util-to-markdown'
+import { visit } from 'unist-util-visit'
 
 // 直接导入插件逻辑（不走 milkdown 注册）
 function remarkHtmlInlineTagsPlugin() {
   const PHRASING_PARENT_TYPES = new Set(['paragraph', 'heading', 'tableCell', 'delete', 'emphasis', 'strong', 'link', 'linkReference'])
   return (tree: any) => {
-    const { visit } = require('unist-util-visit')
     visit(tree, (node: any) => {
       if (!PHRASING_PARENT_TYPES.has(node.type) || !Array.isArray(node.children)) return
       const children = node.children
@@ -100,7 +99,7 @@ describe('remarkHtmlInlineTags', () => {
     const tree = unified().use(remarkParse).parse(md)
     const plugin = remarkHtmlInlineTagsPlugin()
     plugin(tree)
-    return toMarkdown(tree as any, { handlers })
+    return toMarkdown(tree as any, { handlers: handlers as any })
   }
 
   it('合并 <sub> 配对标签', async () => {

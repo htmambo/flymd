@@ -57,3 +57,20 @@
 - [x] abbr title 属性中的特殊字符正确转义
 - [x] tsc --noEmit 0 新增错误
 - [x] 610/610 全套测试通过 (原 602 + 新增 8)
+
+## 6. 后续修复 (2026-06-14)
+
+### 6.1 mark toDOM 写法修正
+- `toDOM` 从 `['sub', 0]` 改为 `['sub', {}]`(三个 mark 同)。内容洞 `0` 是 node 写法,
+  mark 应用 `[tag, attrs]` 形式(对齐内置 em/strong),内容由 view 自动放入。
+
+### 6.2 含块级公式文档编辑时光标跳到文档尾(根因排查)
+- **现象**: 在 sub/sup/abbr 内增删字符,光标瞬间跳到文档底部。
+- **排查**: 经 `filterTransaction`/dispatch 诊断,trace 指向 `replaceAll`。
+- **真因**: `scheduleMathBlockReparse` 在每次编辑后 240ms 检测到文档含 `$$` 块级公式,
+  即 `replaceAll` 整篇重建,`tr.replace(0, docSize, ...)` 把旧光标映射到文档尾且不
+  `scrollIntoView`。这是含块级公式文档的**通病**(编辑任何文本都会触发),与
+  sub/sup/abbr 无关。
+- **修复**: `scheduleMathBlockReparse` 在 `replaceAll` 前保存光标 from/to,之后用
+  `TextSelection.between` 就近恢复并 `scrollIntoView`。
+- **验证**: sub/sup/abbr 与普通文本编辑均不再跳光标(用户实测确认)。

@@ -91,7 +91,9 @@ export const remarkHtmlInlineTags = $remark(
 // <sub> 下标
 export const subMark = $markSchema('html_sub', () => ({
   parseDOM: [{ tag: 'sub' }],
-  toDOM: () => ['sub', 0],
+  // mark 的 toDOM 用 [tag, attrs] 形式(对齐内置 em/strong),内容由 view 自动放入;
+  // 内容洞 0 是 node 的写法,mark 不应带洞(会让 mark 报告 contentDOM)。
+  toDOM: () => ['sub', {}],
   parseMarkdown: {
     match: (node: MarkdownNode) => node.type === 'html_sub',
     runner: (state, node, markType) => {
@@ -111,7 +113,7 @@ export const subMark = $markSchema('html_sub', () => ({
 // <sup> 上标
 export const supMark = $markSchema('html_sup', () => ({
   parseDOM: [{ tag: 'sup' }],
-  toDOM: () => ['sup', 0],
+  toDOM: () => ['sup', {}],
   parseMarkdown: {
     match: (node: MarkdownNode) => node.type === 'html_sup',
     runner: (state, node, markType) => {
@@ -144,7 +146,7 @@ export const abbrMark = $markSchema('html_abbr', () => ({
   ],
   toDOM: (mark) => {
     const title = mark.attrs.title
-    return title ? ['abbr', { title }, 0] : ['abbr', 0]
+    return title ? ['abbr', { title }] : ['abbr', {}]
   },
   parseMarkdown: {
     match: (node: MarkdownNode) => node.type === 'html_abbr',

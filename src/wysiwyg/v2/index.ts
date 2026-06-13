@@ -2140,7 +2140,28 @@ function scheduleMathBlockReparse() {
     try {
       const mdNow = await (_editor as any).action(getMarkdown())
       if (/\$\$[\s\S]*?\$\$/m.test(String(mdNow || ''))) {
+        // replaceAll 会用 tr.replace(0, docSize, ...) 重建整篇文档,旧光标被映射到
+        // 文档尾(且不带 scrollIntoView)。在含块级公式的文档里编辑任何内容都会触发,
+        // 表现为光标瞬间跳到底部。这里先存光标,replace 后再就近恢复。
+        const viewBefore: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        const hadFocus = !!viewBefore?.hasFocus?.()
+        const savedFrom: number | undefined = viewBefore?.state?.selection?.from
+        const savedTo: number | undefined = viewBefore?.state?.selection?.to
         await (_editor as any).action(replaceAll(String(mdNow || '')))
+        if (hadFocus && typeof savedFrom === 'number') {
+          try {
+            const viewAfter: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+            const size = viewAfter.state.doc.content.size
+            const from = Math.max(0, Math.min(savedFrom, size))
+            const to = Math.max(0, Math.min(typeof savedTo === 'number' ? savedTo : savedFrom, size))
+            const sel = TextSelection.between(
+              viewAfter.state.doc.resolve(from),
+              viewAfter.state.doc.resolve(to)
+            )
+            viewAfter.dispatch(viewAfter.state.tr.setSelection(sel).scrollIntoView())
+            viewAfter.focus()
+          } catch {}
+        }
       }
     } catch {}
   }, 240)
