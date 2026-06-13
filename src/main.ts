@@ -691,6 +691,16 @@ let currentFrontMatter: string | null = null
 let dirty = false // 是否有未保存更改（此处需加分号，避免下一行以括号开头被解析为对 false 的函数调用）
 // 暴露一个轻量只读查询函数，避免直接访问变量引起耦合
 ;(window as any).flymdIsDirty = () => dirty
+
+function hasUnsavedChangesForExit(): boolean {
+  try {
+    const hasUnsavedTabs = (window as any).flymdHasUnsavedTabs
+    if (typeof hasUnsavedTabs === 'function') {
+      return dirty || !!hasUnsavedTabs()
+    }
+  } catch {}
+  return dirty
+}
 // 自动保存句柄（通过模块化实现，避免 main.ts 膨胀）
 let _autoSaveHandles: AutoSaveHandles | null = null
 function getAutoSave(): AutoSaveHandles {
@@ -8020,8 +8030,10 @@ function bindEvents() {
       // result === 'save'：保存所有未保存标签；任一未完成（含另存为取消/失败）则不退出
       let allSaved = false
       try {
-        if (typeof tabApi.flymdSaveAllDirtyTabs === 'function') {
-          allSaved = await tabApi.flymdSaveAllDirtyTabs()
+        // 优先使用标签系统提供的“保存所有未保存标签”；未就绪时退回单文档保存
+        const saveAll = (window as any).flymdSaveAllDirtyTabsForExit ?? (window as any).flymdSaveAllDirtyTabs
+        if (typeof saveAll === 'function') {
+          allSaved = !!(await saveAll())
         } else {
           // 退回：仅保存当前文档
           const wasDirty = dirty
@@ -8054,7 +8066,7 @@ function bindEvents() {
       window.addEventListener('beforeunload', (e) => {
         try { void saveCurrentDocPosNow() } catch {}
         try { (window as any).flymdSaveTabSession?.() } catch {}
-        if (dirty) {
+        if (hasUnsavedChangesForExit()) {
           e.preventDefault()
           ;(e as any).returnValue = ''
         }

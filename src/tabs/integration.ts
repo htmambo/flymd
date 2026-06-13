@@ -219,6 +219,46 @@ async function confirmTabClose(tab: TabDocument): Promise<boolean> {
   return true
 }
 
+function hasUnsavedTabsForExit(): boolean {
+  tabManager.syncActiveTabState()
+  return tabManager.hasUnsavedTabs()
+}
+
+async function saveAllDirtyTabsForExit(): Promise<boolean> {
+  const flymd = getFlymd()
+  const saveFile = flymd.flymdSaveFile
+  if (typeof saveFile !== 'function') return false
+
+  tabManager.syncActiveTabState()
+  const dirtyTabs = [...tabManager.getUnsavedTabs()]
+
+  for (const candidate of dirtyTabs) {
+    const tab = tabManager.findTabById(candidate.id)
+    if (!tab || !tab.dirty) continue
+
+    const switched = await tabManager.switchToTab(tab.id)
+    if (!switched) return false
+
+    await saveFile()
+    tabManager.syncActiveTabState()
+
+    const activeTab = tabManager.getActiveTab()
+    const mainDirty = !!flymd.flymdIsDirty?.()
+    if (activeTab?.dirty || mainDirty) {
+      return false
+    }
+  }
+
+  tabManager.syncActiveTabState()
+  return !tabManager.hasUnsavedTabs()
+}
+
+function exposeExitHooks(): void {
+  const flymd = getFlymd()
+  flymd.flymdHasUnsavedTabs = hasUnsavedTabsForExit
+  flymd.flymdSaveAllDirtyTabsForExit = saveAllDirtyTabsForExit
+}
+
 /**
  * 同步一次激活标签的 dirty 状态后，返回所有未保存标签的快照。
  * 所见模式下 dirty 经 ~200ms 轮询同步，可能滞后；这里主动同步一次，避免漏判激活标签。
@@ -402,6 +442,7 @@ export async function initTabSystem(): Promise<void> {
   hookSaveFile()
   hookFileSavedEvent()
   hookKeyboardShortcuts()
+  exposeExitHooks()
 
   // 退出前"保存所有未保存标签"能力：供 main.ts 的窗口关闭流程调用
   ;(window as any).flymdCountDirtyTabs = countDirtyTabs
