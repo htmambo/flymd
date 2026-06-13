@@ -148,6 +148,17 @@ function createMathEditButton(parent: HTMLElement, type: 'math_inline' | 'math_b
   return btn
 }
 
+// PR-2 UX: 在公式节点内添加 hover 提示文字
+function appendEditHint(host: HTMLElement, label: string): void {
+  try {
+    if (host.querySelector(':scope > .wysiwyg-edit-hint')) return
+    const hint = document.createElement('span')
+    hint.className = 'wysiwyg-edit-hint'
+    hint.textContent = label
+    host.appendChild(hint)
+  } catch {}
+}
+
 // Math Inline NodeView
 class MathInlineNodeView implements NodeView {
   dom: HTMLElement
@@ -184,6 +195,7 @@ class MathInlineNodeView implements NodeView {
 
     // PR-2 A1: 铅笔按钮 — hover 时显示,点击进入源码编辑
     this.editBtn = createMathEditButton(this.dom, 'math_inline')
+    appendEditHint(this.dom, '双击或点 ✎ 编辑')
 
     // 初始渲染
     this.scheduleRender()
@@ -286,6 +298,7 @@ class MathBlockNodeView implements NodeView {
 
     // PR-2 A1: 铅笔按钮 — hover 时显示,点击进入源码编辑
     this.editBtn = createMathEditButton(this.dom, 'math_block')
+    appendEditHint(this.dom, '双击或点 ✎ 编辑')
 
     // 初始渲染
     this.scheduleRender()

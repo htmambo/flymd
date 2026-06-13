@@ -262,7 +262,7 @@ class MermaidNodeView implements NodeView {
     this.editBtn.style.color = 'var(--text-color, #555)'
     this.editBtn.style.cursor = 'pointer'
     this.editBtn.style.padding = '0'
-    this.editBtn.style.display = 'none'
+    // display 走 CSS(.mermaid-edit-btn 默认 flex + opacity 0.4),由样式控制显示
     this.editBtn.style.alignItems = 'center'
     this.editBtn.style.justifyContent = 'center'
     this.editBtn.style.zIndex = '5'
@@ -282,13 +282,10 @@ class MermaidNodeView implements NodeView {
         try { console.error('[mermaid edit btn]', err) } catch {}
       }
     })
-    // 由父容器 hover 触发显示
-    this.dom.addEventListener('mouseenter', this._onDomEnter = () => {
-      try { if (this.editBtn) this.editBtn.style.display = 'flex' } catch {}
-    })
-    this.dom.addEventListener('mouseleave', this._onDomLeave = () => {
-      try { if (this.editBtn) this.editBtn.style.display = 'none' } catch {}
-    })
+    // 显示/隐藏改由 CSS opacity + transform 控制(.mermaid-edit-btn 默认 opacity 0.4,
+    // 父容器 hover 时 opacity 1),这里不再切换 display 避免覆盖 CSS
+    this._onDomEnter = null
+    this._onDomLeave = null
 
     // 双击切换到源代码编辑
     this.chartContainer.addEventListener('dblclick', (e) => {
@@ -333,6 +330,15 @@ class MermaidNodeView implements NodeView {
     this.dom.appendChild(this.chartContainer)
     // PR-2 A2: 显式编辑按钮(浮在 chartContainer 右下角)
     this.dom.appendChild(this.editBtn)
+    // PR-2 UX: hover 时显示编辑提示
+    try {
+      if (!this.dom.querySelector(':scope > .wysiwyg-edit-hint')) {
+        const hint = document.createElement('span')
+        hint.className = 'wysiwyg-edit-hint'
+        hint.textContent = '双击或点 ✎ 编辑源码'
+        this.dom.appendChild(hint)
+      }
+    } catch {}
 
     // 初始渲染：空内容时自动进入编辑模式
     const code = this.node.textContent

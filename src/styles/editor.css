@@ -797,25 +797,60 @@ body > .block-menu { display: none !important; }
   transition: opacity 0.15s ease-in, transform 0.15s ease-in;
 }
 .math-inline-wrapper:hover > .math-edit-btn,
-.math-block-wrapper:hover > .math-edit-btn {
-  display: flex;
+.math-block-wrapper:hover > .math-edit-btn,
+.math-inline-wrapper:hover > .math-edit-btn {
   opacity: 1;
+  transform: scale(1.1);
+}
+.math-edit-btn {
+  display: flex;
+  opacity: 0.35;
 }
 .math-edit-btn:hover {
-  transform: scale(1.1);
   opacity: 1;
 }
 
-/* PR-2 A2: Mermaid 节点编辑按钮(图表右下角) + 表格编辑按钮 */
-.mermaid-edit-btn { display: none; }
-.mermaid-node-wrapper:hover > .mermaid-edit-btn { display: flex; }
+/* PR-2 A2: Mermaid 节点编辑按钮(图表右下角,默认低不透明度,hover 高亮) */
+.mermaid-edit-btn {
+  display: flex;
+  opacity: 0.4;
+}
+.mermaid-node-wrapper:hover > .mermaid-edit-btn {
+  opacity: 1;
+  transform: scale(1.1);
+}
 .mermaid-edit-btn:hover { transform: scale(1.1); }
-.ov-table-edit-btn { display: flex; }
-.ov-table-edit-btn:hover { transform: scale(1.1); }
+.ov-table-edit-btn {
+  display: flex;
+  opacity: 0.4;
+}
+.ov-table-edit-btn:hover { transform: scale(1.1); opacity: 1; }
 
 /* PR-2 A4: 内嵌错误条 — 与浮层共享样式,但强制 absolute 定位避免破坏 inline 布局 */
 .ov-error-bar.ov-error-bar-embedded {
   margin-bottom: 0;
   font-size: 11px;
   padding: 2px 6px;
+}
+
+/* PR-2 UX: 在公式/图表节点内显示编辑提示,hover 时显示,平时隐藏 */
+.wysiwyg-edit-hint {
+  display: none;
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: 11px;
+  color: #888;
+  background: var(--wysiwyg-bg, #fff);
+  border: 1px solid var(--border-color, #ddd);
+  border-radius: 3px;
+  padding: 1px 6px;
+  z-index: 4;
+  pointer-events: none;
+  font-style: italic;
+}
+.math-inline-wrapper:hover > .wysiwyg-edit-hint,
+.math-block-wrapper:hover > .wysiwyg-edit-hint,
+.mermaid-node-wrapper:hover > .wysiwyg-edit-hint {
+  display: block;
 }
