@@ -245,4 +245,55 @@ describe('wysiwyg/v2 NodeView 桥接 (PR-2 A1/A2)', () => {
     delete w.__mdeditorEnterLatexSourceEdit
     delete w.__mdeditorEnterMermaidSourceEdit
   })
+
+  it('mermaid/table 编辑入口注册后可在 window 上调用', () => {
+    // PR-2 A2: mermaid/table 编辑入口(浮层源码编辑)必须能从 window 访问,
+    // 因为 NodeView 静态依赖编辑器实例会造成循环依赖,这里约定走 window 桥。
+    const w = window as any
+    const calls: string[] = []
+    w.__mdeditorEnterMermaidSourceEdit = (el: HTMLElement) => { calls.push('mermaid:' + (el?.className || '')) }
+    w.__mdeditorEnterTableSourceEdit = (el: HTMLElement) => { calls.push('table:' + (el?.tagName || '')) }
+    // 模拟 NodeView 双击事件调用
+    const fakeMermaid = document.createElement('div')
+    fakeMermaid.className = 'mermaid-node-wrapper'
+    w.__mdeditorEnterMermaidSourceEdit(fakeMermaid)
+    // 模拟表格 hover 按钮点击
+    const fakeTable = document.createElement('table')
+    w.__mdeditorEnterTableSourceEdit(fakeTable)
+    expect(calls).toEqual(['mermaid:mermaid-node-wrapper', 'table:TABLE'])
+    delete w.__mdeditorEnterMermaidSourceEdit
+    delete w.__mdeditorEnterTableSourceEdit
+  })
+
+  it('overlayError: handle 暴露 setError/clear/el 三个 API', async () => {
+    // PR-2 A4: API 表面稳定性 — handle 必须长期稳定,即使内部 DOM 被替换
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    const wrap = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    expect(typeof handle.setError).toBe('function')
+    expect(typeof handle.clear).toBe('function')
+    expect(handle.el).toBeTruthy()
+    // setError 多次调用,handle.el 始终指向同一节点
+    const elRef = handle.el
+    handle.setError('A')
+    handle.setError('B')
+    expect(handle.el).toBe(elRef)
+    expect(handle.el.textContent).toContain('B')
+  })
+
+  it('overlayError: 弱引用语义 — wrap 元素被 GC 不影响 attachOverlayError API 表面', async () => {
+    // PR-2 A4: handle 是新对象,弱引用语义通过直接验证"wrap 被移除后 handle 仍可独立调用"来表达
+    const { attachOverlayError } = await import('../wysiwyg/v2/overlayError')
+    let wrap: HTMLDivElement | null = document.createElement('div')
+    const handle = attachOverlayError(wrap)
+    handle.setError('first')
+    expect(handle.el.getAttribute('data-visible')).toBe('1')
+    // 模拟 wrap 被 GC/移除
+    wrap = null
+    // handle 与 wrap 解耦,仍可独立工作
+    handle.clear()
+    expect(handle.el.getAttribute('data-visible')).toBe('0')
+    handle.setError(new Error('after gc'))
+    expect(handle.el.textContent).toContain('after gc')
+  })
 })

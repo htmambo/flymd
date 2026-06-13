@@ -5,6 +5,7 @@ import { codeBlockSchema } from '@milkdown/preset-commonmark'
 import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { HighlightCodeBlockNodeView } from './highlight'
+import { attachOverlayError } from '../overlayError'
 
 // 检测当前是否为夜间模式
 function isDarkMode(): boolean {
@@ -161,6 +162,8 @@ class MermaidNodeView implements NodeView {
   private justEnteredEdit: number = 0  // 防止双击后 clickOutside 立即关闭
   // 空 mermaid 代码时的提示覆盖层
   private hintOverlay: HTMLElement
+  // PR-2 A4: 渲染失败时显示的内嵌错误条(复用 overlayError.handle)
+  private errHandle: ReturnType<typeof attachOverlayError> | null = null
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     console.log('[Mermaid Plugin] 创建 NodeView, language:', node.attrs.language)
@@ -174,6 +177,9 @@ class MermaidNodeView implements NodeView {
     this.dom.classList.add('mermaid-node-wrapper')
     this.dom.style.margin = '1em 0'
     this.dom.style.position = 'relative'
+
+    // PR-2 A4: 内嵌错误条 — 渲染失败时显示,默认隐藏
+    try { this.errHandle = attachOverlayError(this.dom) } catch {}
 
     // 创建源代码容器（保持可编辑）- 使用标准的 pre>code 结构
     this.preWrapper = document.createElement('pre')
@@ -400,16 +406,21 @@ class MermaidNodeView implements NodeView {
 
     if (!code || !code.trim()) {
       this.chartContainer.textContent = '(空 mermaid 图表)'
+      try { this.errHandle?.clear() } catch {}
       return
     }
 
     this.chartContainer.textContent = '渲染中...'
     try {
       await renderMermaid(this.chartContainer, code)
+      // PR-2 A4: 渲染成功,清掉错误条
+      try { this.errHandle?.clear() } catch {}
       console.log('[Mermaid Plugin] 渲染完成')
     } catch (e) {
       console.error('[Mermaid Plugin] 渲染出错:', e)
       this.chartContainer.textContent = '渲染失败'
+      // PR-2 A4: 渲染失败,显示错误条
+      try { this.errHandle?.setError(e) } catch {}
     }
   }
 

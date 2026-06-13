@@ -297,14 +297,20 @@ class MathBlockNodeView implements NodeView {
       if (seq !== this.renderSeq) return
       if (isInputPendingCompat()) { requestIdleCompat(() => { void doRender() }, 200); return }
       let katex: any
-      try { katex = await ensureKatexReady() } catch { return }
+      try { katex = await ensureKatexReady() } catch (e) {
+        try { showInlineErrorOn(this.dom, e) } catch {}
+        return
+      }
       if (seq !== this.renderSeq) return
       try {
         const valueRaw = this.node.attrs.value || this.node.textContent || ''
         const value = normalizeKatexLatexForInline(valueRaw)
         try { (this.dom as HTMLElement).dataset.value = valueRaw } catch {}
         this.katexContainer.innerHTML = renderKatexToHtmlCached(katex, value, true)
-      } catch {
+        // PR-2 A4: 渲染成功,清掉错误条
+        try { clearInlineErrorOn(this.dom) } catch {}
+      } catch (e) {
+        try { showInlineErrorOn(this.dom, e) } catch {}
         try { this.katexContainer.textContent = this.node.textContent || '' } catch {}
       }
     }

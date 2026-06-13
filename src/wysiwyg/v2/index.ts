@@ -732,6 +732,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       try { pm.addEventListener('mouseup', () => { try { scheduleInlineCodeMouseExit() } catch {} }, true) } catch {}
       try { pm.addEventListener('touchend', () => { try { scheduleInlineCodeMouseExit() } catch {} }, true) } catch {}
       try { setupCodeCopyOverlay(pm) } catch {}
+      try { setupTableHoverButton(pm) } catch {}
     }
     const host = _root?.firstElementChild as HTMLElement | null
     if (host) {
@@ -1817,6 +1818,86 @@ function refreshCodeCopyButtonsNow() {
   } catch {}
 }
 
+// PR-2 A2: HTML 表格 hover 时显示"编辑源码"按钮
+// 说明:表格不是 NodeView(由 gfm 表格插件直接渲染),所以走全局 hover 委托 + 浮层按钮,
+//      类似 setupCodeCopyOverlay 的定位思路。点击按钮调用 enterTableSourceEdit(tableEl)。
+function setupTableHoverButton(host: HTMLElement | null) {
+  try {
+    if (!host) return
+    let currentBtn: HTMLButtonElement | null = null
+    let currentTbl: HTMLElement | null = null
+    const hide = () => {
+      try { currentBtn?.remove() } catch {}
+      currentBtn = null
+      currentTbl = null
+    }
+    const show = (tbl: HTMLElement) => {
+      try {
+        if (currentTbl === tbl && currentBtn) { try { currentBtn.style.display = 'flex' } catch {}; return }
+        hide()
+        const ov = ensureOverlayHost()
+        if (!ov) return
+        const rc = tbl.getBoundingClientRect()
+        const hostRc = (host.parentElement || host).getBoundingClientRect()
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'ov-table-edit-btn'
+        btn.title = '编辑 HTML 表格源码'
+        btn.setAttribute('aria-label', '编辑 HTML 表格源码')
+        // 内联 SVG 铅笔图标(同 mermaid-edit-btn)
+        btn.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.5 1.5l3 3-8.5 8.5H3v-3l8.5-8.5z"/><path d="M10 3l3 3"/></svg>'
+        btn.style.position = 'absolute'
+        btn.style.pointerEvents = 'auto'
+        btn.style.zIndex = '8'
+        btn.style.width = '22px'
+        btn.style.height = '22px'
+        btn.style.borderRadius = '11px'
+        btn.style.background = 'var(--wysiwyg-bg, #fff)'
+        btn.style.border = '1px solid var(--border-color, #d0d0d0)'
+        btn.style.color = 'var(--text-color, #555)'
+        btn.style.cursor = 'pointer'
+        btn.style.padding = '0'
+        btn.style.alignItems = 'center'
+        btn.style.justifyContent = 'center'
+        btn.style.boxShadow = '0 1px 3px rgba(0,0,0,0.12)'
+        btn.style.left = Math.max(0, Math.round(rc.right - hostRc.left - 28)) + 'px'
+        btn.style.top = Math.max(0, Math.round(rc.top - hostRc.top + 6)) + 'px'
+        btn.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation() })
+        btn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          try { enterTableSourceEdit(tbl) } catch {}
+        })
+        ov.appendChild(btn)
+        currentBtn = btn
+        currentTbl = tbl
+      } catch {}
+    }
+    // mouseover 委托:命中 table 或其后代时显示按钮,离开时隐藏
+    const onOver = (ev: Event) => {
+      try {
+        const t = ev.target as HTMLElement | null
+        const tbl = t?.closest?.('table') as HTMLElement | null
+        if (!tbl) { hide(); return }
+        show(tbl)
+      } catch {}
+    }
+    const onOut = (ev: Event) => {
+      try {
+        const e = ev as MouseEvent
+        const next = e.relatedTarget as Node | null
+        if (next && currentTbl && currentTbl.contains(next)) return
+        hide()
+      } catch {}
+    }
+    host.addEventListener('mouseover', onOver)
+    host.addEventListener('mouseout', onOut)
+    // 滚动或编辑器被销毁时,隐藏按钮
+    const onScroll = () => { hide() }
+    try { host.addEventListener('scroll', onScroll, { passive: true, capture: true } as any) } catch {}
+  } catch {}
+}
+
 async function renderMermaidInto(el: HTMLDivElement, code: string) {
   try {
     const { loadMermaid } = await import('../../core/mermaidLoader')
@@ -2839,6 +2920,8 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
 
 // 暴露给 mermaid NodeView (B7 入口),供双击事件调用
 try { (window as any).__mdeditorEnterMermaidSourceEdit = enterMermaidSourceEdit } catch {}
+// 暴露给表格 hover 编辑按钮(PR-2 A2)与 dblclick handler
+try { (window as any).__mdeditorEnterTableSourceEdit = enterTableSourceEdit } catch {}
 
 // PR-2 A1: 暴露给 math NodeView 的铅笔按钮
 try { (window as any).__mdeditorEnterLatexSourceEdit = enterLatexSourceEdit } catch {}

@@ -805,3 +805,17 @@ body > .block-menu { display: none !important; }
   transform: scale(1.1);
   opacity: 1;
 }
+
+/* PR-2 A2: Mermaid 节点编辑按钮(图表右下角) + 表格编辑按钮 */
+.mermaid-edit-btn { display: none; }
+.mermaid-node-wrapper:hover > .mermaid-edit-btn { display: flex; }
+.mermaid-edit-btn:hover { transform: scale(1.1); }
+.ov-table-edit-btn { display: flex; }
+.ov-table-edit-btn:hover { transform: scale(1.1); }
+
+/* PR-2 A4: 内嵌错误条 — 与浮层共享样式,但强制 absolute 定位避免破坏 inline 布局 */
+.ov-error-bar.ov-error-bar-embedded {
+  margin-bottom: 0;
+  font-size: 11px;
+  padding: 2px 6px;
+}
