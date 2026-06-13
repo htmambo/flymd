@@ -269,7 +269,7 @@ const dict = {
     'dlg.delete': '删除',
     // 退出确认
     'dlg.exit.title': '退出确认',
-    'dlg.exit.unsaved': '检测到当前文档有未保存的更改',
+    'dlg.exit.unsaved': '检测到有文档存在未保存的更改',
     'dlg.exit.unsavedMulti': '检测到 {count} 个文档有未保存的更改，是否全部保存？',
     'dlg.exit.save': '保存并退出',
     'dlg.exit.discard': '直接退出',
@@ -830,7 +830,7 @@ const dict = {
     'dlg.delete': 'Delete',
     // Exit confirmation
     'dlg.exit.title': 'Exit Confirmation',
-    'dlg.exit.unsaved': 'Unsaved changes detected in the current document',
+    'dlg.exit.unsaved': 'Unsaved changes detected in open documents',
     'dlg.exit.unsavedMulti': 'Unsaved changes detected in {count} documents. Save all?',
     'dlg.exit.save': 'Save and exit',
     'dlg.exit.discard': 'Exit without saving',
