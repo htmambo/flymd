@@ -2954,6 +2954,12 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       } catch {}
       try {
         const el = img as HTMLImageElement
+        // 非打印/导出预览时，对图片启用懒加载，减少长文档首屏网络请求。
+        try {
+          if (!opts?.forPrint && !el.hasAttribute('loading')) {
+            el.setAttribute('loading', 'lazy')
+          }
+        } catch {}
         const src = el.getAttribute('src') || ''
         const abs0 = resolveLocalImageAbsPathFromSrc(src, currentFilePath)
         if (!abs0) return
