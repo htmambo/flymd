@@ -189,6 +189,7 @@ export function createMermaidToolsFor(svgEl: SVGElement): HTMLDivElement {
 // Mermaid 渲染缓存（按源代码文本缓存 SVG，避免重复渲染导致布局抖动）
 export const mermaidSvgCache = new Map<string, { svg: string; renderId: string }>()
 export let mermaidSvgCacheVersion = 0
+const MERMAID_CACHE_MAX = 300
 
 export function getCachedMermaidSvg(code: string, desiredId: string): string | null {
   try {
@@ -196,6 +197,9 @@ export function getCachedMermaidSvg(code: string, desiredId: string): string | n
     const cached = mermaidSvgCache.get(code)
     if (!cached || !cached.renderId || !cached.svg) return null
     if (!cached.svg.includes('<svg')) return null
+    // 访问后重新 set，保持 LRU 顺序（Map 按插入顺序迭代）
+    mermaidSvgCache.delete(code)
+    mermaidSvgCache.set(code, cached)
     // 将缓存中的旧 ID 替换为当前渲染需要的新 ID，确保 DOM 中 ID 唯一
     return cached.svg.split(cached.renderId).join(desiredId)
   } catch {
@@ -207,6 +211,14 @@ export function cacheMermaidSvg(code: string, svg: string, renderId: string) {
   try {
     if (isMermaidCacheDisabled()) return
     if (!code || !svg || !renderId) return
+    // 已存在则先删除，再放到末尾（LRU）
+    if (mermaidSvgCache.has(code)) {
+      mermaidSvgCache.delete(code)
+    } else if (mermaidSvgCache.size >= MERMAID_CACHE_MAX) {
+      // 淘汰最久未使用的条目（Map 的第一个键）
+      const firstKey = mermaidSvgCache.keys().next().value
+      if (firstKey !== undefined) mermaidSvgCache.delete(firstKey)
+    }
     mermaidSvgCache.set(code, { svg, renderId })
   } catch {}
 }

@@ -284,7 +284,7 @@ import { initAutoSave, type AutoSaveHandles } from './core/autoSave'
 import { initOnlineAnnouncements } from './core/onlineAnnouncements'
 
 // 滚动条自动隐藏
-import { initAutoHideScrollbar, rescanScrollContainers } from './core/scrollbar'
+import { initAutoHideScrollbar, destroyAutoHideScrollbar, rescanScrollContainers } from './core/scrollbar'
 import { applyPlainTextPaste, type PlainPasteEnv } from './core/plainPaste'
 
 type Mode = 'edit' | 'preview'
@@ -306,15 +306,20 @@ const DEBUG_RENDER = false
 // 大文档渲染期间，任何“后台工作”（KaTeX、索引等）都不该抢 UI。
 // 用一个时间戳粗暴判断：用户刚操作过，就先别在主线程上继续干重活。
 let _lastUserInputAt = 0
+let _userInputListenersAbort: AbortController | null = null
 function markUserInput() {
   try { _lastUserInputAt = Date.now() } catch {}
 }
 try {
-  window.addEventListener('pointerdown', markUserInput, { capture: true, passive: true })
-  window.addEventListener('wheel', markUserInput, { capture: true, passive: true })
-  window.addEventListener('keydown', markUserInput, { capture: true, passive: true } as any)
-  window.addEventListener('contextmenu', markUserInput, { capture: true, passive: true })
-  window.addEventListener('scroll', markUserInput, { capture: true, passive: true })
+  if (!_userInputListenersAbort) {
+    _userInputListenersAbort = new AbortController()
+    const signal = _userInputListenersAbort.signal
+    window.addEventListener('pointerdown', markUserInput, { capture: true, passive: true, signal })
+    window.addEventListener('wheel', markUserInput, { capture: true, passive: true, signal })
+    window.addEventListener('keydown', markUserInput, { capture: true, passive: true, signal } as any)
+    window.addEventListener('contextmenu', markUserInput, { capture: true, passive: true, signal })
+    window.addEventListener('scroll', markUserInput, { capture: true, passive: true, signal })
+  }
 } catch {}
 
 async function getKatexMod(): Promise<any> {
@@ -1142,7 +1147,10 @@ function getContextMenuDeps(): ContextMenuDeps {
 }
 
 // 初始化右键菜单监听
+let _contextMenuListenerInitialized = false
 function initContextMenuListener() {
+  if (_contextMenuListenerInitialized) return
+  _contextMenuListenerInitialized = true
   try {
     // 监听编辑器的右键事件
     editor.addEventListener('contextmenu', (e) => {
@@ -7972,6 +7980,13 @@ function bindEvents() {
         }
       })
     }
+  } catch {}
+  // 应用关闭前清理滚动条监听等资源
+  try {
+    window.addEventListener('beforeunload', () => {
+      try { destroyAutoHideScrollbar() } catch {}
+      try { _userInputListenersAbort?.abort() } catch {}
+    })
   } catch {}
   document.addEventListener('click', (e) => {
     const panel = document.getElementById('recent-panel') as HTMLDivElement

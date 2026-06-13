@@ -3000,11 +3000,18 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
   }
 }
 
+let _webdavInitDone = false
+let _webdavF5Abort: AbortController | null = null
+
 export async function initWebdavSync(): Promise<void> {
+  if (_webdavInitDone) return
+  _webdavInitDone = true
   try {
     const cfg = await getWebdavSyncConfig()
     // F5 快捷键 - 改进：防止浏览器默认刷新行为
     try {
+      if (_webdavF5Abort) _webdavF5Abort.abort()
+      _webdavF5Abort = new AbortController()
       document.addEventListener('keydown', (e: KeyboardEvent) => {
         if (e.key === 'F5') {
           e.preventDefault()
@@ -3015,13 +3022,23 @@ export async function initWebdavSync(): Promise<void> {
             void syncNow('manual')
           }, 100)
         }
-      }, { capture: true })  // 使用捕获阶段，优先拦截
+      }, { capture: true, signal: _webdavF5Abort.signal })  // 使用捕获阶段，优先拦截
     } catch {}
 
     // 启动后触发一次
     if (cfg.enabled && cfg.onStartup) { setTimeout(() => { void syncNow('startup') }, 600) }
 
     // 关闭前同步：统一由主入口（src/main.ts）处理，避免重复注册 close 监听导致时序/交互混乱
+  } catch {}
+}
+
+export function destroyWebdavSync(): void {
+  try {
+    _webdavInitDone = false
+    if (_webdavF5Abort) {
+      try { _webdavF5Abort.abort() } catch {}
+      _webdavF5Abort = null
+    }
   } catch {}
 }
 

@@ -16,6 +16,11 @@ let rafPending = false
 // 鼠标悬停状态标志
 let isHoveringScrollbar = false
 
+// 初始化和清理状态
+let _scrollbarInitDone = false
+let _scrollbarObserver: MutationObserver | null = null
+let _scrollbarAbort: AbortController | null = null
+
 // 需要监听的滚动容器选择器
 const SCROLL_CONTAINER_SELECTORS = [
   '.preview',              // 预览区
@@ -245,7 +250,8 @@ function handleMouseMove(event: MouseEvent): void {
  */
 function setupMutationObserver(): void {
   try {
-    const observer = new MutationObserver((mutations) => {
+    if (_scrollbarObserver) return
+    _scrollbarObserver = new MutationObserver((mutations) => {
       let needsRescan = false
 
       mutations.forEach(mutation => {
@@ -271,7 +277,7 @@ function setupMutationObserver(): void {
       }
     })
 
-    observer.observe(document.body, {
+    _scrollbarObserver.observe(document.body, {
       childList: true,
       subtree: true
     })
@@ -299,6 +305,8 @@ function startPeriodicRescan(): void {
  * 在 DOM 加载完成后调用
  */
 export function initAutoHideScrollbar(): void {
+  if (_scrollbarInitDone) return
+  _scrollbarInitDone = true
   try {
     // 初始状态：隐藏滚动条
     hideScrollbar()
@@ -310,11 +318,30 @@ export function initAutoHideScrollbar(): void {
     setupMutationObserver()
 
     // 绑定全局鼠标移动监听（检测 WYSIWYG 区域和滚动条悬停）
-    document.addEventListener('mousemove', handleMouseMove, { passive: true })
+    _scrollbarAbort = new AbortController()
+    document.addEventListener('mousemove', handleMouseMove, { passive: true, signal: _scrollbarAbort.signal })
   } catch (err) {
     console.error('[Scrollbar] 初始化失败', err)
     throw err
   }
+}
+
+export function destroyAutoHideScrollbar(): void {
+  try {
+    _scrollbarInitDone = false
+    if (_scrollbarObserver) {
+      try { _scrollbarObserver.disconnect() } catch {}
+      _scrollbarObserver = null
+    }
+    if (_scrollbarAbort) {
+      try { _scrollbarAbort.abort() } catch {}
+      _scrollbarAbort = null
+    }
+    if (hideTimer !== null) {
+      clearTimeout(hideTimer)
+      hideTimer = null
+    }
+  } catch {}
 }
 
 /**
