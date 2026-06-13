@@ -431,8 +431,8 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
     const nodes = Array.from(root.querySelectorAll('.mermaid')) as HTMLElement[]
     try { if (DEBUG_RENDER) console.log('[预处理] 准备渲染 Mermaid 节点:', nodes.length) } catch {}
     if (nodes.length > 0) {
-      let mermaid: any
-      try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch (e2) { throw e2 } }
+      const { loadMermaid } = await import('./core/mermaidLoader')
+      const mermaid = await loadMermaid()
       if (!mermaidReady) {
         mermaid.initialize(getMermaidConfig());
         mermaidReady = true
@@ -3053,18 +3053,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
 
     const nodes = Array.from(preview.querySelectorAll('.mermaid')) as HTMLElement[]
     if (nodes.length > 0) {
-      let mermaid: any
-      try {
-        mermaid = (await import('mermaid')).default
-      } catch (e1) {
-        if (!wysiwyg) console.warn('加载 mermaid 失败，尝试 ESM 备用路径...', e1)
-        try {
-          mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default
-        } catch (e2) {
-          console.error('mermaid ESM 备用路径也加载失败', e2)
-          throw e2
-        }
-      }
+      const { loadMermaid } = await import('./core/mermaidLoader')
+      const mermaid = await loadMermaid()
       // 所见模式下，进一步静默 mermaid 的 parseError 回调，避免控制台噪音
       try {
         if (wysiwyg) {
@@ -4618,8 +4608,8 @@ try {
         // 强制把 Mermaid 重置为未初始化状态，并用 light config 重新初始化。
         // 这样 mermaid.render 内部颜色会按 light theme 生成，避免 classDiagram 黑底黑字。
         mermaidReady = false
-        let mermaid: any
-        try { mermaid = (await import('mermaid')).default } catch (e1) { try { mermaid = (await import('mermaid/dist/mermaid.esm.mjs')).default } catch (e2) { throw e2 } }
+        const { loadMermaid } = await import('./core/mermaidLoader')
+        const mermaid = await loadMermaid()
         const lightCfg = (() => {
           try { return getMermaidConfig() } catch { return { startOnLoad: false, securityLevel: 'strict', theme: 'default' } }
         })()

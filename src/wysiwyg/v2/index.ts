@@ -1720,8 +1720,8 @@ function refreshCodeCopyButtonsNow() {
 
 async function renderMermaidInto(el: HTMLDivElement, code: string) {
   try {
-    const mod: any = await import('mermaid')
-    const mermaid = mod?.default || mod
+    const { loadMermaid } = await import('../../core/mermaidLoader')
+    const mermaid = await loadMermaid()
     // 所见模式：静默 mermaid 内部错误与日志，避免在输入中提示干扰
     try { (mermaid as any).parseError = () => {} } catch {}
     try { if ((mermaid as any).mermaidAPI) (mermaid as any).mermaidAPI.parseError = () => {} } catch {}

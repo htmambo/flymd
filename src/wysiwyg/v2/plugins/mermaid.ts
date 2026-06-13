@@ -15,8 +15,8 @@ function isDarkMode(): boolean {
 // Mermaid 渲染函数
 async function renderMermaid(container: HTMLElement, code: string) {
   try {
-    const mod: any = await import('mermaid')
-    const mermaid = mod?.default || mod
+    const { loadMermaid } = await import('../../../core/mermaidLoader')
+    const mermaid = await loadMermaid()
 
     // 静默错误
     try { (mermaid as any).parseError = () => {} } catch {}
