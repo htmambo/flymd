@@ -56,6 +56,9 @@ docs/Task/
 #### 2026-06
 
 - ✅ [2026-06-13-math-and-mermaid-render-fix.md](Archive/2026-06/2026-06-13-math-and-mermaid-render-fix.md) — 修复 math/katex/latex 围栏代码块 + KaTeX 失败可观测性 + flow/seq 别名 + mermaid 错误兜底(完成 2026-06-13)
+- ✅ [2026-06-13-wysiwyg-html-inline-tags.md](Archive/2026-06/2026-06-13-wysiwyg-html-inline-tags.md) — 所见模式 sub/sup/abbr HTML 内联标签渲染(完成 2026-06-14)
+  - remark 插件合并配对 HTML 标签 + $markSchema mark 定义 + remark-stringify handlers
+  - 610/610 测试通过(含新增 8 用例)
   - **T1 ✅** `main.ts` `highlight()`: math/katex/latex 三个 lang 统一输出 `<pre class="md-math-block">` 占位,走 `renderKatexPlaceholders` 二次渲染
   - **T2 ✅** `renderKatexPlaceholders` + `highlight()` 增加 `DEBUG_RENDER` 节点数日志
   - **T3 ✅** `highlight()` 新增 flow/seq 别名(走 mermaid 占位);`renderMermaidIn` 错误回填 DOM(`.mmd-figure.mmd-error`);`preview.css` 红色错误样式
