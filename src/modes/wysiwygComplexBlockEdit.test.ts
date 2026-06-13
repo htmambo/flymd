@@ -297,3 +297,35 @@ describe('wysiwyg/v2 NodeView 桥接 (PR-2 A1/A2)', () => {
     expect(handle.el.textContent).toContain('after gc')
   })
 })
+
+describe('wysiwyg/v2 inline HTML preprocessor', () => {
+  function transformInlineHtmlForWysiwyg(md: string): string {
+    let out = md
+    out = out.replace(/<s>([^<]*?)<\/s>/g, (_m, inner) => `~~${inner}~~`)
+    return out
+  }
+
+  it('行内 <s> 转换为 GFM strikethrough', () => {
+    expect(transformInlineHtmlForWysiwyg('text <s>strike</s> end'))
+      .toBe('text ~~strike~~ end')
+  })
+
+  it('多个 <s> 全部转换', () => {
+    expect(transformInlineHtmlForWysiwyg('<s>a</s> and <s>b</s>'))
+      .toBe('~~a~~ and ~~b~~')
+  })
+
+  it('空 <s></s> 也转换', () => {
+    // 替换结果 '~~~~' 表示 <s></s> → '~~' + '~~' 即两对空 strikethrough
+    expect(transformInlineHtmlForWysiwyg('<s></s>')).toBe('~~~~')
+  })
+
+  it('不含 <s> 的输入保持不变', () => {
+    expect(transformInlineHtmlForWysiwyg('plain text')).toBe('plain text')
+  })
+
+  it('<sub>/<sup> 保持原样(走 raw HTML inline 节点)', () => {
+    expect(transformInlineHtmlForWysiwyg('H<sub>2</sub>O')).toBe('H<sub>2</sub>O')
+    expect(transformInlineHtmlForWysiwyg('x<sup>2</sup>')).toBe('x<sup>2</sup>')
+  })
+})

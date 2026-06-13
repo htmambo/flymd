@@ -64,6 +64,17 @@ let _codeCopyWindowResizeHandler: (() => void) | null = null
 let _inlineCodeMouseTimer: number | null = null
 let _rootMouseDownHandler: ((ev: MouseEvent) => void) | null = null
 
+// 所见模式 preprocessor:只处理所见模式不原生支持但有等价 GFM 语法的标签
+// - <s>x</s>     → ~~x~~  (GFM strikethrough,preset-gfm 已支持,等价不污染)
+// - <sub>/<sup>/<abbr> 等不转换(后续通过 milkdown 节点扩展支持,不动源 markdown)
+function transformInlineHtmlForWysiwyg(md: string): string {
+  try {
+    return md.replace(/<s>([^<]*?)<\/s>/g, (_m, inner) => `~~${inner}~~`)
+  } catch {
+    return md
+  }
+}
+
 function hasDollarText(node: any): boolean {
   try { return String(node?.textContent || '').includes('$') } catch { return false }
 }
@@ -493,7 +504,13 @@ function cleanupEditorOnly() {
 export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onChange: (md: string) => void) {
   // 规范化内容：空内容也是合法的（新文档或空文档）
   const content0 = normalizeTabIndentText((initialMd || '').toString())
-  const content = maybeConvertHtmlTableBlocksToGfm(content0)
+  // 把 <s>/<sub>/<sup> 三个所见模式不原生识别的 HTML 标签转成等价形式
+  // - <s>...</s>     -> ~~...~~      (GFM strikethrough,preset-gfm 支持)
+  // - <sub>...</sub> -> 保留 HTML    (raw HTML inline 节点,浏览器原生渲染)
+  // - <sup>...</sup> -> 保留 HTML    (同上)
+  // 只对 inline 形式做转换(行内非 <table> 等块级),不影响块级 HTML
+  const content1 = transformInlineHtmlForWysiwyg(content0)
+  const content = maybeConvertHtmlTableBlocksToGfm(content1)
   // 保护 Excel 公式里的 `$`，避免被 remark-math / 输入规则误识别为行内数学
   const contentForEditor = protectExcelDollarRefs(content)
   console.log('[WYSIWYG V2] enableWysiwygV2 called, content length:', content.length)
