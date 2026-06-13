@@ -61,6 +61,8 @@ export default defineConfig(({ mode }) => ({
           if (id.includes('node_modules')) {
             // Milkdown 编辑器（只在所见模式加载）
             if (id.includes('@milkdown')) return 'milkdown'
+            // ProseMirror 生态（WYSIWYG 依赖）
+            if (id.includes('prosemirror')) return 'prosemirror'
             // 大型渲染库（按需加载）
             if (id.includes('markdown-it')) return 'markdown-it'
             if (id.includes('dompurify')) return 'dompurify'
@@ -75,8 +77,13 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('webdav')) return 'wps'
             // Tauri 运行时
             if (id.includes('@tauri-apps')) return 'tauri'
-            // 其他较小的第三方库打包到一起
-            return 'vendor'
+            // 命令面板拼音搜索
+            if (id.includes('pinyin-pro')) return 'pinyin'
+            // YAML 处理
+            if (id.includes('js-yaml')) return 'yaml'
+            // diff 库
+            if (id.includes('/diff/') || id.includes('diff/dist')) return 'diff'
+            // 其余小型依赖不再强制合并到 vendor，让 Rollup 自动处理
           }
           // 应用代码分割：将大型模块分离
           if (id.includes('/src/')) {
