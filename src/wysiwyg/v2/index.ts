@@ -2736,44 +2736,55 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
 function enterMermaidSourceEdit(domEl: HTMLElement) {
   try {
     const wrapper = (domEl.closest('.mermaid-node-wrapper') as HTMLElement) || null
-    const pre = (wrapper?.querySelector('pre[data-language="mermaid"]') as HTMLElement)
-      || (domEl.closest('pre[data-language="mermaid"]') as HTMLElement)
-      || (domEl.closest('pre') as HTMLElement)
     const ov = ensureOverlayHost()
     if (!ov) return
 
-    // 读取当前源码
-    const codeEl = pre?.querySelector('code') as HTMLElement | null
-    const initialCode = (codeEl?.textContent ?? pre?.textContent ?? '').toString()
-
-    // 缓存 PM 位置 (避免失焦时位置查找失败)
+    // 优先从 PM 文档直接拿 code_block 节点的源码 + 位置(避开 DOM 节点类型
+    // 不匹配的问题:NodeView 的 preWrapper 不带 data-language 属性)
     const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
     let cachedFrom = -1, cachedTo = -1
-    if (view && pre) {
+    let initialCode = ''
+    let anchorEl: HTMLElement | null = wrapper || domEl
+    if (view) {
       try {
-        const pos = view.posAtDOM(pre, 0)
+        const state = view.state
+        // 先尝试用 domEl 找位置
+        let pos: number | null = null
+        try { pos = view.posAtDOM(domEl, 0) } catch {}
+        if (pos == null && wrapper) {
+          try { pos = view.posAtDOM(wrapper, 0) } catch {}
+        }
         if (typeof pos === 'number' && pos >= 0) {
-          const state = view.state
           const $pos = state.doc.resolve(pos)
           for (let d = $pos.depth; d >= 0; d--) {
             const node = $pos.node(d)
             if (node.type?.name === 'code_block') {
               cachedFrom = $pos.before(d)
               cachedTo = $pos.after(d)
+              initialCode = String(node.textContent || '')
               break
             }
           }
         }
       } catch {}
     }
+    // PM 路径没拿到源码时,降级到 DOM 读取(老路径,可能因 display:none 拿到空字符串)
+    if (!initialCode && wrapper) {
+      const anyPre = wrapper.querySelector('pre') as HTMLElement | null
+      if (anyPre) {
+        const anyCode = anyPre.querySelector('code') as HTMLElement | null
+        initialCode = (anyCode?.textContent ?? anyPre.textContent ?? '').toString()
+        anchorEl = anyPre
+      }
+    }
 
     // 冻结编辑器 (避免浮层打开期间 PM 文档被修改,导致 cachedFrom/cachedTo 失效)
     const releaseEditLock = acquireEditLock()
     let _overlayClosed = false
 
-    // 位置:放在图表下方,沿用 pre 的位置/宽度
+    // 位置:放在图表下方,沿用 anchor 元素的位置/宽度
     const hostRc = (_root as HTMLElement).getBoundingClientRect()
-    const anchorRc = (pre || wrapper || domEl).getBoundingClientRect()
+    const anchorRc = (anchorEl || wrapper || domEl).getBoundingClientRect()
     const marginX = 12
     const finalWidth = Math.max(280, Math.min(hostRc.width - marginX * 2, anchorRc.width || 320))
 
@@ -2856,13 +2867,13 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
       if (applied) return
       applied = true
       const newCode = ta.value
-      // 1) 写回 pre 的 code 文本 (供后续 renderMermaidNow 读出)
+      // 1) 写回 DOM(如果存在)供后续 renderMermaidNow 读出
       try {
-        if (codeEl) codeEl.textContent = newCode
-        else if (pre) pre.textContent = newCode
+        const target = anchorEl?.querySelector?.('code') || anchorEl
+        if (target) (target as HTMLElement).textContent = newCode
       } catch {}
       // 2) 让缓存失效,触发下一次 renderMermaidNow 重新渲染
-      try { if (pre) _renderedMermaid.delete(pre) } catch {}
+      try { if (anchorEl) _renderedMermaid.delete(anchorEl as HTMLElement) } catch {}
       // 3) 派发 PM 事务,更新文档中的 code_block 内容
       try {
         const v: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
@@ -2872,9 +2883,9 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
           const codeBlockType = schema.nodes['code_block']
           if (codeBlockType) {
             let from = cachedFrom, to = cachedTo
-            if ((from < 0 || to < 0) && pre) {
+            if ((from < 0 || to < 0) && anchorEl) {
               try {
-                const p = v.posAtDOM(pre, 0)
+                const p = v.posAtDOM(anchorEl, 0)
                 if (typeof p === 'number' && p >= 0) {
                   const $p = state.doc.resolve(p)
                   for (let d = $p.depth; d >= 0; d--) {
@@ -2889,7 +2900,7 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
               } catch {}
             }
             if (from >= 0 && to > from) {
-              const lang = (pre?.getAttribute('data-language') || 'mermaid')
+              const lang = (anchorEl?.getAttribute('data-language') || 'mermaid')
               const newNode = codeBlockType.create(
                 { language: lang },
                 newCode ? schema.text(newCode) : null
@@ -2950,8 +2961,8 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
       }
       try {
         const v: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
-        if (v && pre) {
-          const p = v.posAtDOM(pre, 0)
+        if (v && anchorEl) {
+          const p = v.posAtDOM(anchorEl, 0)
           if (typeof p === 'number' && p >= 0) {
             const state = v.state
             const $p = state.doc.resolve(p)
