@@ -195,7 +195,10 @@ export async function showContextMenu(
     removeContextMenu()
 
     // 根据插件菜单可见性过滤右键菜单项
-    const visiblePluginItems = opts.pluginItems.filter((item) => {
+    // 防御:pluginContextMenuItems 在 pluginHost runtime 尚未初始化时可能是 undefined,
+    // 强制按数组处理,避免 pluginItems.filter is not a function
+    const pluginItems = Array.isArray(opts.pluginItems) ? opts.pluginItems : []
+    const visiblePluginItems = pluginItems.filter((item) => {
       try {
         const vis = getPluginMenuVisibility(item.pluginId)
         return vis.contextMenu !== false
