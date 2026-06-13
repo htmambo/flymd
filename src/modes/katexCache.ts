@@ -20,6 +20,26 @@ export function createKatexCache(deps: KatexCacheDeps): KatexCacheApi {
   const cache = new Map<string, string>()
   const { max, maxLen } = deps
 
+  // 简单 LRU：命中后移到队尾；写入且满时淘汰最久未使用项。
+  function touchCache(key: string): string | undefined {
+    const hit = cache.get(key)
+    if (hit != null) {
+      cache.delete(key)
+      cache.set(key, hit)
+    }
+    return hit
+  }
+
+  function putCache(key: string, value: string): void {
+    if (cache.has(key)) {
+      cache.delete(key)
+    } else if (cache.size >= max) {
+      const firstKey = cache.keys().next().value
+      if (firstKey !== undefined) cache.delete(firstKey)
+    }
+    cache.set(key, value)
+  }
+
   return {
     renderCached(katexMod: any, latex: string, displayMode: boolean): string {
       const src = latex || ''
@@ -27,13 +47,12 @@ export function createKatexCache(deps: KatexCacheDeps): KatexCacheApi {
       const canCache = src.length > 0 && src.length <= maxLen
       const key = canCache ? `${displayMode ? 'B' : 'I'}:${src}` : ''
       if (canCache) {
-        const hit = cache.get(key)
+        const hit = touchCache(key)
         if (hit != null) return hit
       }
       const html = katexMod.default.renderToString(src, { throwOnError: false, displayMode })
       if (canCache) {
-        if (cache.size >= max) cache.clear()
-        cache.set(key, html)
+        putCache(key, html)
       }
       return html
     },
