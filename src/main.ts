@@ -88,6 +88,7 @@ import { bindSharedStore } from './utils/sharedStore'
 import { decorateCodeBlocks } from './decorate'
 import { ribbonIcons } from './icons'
 import { APP_VERSION } from './core/appInfo'
+import { singleFlight } from './core/singleFlight'
 import type { UpdateAssetInfo, CheckUpdateResp, UpdateExtra } from './core/updateTypes'
 // htmlToMarkdown 改为按需动态导入（仅在粘贴 HTML 时使用）
 import {
@@ -7959,14 +7960,6 @@ function bindEvents() {
   // 统一的退出流程（供关闭按钮、onCloseRequested、Cmd+Q 等路径复用）
   // 事件对象可选：来自 onCloseRequested 时用于阻止默认关闭。
   //
-  // 幂等保护：三条退出路径（关闭按钮 emit / Cmd+Q listen / onCloseRequested）
-  // 可能在同一事件循环内并发抵达。无锁会导致：
-  //   - 多个保存对话框同时弹出
-  //   - 多次 webdav shutdown sync 并发
-  //   - 多个 hide()/destroy() timer 排队
-  // exitPromise first-wins：后续调用直接复用同一 promise（包括弹窗的等待）。
-  let exitPromise: Promise<void> | null = null
-
   // 关闭前 WebDAV 同步的"用户感知上限"：超过此值前端流程不再等待，直接进入
   // destroy。底层 webdavSyncNow('shutdown') 仍由自身 cfg.timeoutMs 控制
   // （默认 120000，shutdown 路径取 min(60000, cfg.timeoutMs)=60000），可能继
@@ -7974,11 +7967,12 @@ function bindEvents() {
   // hide，用户感知到的是"应用关掉了"。如有取消机制重构，再统一收口。
   const SHUTDOWN_SYNC_TIMEOUT_MS = 8000
 
-  async function performExit(event?: any): Promise<void> {
-    try { event?.preventDefault?.() } catch {}
-    if (exitPromise) return exitPromise
-
-    exitPromise = (async () => {
+  // 退出主体。三条退出路径（关闭按钮 emit / Cmd+Q listen / onCloseRequested）
+  // 可能在同一事件循环内并发抵达；singleFlight first-wins 保证主体只跑一遍，
+  // 其余调用复用同一 Promise（含正在等待用户的对话框），settle 后清空以便
+  // "取消退出"再次发起。无锁会导致：多个保存对话框同时弹出 / 多次 webdav
+  // shutdown sync 并发 / 多个 hide()/destroy() timer 排队。
+  const runExit = singleFlight(async (): Promise<void> => {
     const win = getCurrentWindow()
     // macOS 上在关闭回调同步链里直接 destroy 窗口可能触发 WebKit 死锁/卡死；
     // 先隐藏窗口让主线程 RunLoop 完成当前事件，再延迟销毁。
@@ -8122,15 +8116,13 @@ function bindEvents() {
     if (allSaved) {
       await exitNow()
     }
-    })()
+  })
 
-    try {
-      await exitPromise
-    } finally {
-      // 清空 promise：cancel 路径用户应该能再次发起退出；
-      // save/discard 路径窗口已 hide/destroy，清空亦无害。
-      exitPromise = null
-    }
+  // 关闭前确认入口。preventDefault 必须每次调用都执行（即使调用被 singleFlight
+  // 去重），否则并发抵达的 onCloseRequested 事件会放行系统默认关闭。
+  async function performExit(event?: any): Promise<void> {
+    try { event?.preventDefault?.() } catch {}
+    return runExit()
   }
 
   // 关闭前确认（未保存）

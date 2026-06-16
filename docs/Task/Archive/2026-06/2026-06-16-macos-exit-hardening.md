@@ -329,3 +329,25 @@ T6 (x86 脚本) ─────────────────────�
   3. 每个 T 完成后立即 `npx tsc --noEmit` + `npm test`，T2 额外 `cargo check`
   4. 待 codex 恢复后补一次最终 review（T7 中执行）
   5. 用户手工 4 项验收（A4-A7）作为最终把关
+
+---
+
+## 9. 后续补遗（2026-06-17，A2 验收闭环）
+
+复盘时发现 **A2（"新增至少 4 个用例，T1/T3/T4 各 1+"）在初次实施时被遗漏**：T1/T3/T4 的"验收"小节描述了单测，但实际 0 新增、未改动任何 `.test.ts`。本次补齐。
+
+**为可测性抽离的 2 个纯模块（行为完全等价，非功能变更）**：
+- `src/core/singleFlight.ts`：把 `performExit` 手写的 `exitPromise` first-wins 锁抽成通用单飞包装；`performExit` 改为 `preventDefault` + 委托 `runExit()`。并发去重、settle 后可重入（取消退出）语义不变。
+- `src/tabs/sessionStorageKey.ts`：把会话 key 派生（`getSessionStorageKey` / `getCurrentWindowLabel`）与老 key 迁移决策（`migrateLegacySessionKey`）从 `integration.ts` 模块私有作用域抽出；`integration.ts` 改为引用，迁移行为不变。
+
+**新增测试（15 例，全绿）**：
+
+| 文件 | 覆盖 | 例数 |
+|------|------|------|
+| `src/core/singleFlight.test.ts` | T1 幂等：并发只跑一次 / settle 后可重入 / reject 后可重试 / in-flight 不重入 | 4 |
+| `src/tabs/sessionStorageKey.test.ts` | T4：label 隔离 key / 非 Tauri 退回 browser / 老 key 仅 main 迁移一次后删除 | 7 |
+| `src/tabs/TabManager.test.ts` | T3：discard 路径 content 写空 + dirty=false / 默认向后兼容 / 非 dirty 不持久化 | 4 |
+
+**验证**：
+- `npm test`：**587 passed**（= 原 572 基线 + 15 新增）；3 个 pre-existing 文件加载失败（`web/server` 的 `dotenv`、`previewMeta` 的 `localStorage`）与 1 个 pre-existing 用例失败保持基线，无新增、无回归。
+- `npx tsc --noEmit`：**22 个 `error TS`（≈29 行输出）= 基线，0 新增**。借此确认 §完成总览 "29 行错误 = 基线" 描述**准确**；A1 的 "0 错误" 应理解为"0 新增"——存量 22 个 pre-existing 错误集中在 `webdavSyncFacade.ts` 等与本任务无关的文件。

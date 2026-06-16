@@ -12,7 +12,7 @@ import { TextareaUndoManager } from './TextareaUndoManager'
 import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 import { initTabTransferReceiver } from './tabTransferReceiver'
 import { readTextFileAnySafe } from '../core/fsSafe'
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getSessionStorageKey, getCurrentWindowLabel, migrateLegacySessionKey } from './sessionStorageKey'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -340,26 +340,7 @@ async function saveAllDirtyTabs(): Promise<boolean> {
 }
 
 // ---- 会话保存/恢复 ----
-// 老 key（v1）：所有窗口共享一份快照，多窗口会互相覆盖。仅保留用于一次性迁移。
-const SESSION_KEY_LEGACY = 'flymd:tabSession:v1'
-// 新 key 前缀（v2）：按窗口 label 隔离（main / main-xxxx）。
-const SESSION_KEY_PREFIX = 'flymd:tabSession:v2:'
-
-/**
- * 取当前窗口 label。非 Tauri 环境或异常时退回 'browser'，避免污染 'main' 命名空间。
- */
-function getCurrentWindowLabel(): string {
-  try {
-    const w = getCurrentWindow()
-    return w?.label || 'main'
-  } catch {
-    return 'browser'
-  }
-}
-
-function getSessionStorageKey(): string {
-  return SESSION_KEY_PREFIX + getCurrentWindowLabel()
-}
+// key 派生与老 key 迁移逻辑见 ./sessionStorageKey（已抽为纯函数并单测）。
 
 function saveTabSession(opts?: { includeDirtyContent?: boolean }): void {
   try {
@@ -376,19 +357,16 @@ async function restoreTabSession(): Promise<void> {
     const key = getSessionStorageKey()
     let raw = localStorage.getItem(key)
 
-    // 老 key 兼容：仅 main 窗口在新 key 不存在时执行一次性迁移，迁移完即删除老 key。
-    // 其他窗口（main-xxxx）一律使用自己的新 key，避免抢占老 key 的快照。
-    if (!raw && getCurrentWindowLabel() === 'main') {
-      const legacy = localStorage.getItem(SESSION_KEY_LEGACY)
-      if (legacy) {
-        try {
-          localStorage.setItem(key, legacy)
-          localStorage.removeItem(SESSION_KEY_LEGACY)
-          raw = legacy
+    // 老 key 兼容：仅 main 窗口、新 key 不存在时执行一次性迁移（详见 sessionStorageKey）。
+    if (!raw) {
+      try {
+        const migrated = migrateLegacySessionKey(localStorage, key, getCurrentWindowLabel())
+        if (migrated) {
+          raw = migrated
           console.log('[Tabs] 已迁移老会话 key →', key)
-        } catch (e) {
-          console.warn('[Tabs] 迁移老会话 key 失败:', e)
         }
+      } catch (e) {
+        console.warn('[Tabs] 迁移老会话 key 失败:', e)
       }
     }
 
