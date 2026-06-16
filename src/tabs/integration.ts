@@ -26,6 +26,10 @@ let pauseWatcherTimeout: ReturnType<typeof setTimeout> | null = null
 let pauseDirtySync = false
 let pauseDirtySyncTimeout: ReturnType<typeof setTimeout> | null = null
 
+// 会话自动保存：用于兜底非正常退出（如 macOS Cmd+Q 不触发前端 onCloseRequested）
+let sessionAutoSaveTimer: ReturnType<typeof setTimeout> | null = null
+const SESSION_AUTO_SAVE_INTERVAL_MS = 5000
+
 function pausePathWatcher(duration = 1000): void {
   pauseWatcher = true
   if (pauseWatcherTimeout) clearTimeout(pauseWatcherTimeout)
@@ -259,6 +263,14 @@ function exposeExitHooks(): void {
   flymd.flymdSaveAllDirtyTabsForExit = saveAllDirtyTabsForExit
 }
 
+function scheduleSessionAutoSave(): void {
+  if (sessionAutoSaveTimer != null) return
+  sessionAutoSaveTimer = setTimeout(() => {
+    sessionAutoSaveTimer = null
+    saveTabSession()
+  }, SESSION_AUTO_SAVE_INTERVAL_MS)
+}
+
 /**
  * 同步一次激活标签的 dirty 状态后，返回所有未保存标签的快照。
  * 所见模式下 dirty 经 ~200ms 轮询同步，可能滞后；这里主动同步一次，避免漏判激活标签。
@@ -323,6 +335,7 @@ function saveTabSession(): void {
   } catch (e) {
     console.warn('[Tabs] 保存会话失败:', e)
   }
+  scheduleSessionAutoSave()
 }
 
 async function restoreTabSession(): Promise<void> {
@@ -417,6 +430,8 @@ export async function initTabSystem(): Promise<void> {
           void (window as any).extWatcherIntegration?.revalidateCurrent?.()
         }
       } catch (e) { console.warn('[extWatcher] tab-switched hook failed', e) }
+      // 标签切换后立即保存会话，降低非正常退出丢现场的概率
+      try { saveTabSession() } catch {}
     } else if (event.type === 'tab-closed') {
       undoManager.removeTab(event.tabId)
       // 关闭标签时解除该标签对应文件的监听
@@ -433,6 +448,8 @@ export async function initTabSystem(): Promise<void> {
           }
         }
       } catch {}
+      // 标签关闭后立即保存会话
+      try { saveTabSession() } catch {}
     }
   })
 
@@ -466,6 +483,9 @@ export async function initTabSystem(): Promise<void> {
   } catch (e) {
     console.warn('[Tabs] 自动恢复会话失败:', e)
   }
+
+  // 启动会话自动保存兜底：避免非正常退出（如 macOS Cmd+Q）导致现场丢失
+  try { scheduleSessionAutoSave() } catch {}
 
   // 跨窗口拖拽接收端：收到其它窗口的标签后，在本窗口创建/激活标签
   // 注意：不 await，避免阻塞标签系统主流程；失败（非 Tauri 环境）也无所谓

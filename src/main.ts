@@ -7961,8 +7961,13 @@ function bindEvents() {
       try { event.preventDefault() } catch {}
 
       const win = getCurrentWindow()
+      // macOS 上在 onCloseRequested 同步链里直接 destroy 窗口可能触发 WebKit 死锁/卡死；
+      // 先隐藏窗口让主线程 RunLoop 完成当前事件，再延迟销毁。
       const destroyWin = async () => {
-        try { await win.destroy() } catch { try { await win.close() } catch {} }
+        try { await win.hide() } catch {}
+        setTimeout(() => {
+          try { win.destroy() } catch { try { win.close() } catch {} }
+        }, 150)
       }
 
       let portableActive = false
@@ -8001,7 +8006,12 @@ function bindEvents() {
           const t0 = Date.now()
           let summary = 'unknown'
           try {
-            const result = await webdavSyncNow('shutdown')
+            // 关闭前同步增加 8 秒超时：避免网络异常时窗口长期卡住无法退出
+            const syncPromise = webdavSyncNow('shutdown')
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('shutdown sync timeout')), 8000)
+            })
+            const result = await Promise.race([syncPromise, timeoutPromise])
             if (!result) summary = 'failed(null)'
             else if ((result as any).skipped) summary = 'skipped'
             else summary = `ok up=${result.uploaded} down=${result.downloaded}`
