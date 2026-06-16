@@ -7967,6 +7967,13 @@ function bindEvents() {
   // exitPromise first-wins：后续调用直接复用同一 promise（包括弹窗的等待）。
   let exitPromise: Promise<void> | null = null
 
+  // 关闭前 WebDAV 同步的"用户感知上限"：超过此值前端流程不再等待，直接进入
+  // destroy。底层 webdavSyncNow('shutdown') 仍由自身 cfg.timeoutMs 控制
+  // （默认 120000，shutdown 路径取 min(60000, cfg.timeoutMs)=60000），可能继
+  // 续在后台跑完——这是已知限制：Promise.race 不会取消底层任务，但窗口已
+  // hide，用户感知到的是"应用关掉了"。如有取消机制重构，再统一收口。
+  const SHUTDOWN_SYNC_TIMEOUT_MS = 8000
+
   async function performExit(event?: any): Promise<void> {
     try { event?.preventDefault?.() } catch {}
     if (exitPromise) return exitPromise
@@ -8018,10 +8025,11 @@ function bindEvents() {
         const t0 = Date.now()
         let summary = 'unknown'
         try {
-          // 关闭前同步增加 8 秒超时：避免网络异常时窗口长期卡住无法退出
+          // 关闭前同步外层超时（SHUTDOWN_SYNC_TIMEOUT_MS）：见上方常量注释，
+          // 这是用户感知上限；底层 webdavSyncNow 仍受其 cfg.timeoutMs 控制。
           const syncPromise = webdavSyncNow('shutdown')
           const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('shutdown sync timeout')), 8000)
+            setTimeout(() => reject(new Error('shutdown sync timeout')), SHUTDOWN_SYNC_TIMEOUT_MS)
           })
           const result = await Promise.race([syncPromise, timeoutPromise])
           if (!result) summary = 'failed(null)'
