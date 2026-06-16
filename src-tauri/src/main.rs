@@ -1863,11 +1863,21 @@ fn main() {
     });
 
   // macOS：Tauri 2 的 RunEvent::ExitRequested 在 Cmd+Q / Dock 退出时不可靠，
-  // 因此注册一个最小应用菜单，拦截 Cmd+Q，由前端统一执行保存后退出。
+  // 因此自定义应用菜单中的 Quit 项，让 Cmd+Q 通过前端 'flymd://request-exit'
+  // 进入统一退出流程（保存现场后退出）。
+  //
+  // 重要：Menu::default() 在 macOS 上已构造标准 App 子菜单
+  //   [About, Services, Hide, Hide Others, Show All, separator, Quit]
+  // 仅 append 一个新的"FlyMD"子菜单会留下两个 Quit，且默认 Quit 仍直连
+  // muda 的 `terminate:` selector，绕过前端保存。因此本实现：
+  //   1. 取 menu.items() 的第一个 MenuItemKind::Submenu（即标准 App 子菜单）
+  //   2. 移除其末尾的预定义 Quit（位置 = items().len() - 1）
+  //   3. append 自定义 flymd.quit（带 Cmd+Q 加速键）
+  // 这样标准 App 菜单结构保留（About/Hide/etc.），Cmd+Q 走前端 flymd.quit。
   #[cfg(all(desktop, target_os = "macos"))]
   let builder = builder
     .menu(|handle| {
-      use tauri::menu::{Menu, MenuItem, Submenu};
+      use tauri::menu::{Menu, MenuItem, MenuItemKind};
 
       let menu = Menu::default(handle)?;
       let quit = MenuItem::with_id(
@@ -1877,15 +1887,44 @@ fn main() {
         true,
         Some("Cmd+Q"),
       )?;
-      let sub = Submenu::with_id_and_items(handle, "flymd.app", "FlyMD", true, &[&quit])?;
-      menu.append_items(&[&sub])?;
+
+      // 定位标准 App 子菜单（macOS 上 Menu::default 的第一个 item）。
+      // 若 Tauri 版本变化导致结构不符，降级为 append 自定义子菜单（保留旧行为）。
+      let top_items = menu.items()?;
+      let mut replaced = false;
+      if let Some(MenuItemKind::Submenu(app_submenu)) = top_items.into_iter().next() {
+        let sub_items = app_submenu.items()?;
+        if !sub_items.is_empty() {
+          // 末尾通常是 separator + Quit；先尝试移除最后一项（Quit）。
+          // remove_at 返回 Option<MenuItemKind>，失败/不存在不致命，记 warn 即可。
+          let _ = app_submenu.remove_at(sub_items.len() - 1);
+        }
+        if app_submenu.append(&quit).is_ok() {
+          replaced = true;
+        }
+      }
+
+      if !replaced {
+        // 降级：保留旧行为（额外 FlyMD 子菜单 + Quit），起码自定义 Quit 仍能工作。
+        use tauri::menu::Submenu;
+        let sub = Submenu::with_id_and_items(handle, "flymd.app", "FlyMD", true, &[&quit])?;
+        menu.append_items(&[&sub])?;
+        write_startup_log("[macos-menu] WARN: 未能定位标准 App 子菜单，降级追加 FlyMD 子菜单");
+      }
+
       Ok(menu)
     })
     .on_menu_event(|app, event| {
       if event.id().as_ref() == "flymd.quit" {
         write_startup_log("[macos-menu] Cmd+Q / Quit menu triggered");
+        // 优先 main 窗口；找不到时退化到任意活窗口；都没有则直接退出进程。
         if let Some(win) = app.get_webview_window("main") {
           let _ = win.emit("flymd://request-exit", ());
+        } else if let Some((_label, win)) = app.webview_windows().into_iter().next() {
+          let _ = win.emit("flymd://request-exit", ());
+        } else {
+          write_startup_log("[macos-menu] no webview window available, calling app.exit(0)");
+          app.exit(0);
         }
       }
     });
