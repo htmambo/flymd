@@ -1862,6 +1862,34 @@ fn main() {
       }
     });
 
+  // macOS：Tauri 2 的 RunEvent::ExitRequested 在 Cmd+Q / Dock 退出时不可靠，
+  // 因此注册一个最小应用菜单，拦截 Cmd+Q，由前端统一执行保存后退出。
+  #[cfg(all(desktop, target_os = "macos"))]
+  let builder = builder
+    .menu(|handle| {
+      use tauri::menu::{Menu, MenuItem, Submenu};
+
+      let menu = Menu::default(handle)?;
+      let quit = MenuItem::with_id(
+        handle,
+        "flymd.quit",
+        "退出 FlyMD",
+        true,
+        Some("Cmd+Q"),
+      )?;
+      let sub = Submenu::with_id_and_items(handle, "flymd.app", "FlyMD", true, &[&quit])?;
+      menu.append_items(&[&sub])?;
+      Ok(menu)
+    })
+    .on_menu_event(|app, event| {
+      if event.id().as_ref() == "flymd.quit" {
+        write_startup_log("[macos-menu] Cmd+Q / Quit menu triggered");
+        if let Some(win) = app.get_webview_window("main") {
+          let _ = win.emit("flymd://request-exit", ());
+        }
+      }
+    });
+
   let builder = builder
     .invoke_handler(tauri::generate_handler![
         upload_to_s3,

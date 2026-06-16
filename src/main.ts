@@ -1586,11 +1586,10 @@ try {
     }
   }
   if (closeBtn) {
+    // 关闭按钮不再走 win.close() → onCloseRequested 的默认链路；
+    // 直接执行统一退出流程，避免 macOS 上 close() 本身触发 WebKit 死锁/卡死。
     closeBtn.addEventListener('click', async () => {
-      try {
-        const win = getCurrentWindow()
-        await win.close()
-      } catch {}
+      try { await performExit() } catch {}
     })
   }
 } catch {}
@@ -7952,152 +7951,164 @@ function bindEvents() {
     }
   })
   // 快捷键
+  // 统一的退出流程（供关闭按钮、onCloseRequested、Cmd+Q 等路径复用）
+  // 事件对象可选：来自 onCloseRequested 时用于阻止默认关闭。
+  async function performExit(event?: any): Promise<void> {
+    try { event?.preventDefault?.() } catch {}
+
+    const win = getCurrentWindow()
+    // macOS 上在关闭回调同步链里直接 destroy 窗口可能触发 WebKit 死锁/卡死；
+    // 先隐藏窗口让主线程 RunLoop 完成当前事件，再延迟销毁。
+    const destroyWin = async () => {
+      try { await win.hide() } catch {}
+      setTimeout(() => {
+        try { win.destroy() } catch { try { win.close() } catch {} }
+      }, 150)
+    }
+
+    let portableActive = false
+    try { portableActive = await isPortableModeEnabled() } catch {}
+    const runPortableExportOnExit = async () => {
+      if (portableActive) {
+        // 便携模式导出依赖 settings 文件：先把关键 UI 状态刷到 Store，避免导出旧配置
+        try {
+          if (store) {
+            await store.set(OUTLINE_LAYOUT_KEY, outlineLayout)
+            await store.save()
+          }
+        } catch {}
+        try { await exportPortableBackupSilent() } catch (err) { console.warn('[Portable] 关闭时导出失败', err) }
+      }
+    }
+
+    const restoreStickyIfNeeded = async () => {
+      // 便签模式：关闭前先恢复窗口大小和位置，避免 tauri-plugin-window-state 记住便签的小窗口尺寸
+      if (stickyNoteMode) {
+        try { await restoreWindowStateBeforeSticky() } catch {}
+      }
+    }
+
+    const runShutdownSyncIfEnabled = async (): Promise<boolean> => {
+      try {
+        const cfg = await getWebdavSyncConfig()
+        if (!(cfg.enabled && cfg.onShutdown)) return false
+
+        // 关闭前同步至少要留一条“触发”日志，方便用户事后核对
+        try { await webdavAppendSyncLog('[shutdown-once] 收到关闭请求，准备执行关闭前同步') } catch {}
+
+        // 隐藏窗口到后台，避免用户以为卡死
+        try { await win.hide() } catch {}
+
+        const t0 = Date.now()
+        let summary = 'unknown'
+        try {
+          // 关闭前同步增加 8 秒超时：避免网络异常时窗口长期卡住无法退出
+          const syncPromise = webdavSyncNow('shutdown')
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('shutdown sync timeout')), 8000)
+          })
+          const result = await Promise.race([syncPromise, timeoutPromise])
+          if (!result) summary = 'failed(null)'
+          else if ((result as any).skipped) summary = 'skipped'
+          else summary = `ok up=${result.uploaded} down=${result.downloaded}`
+        } catch (e) {
+          summary = 'error ' + String((e as any)?.message || e || '')
+        }
+        const cost = Date.now() - t0
+        try { await webdavAppendSyncLog(`[shutdown-once] 关闭前同步结束 cost=${cost}ms ${summary}`) } catch {}
+
+        // 短暂延迟确保日志写入完成
+        try { await new Promise(r => setTimeout(r, 500)) } catch {}
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const exitNow = async () => {
+      // 保存标签会话（所有打开的文件）
+      try { (window as any).flymdSaveTabSession?.() } catch {}
+      try { await restoreStickyIfNeeded() } catch {}
+      try { await runPortableExportOnExit() } catch {}
+      try { await runShutdownSyncIfEnabled() } catch {}
+      try { await destroyWin() } catch {}
+    }
+
+    // 统计所有标签的未保存数量（标签系统未就绪时退回到“仅当前文档”）
+    const tabApi = window as any
+    const dirtyCount: number = (typeof tabApi.flymdCountDirtyTabs === 'function')
+      ? tabApi.flymdCountDirtyTabs()
+      : (dirty ? 1 : 0)
+
+    if (dirtyCount === 0) {
+      await exitNow()
+      return
+    }
+
+    try { await saveCurrentDocPosNow() } catch {}
+
+    // 使用自定义三按钮对话框（多语言文案）；多个未保存文档时给出数量
+    const msg = dirtyCount > 1
+      ? t('dlg.exit.unsavedMulti', { count: dirtyCount })
+      : t('dlg.exit.unsaved')
+    const result = await showThreeButtonDialog(msg, t('dlg.exit.title'))
+
+    if (result === 'cancel') {
+      // 取消退出，不做任何操作
+      return
+    }
+    if (result === 'discard') {
+      // 直接退出，放弃所有未保存更改
+      await exitNow()
+      return
+    }
+
+    // result === 'save'：保存所有未保存标签；任一未完成（含另存为取消/失败）则不退出
+    let allSaved = false
+    try {
+      // 优先使用标签系统提供的“保存所有未保存标签”；未就绪时退回单文档保存
+      const saveAll = (window as any).flymdSaveAllDirtyTabsForExit ?? (window as any).flymdSaveAllDirtyTabs
+      if (typeof saveAll === 'function') {
+        allSaved = !!(await saveAll())
+      } else {
+        // 退回：仅保存当前文档
+        const wasDirty = dirty
+        if (!currentFilePath) {
+          await saveAs()
+        } else {
+          await saveFile()
+        }
+        // 仅当 dirty 从 true 变为 false 时视为保存成功；
+        // 如果用户在文件选择器中点击了“取消”或保存失败，保持窗口不退出
+        allSaved = wasDirty ? !dirty : true
+      }
+    } catch (e) {
+      showError('保存失败', e)
+      allSaved = false
+    }
+
+    if (allSaved) {
+      await exitNow()
+    }
+  }
+
   // 关闭前确认（未保存）
   // 注意：Windows 平台上在 onCloseRequested 中调用浏览器 confirm 可能被拦截/无效，
   // 使用 Tauri 原生 ask 更稳定；必要时再降级到 confirm。
   try {
     void getCurrentWindow().onCloseRequested(async (event) => {
-      // 永远先拦截默认关闭：Tauri 不会等待这里的异步逻辑，必须自己决定何时真正退出
-      try { event.preventDefault() } catch {}
-
-      const win = getCurrentWindow()
-      // macOS 上在 onCloseRequested 同步链里直接 destroy 窗口可能触发 WebKit 死锁/卡死；
-      // 先隐藏窗口让主线程 RunLoop 完成当前事件，再延迟销毁。
-      const destroyWin = async () => {
-        try { await win.hide() } catch {}
-        setTimeout(() => {
-          try { win.destroy() } catch { try { win.close() } catch {} }
-        }, 150)
-      }
-
-      let portableActive = false
-      try { portableActive = await isPortableModeEnabled() } catch {}
-      const runPortableExportOnExit = async () => {
-        if (portableActive) {
-          // 便携模式导出依赖 settings 文件：先把关键 UI 状态刷到 Store，避免导出旧配置
-          try {
-            if (store) {
-              await store.set(OUTLINE_LAYOUT_KEY, outlineLayout)
-              await store.save()
-            }
-          } catch {}
-          try { await exportPortableBackupSilent() } catch (err) { console.warn('[Portable] 关闭时导出失败', err) }
-        }
-      }
-
-      const restoreStickyIfNeeded = async () => {
-        // 便签模式：关闭前先恢复窗口大小和位置，避免 tauri-plugin-window-state 记住便签的小窗口尺寸
-        if (stickyNoteMode) {
-          try { await restoreWindowStateBeforeSticky() } catch {}
-        }
-      }
-
-      const runShutdownSyncIfEnabled = async (): Promise<boolean> => {
-        try {
-          const cfg = await getWebdavSyncConfig()
-          if (!(cfg.enabled && cfg.onShutdown)) return false
-
-          // 关闭前同步至少要留一条“触发”日志，方便用户事后核对
-          try { await webdavAppendSyncLog('[shutdown-once] 收到关闭请求，准备执行关闭前同步') } catch {}
-
-          // 隐藏窗口到后台，避免用户以为卡死
-          try { await win.hide() } catch {}
-
-          const t0 = Date.now()
-          let summary = 'unknown'
-          try {
-            // 关闭前同步增加 8 秒超时：避免网络异常时窗口长期卡住无法退出
-            const syncPromise = webdavSyncNow('shutdown')
-            const timeoutPromise = new Promise<never>((_, reject) => {
-              setTimeout(() => reject(new Error('shutdown sync timeout')), 8000)
-            })
-            const result = await Promise.race([syncPromise, timeoutPromise])
-            if (!result) summary = 'failed(null)'
-            else if ((result as any).skipped) summary = 'skipped'
-            else summary = `ok up=${result.uploaded} down=${result.downloaded}`
-          } catch (e) {
-            summary = 'error ' + String((e as any)?.message || e || '')
-          }
-          const cost = Date.now() - t0
-          try { await webdavAppendSyncLog(`[shutdown-once] 关闭前同步结束 cost=${cost}ms ${summary}`) } catch {}
-
-          // 短暂延迟确保日志写入完成
-          try { await new Promise(r => setTimeout(r, 500)) } catch {}
-          return true
-        } catch {
-          return false
-        }
-      }
-
-      const exitNow = async () => {
-        // 保存标签会话（所有打开的文件）
-        try { (window as any).flymdSaveTabSession?.() } catch {}
-        try { await restoreStickyIfNeeded() } catch {}
-        try { await runPortableExportOnExit() } catch {}
-        try { await runShutdownSyncIfEnabled() } catch {}
-        try { await destroyWin() } catch {}
-      }
-
-      // 统计所有标签的未保存数量（标签系统未就绪时退回到“仅当前文档”）
-      const tabApi = window as any
-      const dirtyCount: number = (typeof tabApi.flymdCountDirtyTabs === 'function')
-        ? tabApi.flymdCountDirtyTabs()
-        : (dirty ? 1 : 0)
-
-      if (dirtyCount === 0) {
-        await exitNow()
-        return
-      }
-
-      try { await saveCurrentDocPosNow() } catch {}
-
-      // 使用自定义三按钮对话框（多语言文案）；多个未保存文档时给出数量
-      const msg = dirtyCount > 1
-        ? t('dlg.exit.unsavedMulti', { count: dirtyCount })
-        : t('dlg.exit.unsaved')
-      const result = await showThreeButtonDialog(msg, t('dlg.exit.title'))
-
-      if (result === 'cancel') {
-        // 取消退出，不做任何操作
-        return
-      }
-      if (result === 'discard') {
-        // 直接退出，放弃所有未保存更改
-        await exitNow()
-        return
-      }
-
-      // result === 'save'：保存所有未保存标签；任一未完成（含另存为取消/失败）则不退出
-      let allSaved = false
-      try {
-        // 优先使用标签系统提供的“保存所有未保存标签”；未就绪时退回单文档保存
-        const saveAll = (window as any).flymdSaveAllDirtyTabsForExit ?? (window as any).flymdSaveAllDirtyTabs
-        if (typeof saveAll === 'function') {
-          allSaved = !!(await saveAll())
-        } else {
-          // 退回：仅保存当前文档
-          const wasDirty = dirty
-          if (!currentFilePath) {
-            await saveAs()
-          } else {
-            await saveFile()
-          }
-          // 仅当 dirty 从 true 变为 false 时视为保存成功；
-          // 如果用户在文件选择器中点击了“取消”或保存失败，保持窗口不退出
-          allSaved = wasDirty ? !dirty : true
-        }
-      } catch (e) {
-        showError('保存失败', e)
-        allSaved = false
-      }
-
-      if (allSaved) {
-        await exitNow()
-      }
+      try { await performExit(event) } catch {}
     })
   } catch (e) {
     // 浏览器/非 Tauri 环境下预期失败,无 action
   }
+
+  // macOS：监听 Rust 侧应用菜单 Quit/Cmd+Q 事件，复用统一退出流程保存现场后退出
+  try {
+    void getCurrentWindow().listen('flymd://request-exit', () => {
+      try { void performExit() } catch {}
+    })
+  } catch {}
 
   // 点击外部区域时关闭最近文件面板
   // 浏览器/非 Tauri 环境下的关闭前确认兜底
