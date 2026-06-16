@@ -1589,8 +1589,12 @@ try {
     // 关闭按钮不再走 win.close() → onCloseRequested 的默认链路；
     // 改为 emit 事件，让 listen 回调统一调用 performExit()，
     // 与 Cmd+Q 路径保持一致，避免 DOM 事件回调直接触发退出导致的卡死。
+    // 延迟到下一事件循环 emit：让当前 click 事件及 Rust 鼠标事件先处理完毕，
+    // 防止在 macOS 上 IPC 与原生窗口事件并发导致的卡死。
     closeBtn.addEventListener('click', () => {
-      try { void getCurrentWindow().emit('flymd://request-close', {}) } catch {}
+      setTimeout(() => {
+        try { void getCurrentWindow().emit('flymd://request-close', {}) } catch {}
+      }, 0)
     })
   }
 } catch {}
