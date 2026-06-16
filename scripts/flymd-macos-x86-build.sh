@@ -96,12 +96,18 @@ ok "Rust $(rustc --version | awk '{print $2}')"
 if command -v rustup &>/dev/null; then
   if ! rustup target list --installed 2>/dev/null | grep -q "^${RUST_TARGET}$"; then
     warn "Rust target ${RUST_TARGET} 未安装，正在通过 rustup 安装…"
-    rustup target add "${RUST_TARGET}"
+    rustup target add "${RUST_TARGET}" || err "安装 Rust target ${RUST_TARGET} 失败；请手动执行: rustup target add ${RUST_TARGET}"
   fi
   ok "Rust target ${RUST_TARGET} 已就绪"
 else
-  warn "未检测到 rustup（Homebrew 安装的 rust 通常无 rustup），跳过 target 自动安装"
-  warn "如需在 Apple Silicon 上构建 x86_64，请手动安装 rustup 后重跑，或确认 cargo 已支持 ${RUST_TARGET}"
+  warn "未检测到 rustup（Homebrew 安装的 rust 通常无 rustup）"
+  # 探针：用 rustc 自己看支不支持目标——支持就继续，不支持立即报错而非
+  # 留到 npm run tauri:build 才挂，错误定位更清晰。
+  if rustc --print target-list 2>/dev/null | grep -q "^${RUST_TARGET}$"; then
+    ok "rustc 已支持目标 ${RUST_TARGET}（无 rustup 但 cargo 可直接构建）"
+  else
+    err "当前 Rust 环境不支持目标 ${RUST_TARGET}，且未检测到 rustup\n  建议:\n    1) 安装 rustup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n    2) 或手动安装 ${RUST_TARGET} 工具链"
+  fi
 fi
 
 # Xcode CLT (SetFile)
@@ -116,8 +122,12 @@ ok "Xcode CLT OK"
 
 # create-dmg
 if ! command -v create-dmg &>/dev/null; then
+  # 先确保 Homebrew 可用，避免直接 brew install 给出含糊错误
+  if ! command -v brew &>/dev/null; then
+    err "缺少 create-dmg，且未检测到 Homebrew。请手动安装:\n  1) 安装 Homebrew: https://brew.sh\n  2) brew install create-dmg"
+  fi
   warn "create-dmg 未安装，将通过 Homebrew 安装…"
-  brew install create-dmg
+  brew install create-dmg || err "Homebrew 安装 create-dmg 失败；请手动执行: brew install create-dmg"
 fi
 ok "create-dmg $(create-dmg --version 2>/dev/null | head -1 || echo 'OK')"
 
@@ -178,7 +188,9 @@ if [ "$DMG_ONLY" = true ]; then
 else
   info "尝试 tauri bundler (dmg)…"
   if npm run tauri:build -- --bundles dmg --target "${ARCH}" 2>/dev/null; then
-    TAURI_DMG=$(find "${TAURI_TARGET}/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1 || true)
+    # 用 sort | tail -1 取最新构建产物，避免 head -1 拿到旧残留 DMG
+    # （DMG 名包含版本号，sort 字典序 = 最新版本最大；同版本时 find -print 顺序未定但 sort 稳定）
+    TAURI_DMG=$(find "${TAURI_TARGET}/bundle/dmg" -type f -name "*.dmg" -print 2>/dev/null | sort | tail -1 || true)
     if [[ -n "${TAURI_DMG}" && -f "${TAURI_DMG}" ]]; then
       cp "${TAURI_DMG}" "${DMG_OUT}"
       ok "DMG (tauri bundler): ${DMG_OUT} ($(du -sh "${DMG_OUT}" | cut -f1))"
