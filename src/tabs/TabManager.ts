@@ -573,8 +573,14 @@ export class TabManager {
 
   /**
    * 导出状态用于持久化
+   *
+   * @param opts.includeDirtyContent
+   *   true（默认，向后兼容）：dirty tab 的 content 一并写入快照，下次启动可恢复。
+   *   false：dirty tab 的 content 写空、dirty 标记重置为 false。
+   *   用于"放弃更改"退出路径——避免下次启动又恢复用户已选择丢弃的内容。
    */
-  exportState(): PersistedTabState {
+  exportState(opts?: { includeDirtyContent?: boolean }): PersistedTabState {
+    const includeDirtyContent = opts?.includeDirtyContent !== false
     // 先保存当前状态
     this.saveCurrentTabState()
 
@@ -582,8 +588,9 @@ export class TabManager {
       tabs: this.tabs.map(t => ({
         filePath: t.filePath,
         displayName: t.displayName,
-        content: t.dirty ? t.content : '', // 只保存未保存的内容
-        dirty: t.dirty,
+        // 默认：只保存未保存的内容；discard 路径：dirty 内容不持久化
+        content: t.dirty && includeDirtyContent ? t.content : '',
+        dirty: t.dirty && includeDirtyContent,
         mode: t.mode,
         wysiwygEnabled: t.wysiwygEnabled,
       })),

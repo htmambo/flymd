@@ -361,9 +361,9 @@ function getSessionStorageKey(): string {
   return SESSION_KEY_PREFIX + getCurrentWindowLabel()
 }
 
-function saveTabSession(): void {
+function saveTabSession(opts?: { includeDirtyContent?: boolean }): void {
   try {
-    const state = tabManager.exportState()
+    const state = tabManager.exportState(opts)
     localStorage.setItem(getSessionStorageKey(), JSON.stringify(state))
   } catch (e) {
     console.warn('[Tabs] 保存会话失败:', e)

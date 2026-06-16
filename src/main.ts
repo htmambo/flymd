@@ -8041,13 +8041,14 @@ function bindEvents() {
       }
     }
 
-    const exitNow = async () => {
+    const exitNow = async (opts?: { includeDirtyContent?: boolean }) => {
       // 退出流程一旦推进到 exitNow（无论 save/discard/无未保存），
       // 立即停止会话自动保存定时器，避免 destroy 期间又被触发或在 discard
       // 路径把 dirty 内容再写一次到 storage。
       try { (window as any).flymdStopTabSessionAutoSave?.() } catch {}
-      // 保存标签会话（所有打开的文件）
-      try { (window as any).flymdSaveTabSession?.() } catch {}
+      // 保存标签会话（所有打开的文件）；discard 路径传 includeDirtyContent:false，
+      // 避免把用户已选择丢弃的内容持久化到 storage、下次启动又被恢复。
+      try { (window as any).flymdSaveTabSession?.(opts) } catch {}
       try { await restoreStickyIfNeeded() } catch {}
       try { await runPortableExportOnExit() } catch {}
       try { await runShutdownSyncIfEnabled() } catch {}
@@ -8079,7 +8080,10 @@ function bindEvents() {
     }
     if (result === 'discard') {
       // 直接退出，放弃所有未保存更改
-      await exitNow()
+      // 关键：传 includeDirtyContent:false，确保 dirty 内容不写入会话快照，
+      // 否则下次启动 restoreTabSession 会把用户已丢弃的内容又恢复出来——
+      // 这与 discard 的语义直接冲突。
+      await exitNow({ includeDirtyContent: false })
       return
     }
 
