@@ -12,6 +12,7 @@ import { TextareaUndoManager } from './TextareaUndoManager'
 import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 import { initTabTransferReceiver } from './tabTransferReceiver'
 import { readTextFileAnySafe } from '../core/fsSafe'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -272,6 +273,19 @@ function scheduleSessionAutoSave(): void {
 }
 
 /**
+ * 停止会话自动保存定时器（退出流程开始时调用）。
+ * 避免：
+ *  1) 退出过程中又触发一次 save，与 destroy 竞态；
+ *  2) discard 路径下被 schedule 出来的 timer 在 5s 后又把 dirty 内容写回 storage。
+ */
+function stopSessionAutoSave(): void {
+  if (sessionAutoSaveTimer != null) {
+    clearTimeout(sessionAutoSaveTimer)
+    sessionAutoSaveTimer = null
+  }
+}
+
+/**
  * 同步一次激活标签的 dirty 状态后，返回所有未保存标签的快照。
  * 所见模式下 dirty 经 ~200ms 轮询同步，可能滞后；这里主动同步一次，避免漏判激活标签。
  */
@@ -326,12 +340,31 @@ async function saveAllDirtyTabs(): Promise<boolean> {
 }
 
 // ---- 会话保存/恢复 ----
-const SESSION_KEY = 'flymd:tabSession:v1'
+// 老 key（v1）：所有窗口共享一份快照，多窗口会互相覆盖。仅保留用于一次性迁移。
+const SESSION_KEY_LEGACY = 'flymd:tabSession:v1'
+// 新 key 前缀（v2）：按窗口 label 隔离（main / main-xxxx）。
+const SESSION_KEY_PREFIX = 'flymd:tabSession:v2:'
+
+/**
+ * 取当前窗口 label。非 Tauri 环境或异常时退回 'browser'，避免污染 'main' 命名空间。
+ */
+function getCurrentWindowLabel(): string {
+  try {
+    const w = getCurrentWindow()
+    return w?.label || 'main'
+  } catch {
+    return 'browser'
+  }
+}
+
+function getSessionStorageKey(): string {
+  return SESSION_KEY_PREFIX + getCurrentWindowLabel()
+}
 
 function saveTabSession(): void {
   try {
     const state = tabManager.exportState()
-    localStorage.setItem(SESSION_KEY, JSON.stringify(state))
+    localStorage.setItem(getSessionStorageKey(), JSON.stringify(state))
   } catch (e) {
     console.warn('[Tabs] 保存会话失败:', e)
   }
@@ -340,7 +373,25 @@ function saveTabSession(): void {
 
 async function restoreTabSession(): Promise<void> {
   try {
-    const raw = localStorage.getItem(SESSION_KEY)
+    const key = getSessionStorageKey()
+    let raw = localStorage.getItem(key)
+
+    // 老 key 兼容：仅 main 窗口在新 key 不存在时执行一次性迁移，迁移完即删除老 key。
+    // 其他窗口（main-xxxx）一律使用自己的新 key，避免抢占老 key 的快照。
+    if (!raw && getCurrentWindowLabel() === 'main') {
+      const legacy = localStorage.getItem(SESSION_KEY_LEGACY)
+      if (legacy) {
+        try {
+          localStorage.setItem(key, legacy)
+          localStorage.removeItem(SESSION_KEY_LEGACY)
+          raw = legacy
+          console.log('[Tabs] 已迁移老会话 key →', key)
+        } catch (e) {
+          console.warn('[Tabs] 迁移老会话 key 失败:', e)
+        }
+      }
+    }
+
     if (!raw) return
     const state = JSON.parse(raw)
     await tabManager.importState(state, async (path) => readTextFileAnySafe(path))
@@ -465,6 +516,8 @@ export async function initTabSystem(): Promise<void> {
   ;(window as any).flymdCountDirtyTabs = countDirtyTabs
   ;(window as any).flymdSaveAllDirtyTabs = saveAllDirtyTabs
   ;(window as any).flymdSaveTabSession = saveTabSession
+  // 退出流程开始时停止会话自动保存（避免 destroy 过程中 timer 再触发一次 save）
+  ;(window as any).flymdStopTabSessionAutoSave = stopSessionAutoSave
   // 外部变更 reload 后:同步当前 tab 的 content + dirty=false
   window.addEventListener('flymd-file-reloaded', () => {
     try {
