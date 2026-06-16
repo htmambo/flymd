@@ -7958,9 +7958,20 @@ function bindEvents() {
   // 快捷键
   // 统一的退出流程（供关闭按钮、onCloseRequested、Cmd+Q 等路径复用）
   // 事件对象可选：来自 onCloseRequested 时用于阻止默认关闭。
+  //
+  // 幂等保护：三条退出路径（关闭按钮 emit / Cmd+Q listen / onCloseRequested）
+  // 可能在同一事件循环内并发抵达。无锁会导致：
+  //   - 多个保存对话框同时弹出
+  //   - 多次 webdav shutdown sync 并发
+  //   - 多个 hide()/destroy() timer 排队
+  // exitPromise first-wins：后续调用直接复用同一 promise（包括弹窗的等待）。
+  let exitPromise: Promise<void> | null = null
+
   async function performExit(event?: any): Promise<void> {
     try { event?.preventDefault?.() } catch {}
+    if (exitPromise) return exitPromise
 
+    exitPromise = (async () => {
     const win = getCurrentWindow()
     // macOS 上在关闭回调同步链里直接 destroy 窗口可能触发 WebKit 死锁/卡死；
     // 先隐藏窗口让主线程 RunLoop 完成当前事件，再延迟销毁。
@@ -8031,6 +8042,10 @@ function bindEvents() {
     }
 
     const exitNow = async () => {
+      // 退出流程一旦推进到 exitNow（无论 save/discard/无未保存），
+      // 立即停止会话自动保存定时器，避免 destroy 期间又被触发或在 discard
+      // 路径把 dirty 内容再写一次到 storage。
+      try { (window as any).flymdStopTabSessionAutoSave?.() } catch {}
       // 保存标签会话（所有打开的文件）
       try { (window as any).flymdSaveTabSession?.() } catch {}
       try { await restoreStickyIfNeeded() } catch {}
@@ -8094,6 +8109,15 @@ function bindEvents() {
 
     if (allSaved) {
       await exitNow()
+    }
+    })()
+
+    try {
+      await exitPromise
+    } finally {
+      // 清空 promise：cancel 路径用户应该能再次发起退出；
+      // save/discard 路径窗口已 hide/destroy，清空亦无害。
+      exitPromise = null
     }
   }
 
