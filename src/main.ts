@@ -1587,9 +1587,10 @@ try {
   }
   if (closeBtn) {
     // 关闭按钮不再走 win.close() → onCloseRequested 的默认链路；
-    // 直接执行统一退出流程，避免 macOS 上 close() 本身触发 WebKit 死锁/卡死。
-    closeBtn.addEventListener('click', async () => {
-      try { await performExit() } catch {}
+    // 改为 emit 事件，让 listen 回调统一调用 performExit()，
+    // 与 Cmd+Q 路径保持一致，避免 DOM 事件回调直接触发退出导致的卡死。
+    closeBtn.addEventListener('click', () => {
+      try { void getCurrentWindow().emit('flymd://request-close', {}) } catch {}
     })
   }
 } catch {}
@@ -8102,6 +8103,14 @@ function bindEvents() {
   } catch (e) {
     // 浏览器/非 Tauri 环境下预期失败,无 action
   }
+
+  // 监听窗口主动关闭请求：关闭按钮不再直接调用 performExit，而是 emit 该事件，
+  // 使关闭按钮与 Cmd+Q 走同样的异步事件路径，避免 macOS 上直接调用导致的卡死。
+  try {
+    void getCurrentWindow().listen('flymd://request-close', () => {
+      try { void performExit() } catch {}
+    })
+  } catch {}
 
   // macOS：监听 Rust 侧应用菜单 Quit/Cmd+Q 事件，复用统一退出流程保存现场后退出
   try {
