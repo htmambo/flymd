@@ -55,6 +55,16 @@ docs/Task/
 
 #### 2026-06
 
+- ✅ [2026-06-16-macos-exit-hardening.md](Archive/2026-06/2026-06-16-macos-exit-hardening.md) — macOS 退出/关闭流程加固(完成 2026-06-17,Codex 网关不可用,Claude 独立完成原型与验证)
+  - **基线提交** c3a38c0/1cbd1df/2000095/40d8f07/d971884 (4 fix + 1 chore) 被 Claude+Codex 联合 review 后识别 6 个 P0-P2 问题
+  - **T1 ✅** (8c88913) performExit first-wins 幂等锁 + exitNow 调 stopAutoSave
+  - **T2 ✅** (8a03b23) Menu::default 第一项 App submenu 末尾 Quit 替换为 flymd.quit,消除 Cmd+Q 旁路 + 多窗口 fallback
+  - **T3 ✅** (4c2b9cc) TabManager.exportState 加 includeDirtyContent opts,discard 路径不持久化 dirty 内容
+  - **T4 ✅** (05e3606) 会话自动保存可终止 + storage key 按 window.label 隔离 + 老 key 一次性迁移
+  - **T5 ✅** (dc2e0d7) SHUTDOWN_SYNC_TIMEOUT_MS 抽常量 + 文档化双层 timeout 语义
+  - **T6 ✅** (2f6961f) x86 脚本: rustup 探针/brew 检测/sort | tail -1 取最新 DMG
+  - **已知残留**(下一轮重构): I6 Promise.race 不取消底层 webdav / I8 setTimeout(0) 经验性手段
+  - **验证**: npx tsc --noEmit 29 行 = 基线 + npm test 3 failed/572 passed = 基线 + cargo check exit 0
 - ✅ [2026-06-13-math-and-mermaid-render-fix.md](Archive/2026-06/2026-06-13-math-and-mermaid-render-fix.md) — 修复 math/katex/latex 围栏代码块 + KaTeX 失败可观测性 + flow/seq 别名 + mermaid 错误兜底(完成 2026-06-13)
 - ✅ [2026-06-13-wysiwyg-html-inline-tags.md](Archive/2026-06/2026-06-13-wysiwyg-html-inline-tags.md) — 所见模式 sub/sup/abbr HTML 内联标签渲染(完成 2026-06-14)
   - remark 插件合并配对 HTML 标签 + $markSchema mark 定义 + remark-stringify handlers
