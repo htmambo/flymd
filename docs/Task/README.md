@@ -53,6 +53,12 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-06-26-macos-resize-deadlock-fix.md](Archive/2026-06/2026-06-26-macos-resize-deadlock-fix.md) — macOS 改变窗口尺寸后窗口无响应(完成 2026-06-26)
+  - **根因**(Tauri #5812 / #13199):macOS 上 onResized 回调里同步调 isMaximized() 触发 looped resize events,100% CPU + webview IPC 全部挂起
+  - **修复**(commit `42b39f3`):maximizedState.ts 加 3 层防御 — 异步隔离(setTimeout 50ms) + scheduleSync debounce + re-entrancy guard
+  - **用户实测确认**:"调整尺寸后可以使用 cmd+q 退出",主防线有效
+  - **测试**:7 用例新增,全量 609/609;coding-bridge 复审,采纳 2 高 + 1 中,不采纳项经说明
+  - **残留**:用户同时报告"拖拽后回弹到屏幕左侧",独立症状,留新任务
 - ✅ [2026-06-26-macos-tabbar-drag-and-compact-titlebar-fix.md](Archive/2026-06/2026-06-26-macos-tabbar-drag-and-compact-titlebar-fix.md) — macOS 紧凑标题栏状态僵死 + tabbar-row 拖拽失效(完成 2026-06-26)
   - **根因**:`focusModeHost.ts` 3 个 setter 把 `compactTitlebar` 写死为 true;`window.css` macOS tabbar-row 设 no-drag 但 JS 兜底被 webkit 不冒泡吞掉
   - **修复**(commit `e0771c2`):setter 真实读写 + main.ts 启动序列同步从 store 加载 + 移除 macOS no-drag 覆盖
