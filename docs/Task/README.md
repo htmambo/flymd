@@ -51,6 +51,14 @@ docs/Task/
   - **Task A ✅**（wysiwyg/v2 11 → 0；顺带修 1 处真实 bug：`docChanged → updated`）
   - **Task A.1 ⏳**（剩余 116 处 TS 错误，5 个 Batch）
 
+### Archive (新增 2026-06-26)
+
+- ✅ [2026-06-26-macos-tabbar-drag-and-compact-titlebar-fix.md](Archive/2026-06/2026-06-26-macos-tabbar-drag-and-compact-titlebar-fix.md) — macOS 紧凑标题栏状态僵死 + tabbar-row 拖拽失效(完成 2026-06-26)
+  - **根因**:`focusModeHost.ts` 3 个 setter 把 `compactTitlebar` 写死为 true;`window.css` macOS tabbar-row 设 no-drag 但 JS 兜底被 webkit 不冒泡吞掉
+  - **修复**(commit `e0771c2`):setter 真实读写 + main.ts 启动序列同步从 store 加载 + 移除 macOS no-drag 覆盖
+  - **测试**:14 用例全过,全量 602/602;coding-bridge 复审,采纳中风险 #4 #5,误判项经实测确认安全
+  - **残留**:A 类(macOS 最大化顶部留白)未处理,需切到 `titleBarStyle: Overlay` 路径,留作独立任务
+
 ### Archive
 
 #### 2026-06
