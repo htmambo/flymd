@@ -155,6 +155,7 @@ import {
   toggleFocusMode,
   getFocusMode,
   setCompactTitlebar,
+  getCompactTitlebar,
   isFocusModeEnabled,
   isCompactTitlebarEnabled,
   setFocusModeFlag,
@@ -8376,13 +8377,17 @@ function bindEvents() {
       })
     } catch {}
     await maybeAutoImportPortableBackup()
-    const compact = isCompactTitlebarEnabled()
+    // 同步从 store 加载紧凑标题栏状态,避免后续 getCurrentWindow 拖拽判断读到过期的默认值
+    const compact = await getCompactTitlebar(store).catch(() => isCompactTitlebarEnabled())
     const [layout, side, docked] = await Promise.all([
       getOutlineLayout().catch(() => outlineLayout),
       getLibrarySide().catch(() => librarySide),
       getLibraryDocked().catch(() => libraryDocked),
     ])
-    const compactTitlebarTask = setCompactTitlebar(compact, store, false).catch(() => {})
+    // 启动期的 setCompactTitlebar(persist=false) 只刷新装饰,不允许其异常中断主流程
+    const compactTitlebarTask = setCompactTitlebar(compact, store, false).catch((e) => {
+      try { console.warn('启动期 setCompactTitlebar 失败:', e) } catch {}
+    })
     try { await syncOutlineDockFromStore() } catch {}
     try { await setOutlineLayout(layout, false) } catch {}
     try { await setLibrarySide(side, false) } catch {}

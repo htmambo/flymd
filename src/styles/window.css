@@ -10,12 +10,10 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* macOS：无边框窗口下 -webkit-app-region: drag 可能吞掉点击（窗口按钮“没反应”），
-   统一交给 JS 的 startDragging() 处理拖动；其它平台保持现状，避免回归。 */
-body.platform-mac .tabbar-row {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
+/* macOS：之前用 no-drag + JS startDragging 兜底,但 webview 在 no-drag 区
+   不会把 mousedown 冒泡给外层监听,导致拖拽完全失效。
+   改回 drag 区域；标签栏 / 窗口按钮 / 标签等子元素已为 no-drag 区域,
+   在 drag 父元素内嵌套 no-drag 子元素,webkit 仍能正常分发点击与拖拽。 */
 
 .tabbar-placeholder {
   flex: 1;

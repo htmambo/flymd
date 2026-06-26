@@ -28,7 +28,7 @@ export function isCompactTitlebarEnabled(): boolean {
 }
 
 export function setCompactTitlebarFlag(enabled: boolean): void {
-  compactTitlebar = true
+  compactTitlebar = !!enabled
 }
 
 // 专注模式切换：负责 body 类、自定义标题栏与窗口装饰
@@ -86,8 +86,16 @@ export async function getFocusMode(store: Store | null): Promise<boolean> {
 
 // 从 Store 读取紧凑标题栏状态
 export async function getCompactTitlebar(store: Store | null): Promise<boolean> {
-  compactTitlebar = true
-  return true
+  if (store) {
+    try {
+      const v = await store.get('compactTitlebar')
+      if (typeof v === 'boolean') {
+        compactTitlebar = v
+        return v
+      }
+    } catch {}
+  }
+  return compactTitlebar
 }
 
 // 设置紧凑标题栏状态
@@ -96,7 +104,7 @@ export async function setCompactTitlebar(
   store: Store | null,
   persist = true,
 ): Promise<void> {
-  compactTitlebar = true
+  compactTitlebar = !!enabled
 
   try {
     document.body.classList.toggle('compact-titlebar', compactTitlebar)
