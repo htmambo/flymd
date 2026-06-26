@@ -53,7 +53,17 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
-- ✅ [2026-06-26-macos-resize-deadlock-fix.md](Archive/2026-06/2026-06-26-macos-resize-deadlock-fix.md) — macOS 改变窗口尺寸后窗口无响应(完成 2026-06-26)
+- ✅ [2026-06-26-macos-remove-isMaximized-polling.md](Archive/2026-06/2026-06-26-macos-remove-isMaximized-polling.md) — macOS 彻底删除 isMaximized 实时同步(完成 2026-06-26)
+  - **根因**(Tauri #5812 / #13199):macOS WKWebView 任何调 isMaximized() 触发 looped resize 死循环
+  - **方案 B** 完全避开触发条件:删 onResized/listen 路径(全平台),Rust 端简化为 baseline-only
+  - **用户实测确认**:"测试过了,正常" + "现在那个修改尺寸后的 bug 也没有了"
+  - **测试**:5 用例新增(简化版 API),全量 607/607 通过
+  - **trade-off**:键盘/系统菜单最大化时按钮图标不实时更新(可接受)
+- ✅ [2026-06-26-macos-rust-emitter-abandoned.md](Archive/2026-06/2026-06-26-macos-rust-emitter-abandoned.md) — macOS Rust 端 emitter 方案失败(已放弃 2026-06-26)
+  - **失败原因**:Rust `on_window_event` 在 macOS 上高频触发 + is_maximized() 调 macOS 死循环 = 比 42b39f3 慢循环更严重
+  - **教训**:`on_window_event` 不能简单照搬前端的 setTimeout 50ms 模式(频率远超前端 onResized)
+  - **保留**作为后续 macOS 死循环排查的参考
+- ✅ [2026-06-26-macos-resize-deadlock-fix.md](Archive/2026-06/2026-06-26-macos-resize-deadlock-fix.md) — macOS 改变窗口尺寸后窗口无响应(完成 2026-06-26,部分修复)
   - **根因**(Tauri #5812 / #13199):macOS 上 onResized 回调里同步调 isMaximized() 触发 looped resize events,100% CPU + webview IPC 全部挂起
   - **修复**(commit `42b39f3`):maximizedState.ts 加 3 层防御 — 异步隔离(setTimeout 50ms) + scheduleSync debounce + re-entrancy guard
   - **用户实测确认**:"调整尺寸后可以使用 cmd+q 退出",主防线有效

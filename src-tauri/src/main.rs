@@ -22,48 +22,23 @@ fn init_linux_render_env() {
   }
 }
 
-// Windows：最大化状态同步到前端。
-// 用途：最大化时禁用前端自定义 resize handles，避免“按住顶部下拉还原窗口”被误判成改高度。
-// 注意：这里不去动 resizable（会影响 Windows 的“拖拽标题栏下拉还原”行为）。
+// 跨平台:窗口初始化时同步一次 is_maximized 作为前端初始状态 baseline。
+// 注意:这里**不**注册 on_window_event 循环监听,因为 macOS WKWebView 上
+// 任何调 is_maximized() 都会触发 Tauri #5812/#13199 描述的 looped resize
+// 死循环,导致调整尺寸后拖拽 / 按钮 / Cmd+Q 全部失效。
+// 真实状态变化的同步完全交给前端的"点最大化按钮 → 主动 syncNow"路径。
+fn sync_initial_maximized_state(win: &tauri::WebviewWindow) {
+  // 故意只调一次,不存 last_maximized、不 emit、不注册回调。
+  // 这次调用的目的是"基线",实际值用 _ 占位,前端如果需要可主动调 syncNow() 拉取。
+  let _ = win.is_maximized();
+}
+
+// Windows:启动期 baseline。原 install_windows_maximized_resizable_workaround
+// 现在仅作为 Windows 路径下"启动时做一次同步"的入口,内部调 sync_initial_maximized_state。
+// 注意:这里不去动 resizable(会影响 Windows 的"拖拽标题栏下拉还原"行为)。
 #[cfg(target_os = "windows")]
 fn install_windows_maximized_resizable_workaround(win: &tauri::WebviewWindow) {
-  use std::sync::{Arc, Mutex};
-
-  fn sync_state(win: &tauri::WebviewWindow, last_maximized: &mut Option<bool>) {
-    let Ok(is_maximized) = win.is_maximized() else { return; };
-
-    // 首次同步：只建立基线；后续仅在状态变化时通知前端，避免刷事件。
-    if last_maximized.is_none() {
-      *last_maximized = Some(is_maximized);
-      let _ = win.emit("flymd://window-maximized-changed", is_maximized);
-      return;
-    }
-
-    if *last_maximized == Some(is_maximized) {
-      return;
-    }
-    *last_maximized = Some(is_maximized);
-    let _ = win.emit("flymd://window-maximized-changed", is_maximized);
-  }
-
-  let last_maximized = Arc::new(Mutex::new(None::<bool>));
-
-  // 先同步一次，处理“启动即最大化”但事件还没到的情况。
-  {
-    let mut guard = last_maximized.lock().unwrap_or_else(|p| p.into_inner());
-    sync_state(win, &mut guard);
-  }
-
-  // 注意：不能把用于注册回调的 `win` 同时 move 进闭包（Rust 借用规则会报 E0505）。
-  // 这里保留用 `win`（&self）注册监听，另拷贝一份句柄给闭包里用。
-  let win_for_cb = win.clone();
-  let last_maximized_for_cb = last_maximized.clone();
-  win.on_window_event(move |_event| {
-    let mut guard = last_maximized_for_cb
-      .lock()
-      .unwrap_or_else(|p| p.into_inner());
-    sync_state(&win_for_cb, &mut guard);
-  });
+  sync_initial_maximized_state(win);
 }
 
 // 启动诊断日志：发布版也能落盘，便于定位“黑屏/卡初始化”等问题
