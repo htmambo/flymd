@@ -84,6 +84,10 @@ if [[ ! -f flymd.desktop ]]; then
   exit 1
 fi
 
+# 加载共享清理函数(版本号错乱修复:确保 cargo 重新嵌入 CARGO_PKG_VERSION)
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/_clean.sh"
+
 package_version="$(bash "$ROOT_DIR/scripts/get-version.sh" "$ROOT_DIR/package.json")"
 pkgbuild_version="$(sed -n 's/^pkgver=//p' PKGBUILD | sed -n '1p')"
 if [[ -n "$pkgbuild_version" && "$package_version" != "$pkgbuild_version" ]]; then

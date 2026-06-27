@@ -151,8 +151,10 @@ if [ "$DMG_ONLY" = true ] && [ -d "$APP_DIR" ]; then
   info "检测到已有 .app (--dmg-only 模式)，跳过构建"
 else
   info "构建 .app (x86_64)…"
-  # 清理旧产物（避免残留导致架构串味）
-  rm -rf "src-tauri/target/${ARCH}"
+  # 清理旧产物（精确清理:删本项目产物,保留 deps 缓存加速增量重链,避免架构串味）
+  # shellcheck disable=SC1091
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_clean.sh"
+  clean_release_target "src-tauri/target/${ARCH}/release"
 
   export RUST_LOG=trace
   export TAURI_BUNDLE_TARGET="${ARCH}"
