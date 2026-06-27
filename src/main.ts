@@ -12,6 +12,7 @@ import { initThemeUI, applySavedTheme, updateChromeColorsForMode } from './theme
 import { t, fmtStatus, getLocalePref, setLocalePref, getLocale, tLocale } from './i18n'
 import { getPasteUrlTitleFetchEnabled } from './core/pasteUrlTitle'
 import { getPasteRemoteImagesEnabled } from './core/pasteRemoteImages'
+import { getSymbolAutoCompletionEnabled } from './core/symbolAutoCompletion'
 // KaTeX 样式改为按需动态加载（首次检测到公式时再加载）
 // markdown-it 和 DOMPurify 改为按需动态 import，类型仅在编译期引用
 import type MarkdownIt from 'markdown-it'
@@ -554,14 +555,12 @@ function hashMermaidCode(code: string): string {
     for (let i = 0; i < code.length; i++) {
       hash ^= code.charCodeAt(i)
       hash = Math.imul(hash, 16777619)
-
     }
     return `mmd-${(hash >>> 0).toString(36)}`
   } catch {
     return 'mmd-fallback'
   }
 }
-
 // Mermaid 全局 API 注册（依赖模块级变量，保留在 main.ts）
 try {
   if (typeof window !== 'undefined') {
@@ -603,6 +602,7 @@ try {
 let fileTreeReady = false
 let _libraryVaultListUi: { refresh(): Promise<void> } | null = null
 let _ribbonLibsUi: RibbonLibraryListApi | null = null
+let temporaryLibraryRoot: string | null = null
 let mode: Mode = 'edit'
 // 所见即所得开关（Overlay 模式）
 let wysiwyg = false
@@ -890,6 +890,10 @@ async function toggleUploaderEnabledFromMenu(): Promise<boolean> {
 
 async function handleManualSyncFromMenu(): Promise<void> {
   try {
+    if (isTemporaryLibraryActive()) {
+      pluginNotice('临时库不参与 WebDAV 同步', 'err', 2200)
+      return
+    }
     const result = await webdavSyncNow('manual')
     if (!result) {
       pluginNotice('同步失败', 'err', 2200)
@@ -1001,11 +1005,13 @@ async function togglePortableModeFromMenu(): Promise<void> {
 
 async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<ContextMenuItemConfig[]> {
   const items: ContextMenuItemConfig[] = []
-  const syncCfg = await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
-  const syncEnabled = !!syncCfg?.enabled
-  const syncConfigured = await (async () => { try { return await isWebdavConfiguredForActiveLibrary() } catch { return false } })()
+  const tempLibraryActive = isTemporaryLibraryActive()
+  const syncCfg = tempLibraryActive ? null : await (async () => { try { return await getWebdavSyncConfig() } catch { return null as any } })()
+  const syncEnabled = !tempLibraryActive && !!syncCfg?.enabled
+  const syncConfigured = !tempLibraryActive && await (async () => { try { return await isWebdavConfiguredForActiveLibrary() } catch { return false } })()
   let syncTooltip = ''
-  if (!syncConfigured) syncTooltip = t('sync.tooltip.notConfigured') || '当前库未配置 WebDAV，同步已禁用'
+  if (tempLibraryActive) syncTooltip = '临时库不参与 WebDAV 同步'
+  else if (!syncConfigured) syncTooltip = t('sync.tooltip.notConfigured') || '当前库未配置 WebDAV，同步已禁用'
   else if (!syncEnabled) syncTooltip = t('sync.tooltip.disabled') || '已配置 WebDAV，但同步未启用'
   // 编辑器内置：纯文本粘贴（忽略 HTML / 图片 等富文本）
   items.push({
@@ -1075,7 +1081,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
     label: t('sync.now') || '立即同步',
     icon: '🔁',
     tooltip: syncTooltip || undefined,
-    disabled: !syncEnabled || !syncConfigured,
+    disabled: tempLibraryActive || !syncEnabled || !syncConfigured,
     onClick: async () => { await handleManualSyncFromMenu() }
   })
   items.push({
@@ -2277,7 +2283,7 @@ wysiwygCaretEl.id = 'wysiwyg-caret'
         _libraryVaultListUi = initLibraryVaultList(elList, {
           getLibraries,
           getActiveLibraryId,
-          setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+          setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
           onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
         })
       }
@@ -3907,6 +3913,7 @@ async function openFile2(preset?: unknown) {
       const ext = (selectedPath.split(/\./).pop() || '').toLowerCase()
       if (ext === 'pdf') {
         await showPdfPreview(selectedPath, { updateRecent: true, forceReload: reopeningSameFile })
+        await syncTemporaryLibraryRootForOpenedPath(selectedPath)
         return
       }
       const rule = (() => {
@@ -4393,14 +4400,105 @@ async function switchToPreviewAfterOpen() {
 // 绑定事件
 
 // 显示/隐藏 关于 弹窗
+function normalizePathForCompare(p: string): string {
+  return normalizePath(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+function samePathLoose(a: string, b: string): boolean {
+  return normalizePathForCompare(a) === normalizePathForCompare(b)
+}
+
+function getParentDir(path: string): string {
+  const p = normalizePath(path).trim()
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+  if (idx <= 0) return ''
+  const dir = p.slice(0, idx)
+  if (/^[a-zA-Z]:$/.test(dir)) return dir + p[idx]
+  return dir
+}
+
+function getPathName(path: string): string {
+  const p = normalizePath(path).replace(/[\\/]+$/, '')
+  return p.split(/[\\/]+/).filter(Boolean).pop() || p
+}
+
+function isMarkdownLikeDocPath(path: string): boolean {
+  return /\.(md|markdown|txt)$/i.test(String(path || ''))
+}
+
+async function findPersistedLibraryForPath(path: string): Promise<{ id: string; root: string; name?: string } | null> {
+  try {
+    const p = normalizePath(path)
+    const libs = await getLibraries()
+    for (const lib of libs) {
+      const root = normalizePath((lib as any)?.root || '')
+      if (!root) continue
+      if (samePathLoose(root, p) || isInside(root, p)) return lib
+    }
+  } catch {}
+  return null
+}
+
+function setTemporaryLibraryRoot(root: string | null): boolean {
+  const next = root ? normalizePath(root).replace(/[\\/]+$/, '') : null
+  const cur = temporaryLibraryRoot ? normalizePath(temporaryLibraryRoot).replace(/[\\/]+$/, '') : null
+  if ((next || null) === (cur || null)) return false
+  temporaryLibraryRoot = next || null
+  return true
+}
+
+function clearTemporaryLibraryRoot(): boolean {
+  return setTemporaryLibraryRoot(null)
+}
+
+function isTemporaryLibraryActive(): boolean {
+  return !!temporaryLibraryRoot
+}
+
+async function activatePersistedLibrary(id: string): Promise<void> {
+  clearTemporaryLibraryRoot()
+  await setActiveLibId(id)
+}
+
+async function syncTemporaryLibraryRootForOpenedPath(path: string): Promise<void> {
+  const p = normalizePath(path)
+  if (!p) return
+
+  const persisted = await findPersistedLibraryForPath(p)
+  let nextRoot: string | null = null
+
+  if (persisted) {
+    nextRoot = null
+  } else if (temporaryLibraryRoot && isInside(temporaryLibraryRoot, p)) {
+    nextRoot = temporaryLibraryRoot
+  } else if (isMarkdownLikeDocPath(p)) {
+    nextRoot = getParentDir(p)
+  }
+
+  const changed = setTemporaryLibraryRoot(nextRoot)
+  if (changed) {
+    if (nextRoot) {
+      try { showLibrary(true, false) } catch {}
+    }
+    await refreshLibraryUiAndTree(true)
+  }
+  if (nextRoot && fileTreeReady) {
+    try { await fileTree.revealAndSelect(p) } catch {}
+  }
+}
+
 async function getLibraryRoot(): Promise<string | null> {
+  if (temporaryLibraryRoot) return temporaryLibraryRoot
   // 统一通过 utils 获取当前激活库（兼容 legacy）
   try { return await getActiveLibraryRoot() } catch { return null }
 }
 
 async function setLibraryRoot(p: string) {
   // 兼容旧代码：设置库路径即插入/更新库并设为激活
-  try { await upsertLibrary({ root: p }) } catch {}
+  try {
+    clearTemporaryLibraryRoot()
+    await upsertLibrary({ root: p })
+  } catch {}
 }
 
 // —— 大纲滚动同步 ——
@@ -5692,7 +5790,9 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
   try {
     const id = await getActiveLibraryId()
     let libName = ''
-    if (id) {
+    if (temporaryLibraryRoot) {
+      libName = '临时：' + (getPathName(temporaryLibraryRoot) || temporaryLibraryRoot)
+    } else if (id) {
       const libs = await getLibraries()
       const cur = libs.find(x => x.id === id)
       libName = cur?.name || ''
@@ -5709,7 +5809,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
         _ribbonLibsUi = initRibbonLibraryList(ribbonLibs, {
           getLibraries,
           getActiveLibraryId,
-          setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+          setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
           onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
           dividerEl: ribbonDivider,
         })
@@ -5769,12 +5869,12 @@ async function showLibraryMenu() {
     const activeId = await getActiveLibraryId()
     const items: TopMenuItemSpec[] = []
     for (const lib of libs) {
-      const cur = lib.id === activeId
+      const cur = !temporaryLibraryRoot && lib.id === activeId
       const label = (cur ? "\u2714\uFE0E " : '') + lib.name
       items.push({
         label,
         action: async () => {
-          try { await setActiveLibId(lib.id) } catch {}
+          try { await activatePersistedLibrary(lib.id) } catch {}
           await refreshLibraryUiAndTree(true)
         }
       })
@@ -6018,16 +6118,8 @@ function bindEvents() {
       const getEditor = (): HTMLTextAreaElement | null => document.getElementById('editor') as HTMLTextAreaElement | null
       const isEditMode = () => (typeof mode !== 'undefined' && mode === 'edit' && !wysiwyg)
 
-      const pairs: Array<[string, string]> = [["(", ")"],["[", "]"],["{", "}"],["\"", "\""],["'", "'"],["*","*"],["_","_"],["（","）"],["【","】"],["《","》"],["「","」"],["『","』"],["“","”"],["‘","’"]]
-      try { pairs.push([String.fromCharCode(96), String.fromCharCode(96)]) } catch {}
+      const pairs: Array<[string, string]> = [["(", ")"],["[", "]"],["{", "}"],["\"", "\""],["'", "'"],["*","*"],["_","_"]]
       const openClose = Object.fromEntries(pairs as any) as Record<string,string>
-      try { pairs.push([String.fromCharCode(0x300A), String.fromCharCode(0x300B)]) } catch {}
-      try { pairs.push([String.fromCharCode(0x3010), String.fromCharCode(0x3011)]) } catch {}
-      try { pairs.push([String.fromCharCode(0xFF08), String.fromCharCode(0xFF09)]) } catch {}
-      try { pairs.push([String.fromCharCode(0x300C), String.fromCharCode(0x300D)]) } catch {}
-      try { pairs.push([String.fromCharCode(0x300E), String.fromCharCode(0x300F)]) } catch {}
-      try { pairs.push([String.fromCharCode(0x201C), String.fromCharCode(0x201D)]) } catch {}
-      try { pairs.push([String.fromCharCode(0x2018), String.fromCharCode(0x2019)]) } catch {}
       const closers = new Set(Object.values(openClose))
 
       function handleKeydown(e: KeyboardEvent) {
@@ -6035,21 +6127,20 @@ function bindEvents() {
         if (e.target !== ta) return
         if (!isEditMode()) return
         if (e.ctrlKey || e.metaKey || e.altKey) return
+        if (!getSymbolAutoCompletionEnabled()) return
         if (e.key === '*') {
           e.preventDefault()
           handleImmediateStarCompletion(ta)
           return
         }
-        const val = String(ta.value || '')
-        const s = ta.selectionStart >>> 0
-        const epos = ta.selectionEnd >>> 0
-
-        // 反引号：即时补全，第二次扩成双反引号，第三次扩成围栏
         if (e.key === '`') {
           e.preventDefault()
           handleImmediateBacktickCompletion(ta)
           return
         }
+        const val = String(ta.value || '')
+        const s = ta.selectionStart >>> 0
+        const epos = ta.selectionEnd >>> 0
 
         // 跳过右侧
         if (closers.has(e.key) && s === epos && val[s] === e.key) { e.preventDefault(); ta.selectionStart = ta.selectionEnd = s + 1; return }
@@ -6677,6 +6768,7 @@ function bindEvents() {
     replaceEditorRange(ta, s, e, ins, selStart, selEnd)
     return true
   }
+
   function handleImmediateBacktickCompletion(ta: HTMLTextAreaElement): boolean {
     const val = String(ta.value || '')
     const s = ta.selectionStart >>> 0
@@ -6823,16 +6915,16 @@ function bindEvents() {
   try {
     (editor as HTMLTextAreaElement).addEventListener('keydown', (e: KeyboardEvent) => { if ((e as any).defaultPrevented) return; if (e.ctrlKey || e.metaKey || e.altKey) return
       try { if (tryHandleListEnter(editor as HTMLTextAreaElement, e)) return } catch {}
-      // 反引号：即时补全，第二次扩成双反引号，第三次扩成围栏
-      if (e.key === '`') {
-        e.preventDefault()
-        handleImmediateBacktickCompletion(editor as HTMLTextAreaElement)
-        return
-      }
+      if (!getSymbolAutoCompletionEnabled()) return
       // 星号：第一次斜体，第二次立刻扩成加粗，不再傻等定时器
       if (e.key === '*') {
         e.preventDefault()
         handleImmediateStarCompletion(editor as HTMLTextAreaElement)
+        return
+      }
+      if (e.key === '`') {
+        e.preventDefault()
+        handleImmediateBacktickCompletion(editor as HTMLTextAreaElement)
         return
       }
       // 波浪线：一次按键即完成成对环抱补全（~~ 语法）
@@ -6854,10 +6946,8 @@ function bindEvents() {
         return
       }
       const _pairs: Array<[string, string]> = [
-        ["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["*", "*"], ["_", "_"],
-        ["（", "）"], ["【", "】"], ["《", "》"], ["「", "」"], ["『", "』"], ["“", "”"], ["‘", "’"]
+        ["(", ")"], ["[", "]"], ["{", "}"], ['"', '"'], ["'", "'"], ["*", "*"], ["_", "_"]
       ]
-      try { _pairs.push([String.fromCharCode(96), String.fromCharCode(96)]) } catch {}
       const openClose: Record<string, string> = Object.fromEntries(_pairs as any)
       const closers = new Set(Object.values(openClose))
       const ta = editor as HTMLTextAreaElement
@@ -7364,7 +7454,7 @@ function bindEvents() {
           _ribbonLibsUi = initRibbonLibraryList(ribbonLibs, {
             getLibraries,
             getActiveLibraryId,
-            setActiveLibraryId: async (id: string) => { await setActiveLibId(id) },
+            setActiveLibraryId: async (id: string) => { await activatePersistedLibrary(id) },
             onAfterSwitch: async () => { await refreshLibraryUiAndTree(true) },
             dividerEl: ribbonDivider,
           })
