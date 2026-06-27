@@ -2840,7 +2840,7 @@ body.sticky-note-mode .width-bubble {
   justify-content: space-between;
   padding: 14px 20px;
   border-bottom: 1px solid rgba(127,127,127,0.12);
-  background: rgba(127,127,127,0.02);
+  background: rgb(237,237,237);
   border-radius: 12px 12px 0 0;
   position: sticky;
   top: 0;
@@ -6893,7 +6893,7 @@ body.dark-mode .theme-panel {
 }
 
 body.dark-mode .theme-panel-header {
-  background: rgba(255, 255, 255, 0.03) !important;
+  background: rgb(35, 35, 35) !important;
   border-bottom-color: rgba(255, 255, 255, 0.08) !important;
 }
 

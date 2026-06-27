@@ -316,7 +316,7 @@ body.dark-mode .theme-panel {
 }
 
 body.dark-mode .theme-panel-header {
-  background: rgba(255, 255, 255, 0.03) !important;
+  background: rgb(35, 35, 35) !important;
   border-bottom-color: rgba(255, 255, 255, 0.08) !important;
 }
 
