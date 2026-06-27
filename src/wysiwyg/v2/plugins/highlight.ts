@@ -109,7 +109,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
     // 创建高亮显示层（只读，显示高亮后的代码）
     // 放在底层，contentDOM 透明覆盖在上面
     this.highlightLayer = document.createElement('code')
-    this.highlightLayer.classList.add('highlight-layer')
+    this.highlightLayer.classList.add('hljs', 'highlight-layer')
     if (lang) {
       this.highlightLayer.classList.add(`language-${lang}`)
     }
@@ -475,11 +475,11 @@ export class HighlightCodeBlockNodeView implements NodeView {
       if (newLang) {
         this.dom.setAttribute('data-language', newLang)
         this.contentDOM.className = `editable-layer language-${newLang}`
-        this.highlightLayer.className = `highlight-layer language-${newLang}`
+        this.highlightLayer.className = `hljs highlight-layer language-${newLang}`
       } else {
         this.dom.removeAttribute('data-language')
         this.contentDOM.className = 'editable-layer'
-        this.highlightLayer.className = 'highlight-layer'
+        this.highlightLayer.className = 'hljs highlight-layer'
       }
       // 同步语言输入框
       this.langInput.value = newLang
