@@ -96,11 +96,19 @@ echo "==> Building Tauri release bundle (.deb)"
 npm run tauri:build
 
 # 定位 Tauri 生成的 .deb
+# 注意：deb 目录里可能残留历史 deb（旧版本），必须按版本号/文件名严格匹配当前 VERSION，
+# 避免 find | head -1 拿到旧 deb → 重打包后控制文件版本号对了但二进制嵌入的 CARGO_PKG_VERSION 还是旧的。
 DEB_DIR="src-tauri/target/release/bundle/deb"
-DEB_FILE=$(find "$DEB_DIR" -maxdepth 1 -name 'flymd_*_amd64.deb' | head -1)
+EXPECTED_DEB="$DEB_DIR/flymd_${VERSION}_amd64.deb"
+if [[ -f "$EXPECTED_DEB" ]]; then
+  DEB_FILE="$EXPECTED_DEB"
+else
+  # 兜底：按 mtime 取最新的一个（避免完全没找到时报错）
+  DEB_FILE=$(find "$DEB_DIR" -maxdepth 1 -name 'flymd_*_amd64.deb' -printf '%T@ %p\n' | sort -nr | head -1 | awk '{print $2}')
+fi
 
 if [[ -z "$DEB_FILE" ]] || [[ ! -f "$DEB_FILE" ]]; then
-  echo "Error: Tauri did not produce a .deb package in $DEB_DIR" >&2
+  echo "Error: Tauri did not produce a .deb package in $DEB_DIR (expected $EXPECTED_DEB)" >&2
   exit 1
 fi
 
