@@ -81,8 +81,18 @@ echo "==> Packaging flymd $VERSION for Debian/Deepin"
 # 清理历史构建产物
 if [[ "$CLEAN_BUILD" -eq 1 ]]; then
   echo "==> Cleaning previous build artifacts"
+  # 清前端 dist + 整个 bundle 目录(含历史 deb 残留,避免重打包时取错基础包)
   rm -rf src-tauri/target/release/bundle
   rm -rf dist
+  # 清 Rust release 二进制 + 依赖构建产物,确保 CARGO_PKG_VERSION 与最新 Cargo.toml 同步
+  # 保留 Cargo registry cache (target/release/deps) 加速重链,只删最终产物
+  rm -f src-tauri/target/release/flymd
+  rm -f src-tauri/target/release/flymd.d
+  # 删 build fingerprint,让 cargo 重新运行 build.rs(build.rs 调 tauri_build::build
+  # 会从 tauri.conf.json 读 version,如果 conf 改了必须重跑)
+  rm -rf src-tauri/target/release/build
+  rm -rf src-tauri/target/release/.fingerprint
+  rm -rf src-tauri/target/release/deps/flymd-*
 fi
 
 # 安装前端依赖
