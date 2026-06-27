@@ -11,11 +11,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# 加载共享清理函数(版本号错乱修复:确保 cargo 重新嵌入 CARGO_PKG_VERSION + bundle 目录无残留)
+# 加载共享清理 helper(source 时无副作用,需显式调用 clean_release_target)
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/_clean.sh"
 
 INSTALL=0
+CLEAN_BUILD=0
 
 usage() {
   cat <<'USAGE'
@@ -25,11 +26,13 @@ Build a .deb package for Debian/Deepin/Ubuntu from the current working tree.
 
 Options:
   -i, --install       Install the generated package with dpkg -i.
+      --clean         Clean previous build artifacts before building.
   -h, --help          Show this help.
 
 Examples:
   scripts/package-debian.sh
   scripts/package-debian.sh --install
+  scripts/package-debian.sh --clean --install
 USAGE
 }
 
@@ -37,6 +40,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -i|--install)
       INSTALL=1
+      ;;
+    --clean)
+      CLEAN_BUILD=1
       ;;
     -h|--help)
       usage
@@ -76,14 +82,17 @@ require_cmd dpkg-deb
 VERSION=$(bash "$ROOT_DIR/scripts/get-version.sh" "$ROOT_DIR/package.json")
 echo "==> Packaging flymd $VERSION for Debian/Deepin"
 
-# 清理历史构建产物(由 _clean.sh 提供,默认每次都清)
-# 防止:
-#   1. CARGO_PKG_VERSION 错乱(Cargo.toml/tauri.conf.json 改了但 cargo 缓存未失效)
-#   2. 重打包取错历史 deb(bundle/deb 残留)
-#   3. 前端 bundle 缓存(dist/)
+# 清理历史构建产物(防止 CARGO_PKG_VERSION 错乱 + 重打包取错基础 deb)
+# 默认不清理(向后兼容 CI/CD),需要时显式传 --clean
+if [[ "$CLEAN_BUILD" -eq 1 ]]; then
+  echo "==> Cleaning previous build artifacts"
+  rm -rf src-tauri/target/release/bundle
+  rm -rf dist
+  clean_release_target "src-tauri/target/release"
+fi
 
 # 安装前端依赖
-if [[ ! -d node_modules ]]; then
+if [[ ! -d node_modules ]] || [[ "$CLEAN_BUILD" -eq 1 ]]; then
   echo "==> Installing npm dependencies"
   npm ci
 fi
