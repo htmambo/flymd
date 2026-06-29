@@ -4,6 +4,7 @@ dist/
 coverage/
 .cache/
 .omc/
+.vitest-localstorage*
 *.tsbuildinfo
 *.eslintcache
 *.swp

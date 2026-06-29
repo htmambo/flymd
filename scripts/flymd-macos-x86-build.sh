@@ -131,6 +131,45 @@ if ! command -v create-dmg &>/dev/null; then
 fi
 ok "create-dmg $(create-dmg --version 2>/dev/null | head -1 || echo 'OK')"
 
+# 加载共享清理助手(精确清理:保留 deps/ 缓存,避免每次冷跑都重编 ring/aws-sdk 等)
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_clean.sh" 2>/dev/null || true
+
+# sccache —— 强烈建议安装;可把 ring/aws-sdk 这类大 crate 的编译结果缓存到磁盘,
+# 首次冷跑仍然慢,但后续改完代码再 build 会显著加速(典型 5-10x)。
+# 文档:https://github.com/mozilla/sccache
+if command -v sccache &>/dev/null; then
+  export RUSTC_WRAPPER=sccache
+  : "${SCCACHE_DIR:=$HOME/.cache/sccache}"
+  export SCCACHE_DIR
+  ok "sccache $(sccache --version 2>/dev/null | head -1) 已启用 (RUSTC_WRAPPER=sccache, SCCACHE_DIR=$SCCACHE_DIR)"
+else
+  warn "未检测到 sccache —— ring/aws-sdk 等大 crate 将每次重编。"
+  warn "    建议安装: brew install sccache  (之后本脚本会自动启用)"
+fi
+
+# FAST_BUILD —— 调试/迭代时用。release 配置下 lto=true (fat) 会让最终链接
+# 阶段把全部 crate 重新 codegen 一次,Intel Mac 上常拖 5-10 分钟。设置 FAST_BUILD=1
+# 可临时把 lto 降为 thin、关掉 strip,二进制稍大但总构建时间显著缩短。
+#   用法: FAST_BUILD=1 ./scripts/flymd-macos-x86-build.sh
+if [[ "${FAST_BUILD:-0}" == "1" ]]; then
+  export CARGO_PROFILE_RELEASE_LTO=thin
+  export CARGO_PROFILE_RELEASE_STRIP=false
+  export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256
+  ok "FAST_BUILD=1 → lto=thin, strip=false, codegen-units=256 (牺牲一些体积换速度)"
+else
+  info "当前使用 [profile.release] 默认值 (lto=true / strip=true / codegen-units=1) —— 体积最优但链接慢"
+  info "  → 若仅做联调可设置 FAST_BUILD=1 走瘦 LTO,省 5-10 分钟"
+fi
+
+# reqwest TLS 后端提示 —— 防止有人不小心把 rustls-tls 改回默认(native-tls 会拉 ring)。
+if grep -Eq 'reqwest\s*=\s*\{[^}]*default-features\s*=\s*true' src-tauri/Cargo.toml; then
+  warn "检测到 reqwest 使用 default-features=true —— 这会拉入 ring 和 native-tls,"
+  warn "    编译时间显著增加。建议保留 'default-features = false, features = [\"rustls-tls\", ...]'。"
+else
+  ok "reqwest TLS 后端:rustls (无 ring 依赖)"
+fi
+
 # ── 1. 安装依赖 ─────────────────────────────────────────────────────────────
 info "安装前端依赖…"
 if [ ! -d "node_modules" ]; then
@@ -151,8 +190,14 @@ if [ "$DMG_ONLY" = true ] && [ -d "$APP_DIR" ]; then
   info "检测到已有 .app (--dmg-only 模式)，跳过构建"
 else
   info "构建 .app (x86_64)…"
-  # 清理旧产物（macOS 通用策略:整目录删,避免跨架构串味）
-  rm -rf "src-tauri/target/${ARCH}"
+  # 精确清理本项目产物(保留 deps/ 缓存,避免把 ring/aws-sdk 的编译结果一起删掉)
+  # 如未加载到 _clean.sh(脚本缺失),回退到原整目录删除以保证正确性
+  if declare -F clean_release_target >/dev/null 2>&1; then
+    clean_release_target "src-tauri/target/${ARCH}/release"
+  else
+    warn "未找到 _clean.sh,回退到 rm -rf 整目录清理(会丢掉 deps 缓存)"
+    rm -rf "src-tauri/target/${ARCH}"
+  fi
 
   export RUST_LOG=trace
   export TAURI_BUNDLE_TARGET="${ARCH}"
