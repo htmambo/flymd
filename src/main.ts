@@ -1584,8 +1584,10 @@ try {
         const isMax = await win.isMaximized()
         if (isMax) {
           await win.unmaximize()
+          applyMainWindowMaximizedState(false)
         } else {
           await win.maximize()
+          applyMainWindowMaximizedState(true)
         }
       } catch {}
     })
