@@ -119,3 +119,4 @@ solag.md
 # flymd-web SQLite db(运行时生成)
 web/data/
 
+.ace-tool/
