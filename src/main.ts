@@ -99,9 +99,10 @@ import {
   isWebdavConfiguredForActiveLibrary,
   syncNow as webdavSyncNow,
   setOnSyncComplete,
+  setSyncBlockReasonProvider,
   openSyncLog as webdavOpenSyncLog,
   appendSyncLog as webdavAppendSyncLog,
-} from './extensions/webdavSyncFacade'
+} from './extensions/webdavSync'
 
 // 平台适配层（Android 支持）
 import { initPlatformIntegration, mobileSaveFile, isMobilePlatform } from './platform-integration'
@@ -1390,8 +1391,6 @@ try { windowsCompositorPokeApi.start() } catch {}
 // 应用已保存主题并挂载主题 UI
 try { applySavedTheme() } catch {}
 try { initThemeUI() } catch {}
-// 网络代理：当用户启用代理时，让插件侧 fetch 也走 tauri plugin-http（绕开 CORS 且吃到后端代理设置）
-try { initNetworkProxyFetchShim() } catch {}
 // 将专注模式切换函数暴露到全局，供主题面板调用
 ;(window as any).flymdToggleFocusMode = async (enabled: boolean) => {
   try {
@@ -3875,6 +3874,10 @@ async function openFile2(preset?: unknown) {
     if (Array.isArray(selected)) { if (selected.length < 1) return; selected = selected[0] }
 
     const selectedPath = normalizePath(selected)
+    if (await isDirectoryPath(selectedPath)) {
+      pluginNotice('暂不支持打开文件夹，请选择具体文档', 'err', 2600)
+      return
+    }
     // 同一文件且当前存在未保存内容时，避免误覆盖编辑态
     const currentPathNormalized = currentFilePath ? normalizePath(currentFilePath) : ''
     const reopeningSameFile = !!currentPathNormalized && currentPathNormalized === selectedPath
@@ -4428,6 +4431,29 @@ function isMarkdownLikeDocPath(path: string): boolean {
   return /\.(md|markdown|txt)$/i.test(String(path || ''))
 }
 
+async function isDirectoryPath(path: string): Promise<boolean> {
+  try {
+    const st: any = await stat(path as any)
+    return !!st?.isDirectory
+  } catch {
+    return false
+  }
+}
+
+async function isUnsafeTemporaryLibraryRoot(root: string): Promise<boolean> {
+  try {
+    const r = normalizePath(root).replace(/[\\/]+$/, '')
+    if (!r) return false
+    if (/[\\/]EBWebView(?:[\\/]|$)/i.test(r)) return true
+    const appLocal = await getAppLocalDataDirCached()
+    if (!appLocal) return false
+    const a = normalizePath(appLocal).replace(/[\\/]+$/, '')
+    return samePathLoose(a, r) || isInside(a, r)
+  } catch {
+    return false
+  }
+}
+
 async function findPersistedLibraryForPath(path: string): Promise<{ id: string; root: string; name?: string } | null> {
   try {
     const p = normalizePath(path)
@@ -4474,7 +4500,8 @@ async function syncTemporaryLibraryRootForOpenedPath(path: string): Promise<void
   } else if (temporaryLibraryRoot && isInside(temporaryLibraryRoot, p)) {
     nextRoot = temporaryLibraryRoot
   } else if (isMarkdownLikeDocPath(p)) {
-    nextRoot = getParentDir(p)
+    const parent = getParentDir(p)
+    nextRoot = parent && !(await isUnsafeTemporaryLibraryRoot(parent)) ? parent : null
   }
 
   const changed = setTemporaryLibraryRoot(nextRoot)
@@ -4640,6 +4667,19 @@ try {
     }
     ;(window as any).flymdGetWysiwygEnabled = () => wysiwyg
     ;(window as any).flymdGetEditorContent = () => editor?.value ?? ''
+    ;(window as any).flymdEnterEditModeForSplit = () => {
+      try {
+        if (wysiwyg || mode !== 'preview') return false
+        mode = 'edit'
+        try { preview.classList.add('hidden') } catch {}
+        try { editor.focus({ preventScroll: true } as any) } catch { try { editor.focus() } catch {} }
+        try { syncToggleButton() } catch {}
+        try { window.dispatchEvent(new CustomEvent('flymd:mode:changed', { detail: { mode } })) } catch {}
+        return true
+      } catch {
+        return false
+      }
+    }
     // UI 刷新
     ;(window as any).flymdRefreshTitle = () => titlebarStatusApi?.refreshTitle()
     ;(window as any).flymdRefreshPreview = () => { try { scheduleRenderPreview() } catch {} }
@@ -8300,9 +8340,15 @@ function bindEvents() {
             if (payload && typeof payload === 'object' && payload.action && payload.action !== 'drop') return
             const arr = Array.isArray(payload) ? payload : (payload?.paths || payload?.urls || payload?.files || [])
             const paths: string[] = (Array.isArray(arr) ? arr : []).map((p) => normalizePath(p))
-            const md = paths.find((p) => /\.(md|markdown|txt)$/i.test(p))
+            const checkedPaths = await Promise.all(paths.map(async (p) => ({ path: p, isDir: await isDirectoryPath(p) })))
+            const hasDroppedDir = checkedPaths.some((x) => x.isDir)
+            const filePaths = checkedPaths.filter((x) => !x.isDir).map((x) => x.path)
+            if (hasDroppedDir) {
+              pluginNotice('暂不支持拖入文件夹，请选择具体文档', 'err', 2600)
+            }
+            const md = filePaths.find((p) => /\.(md|markdown|txt)$/i.test(p))
             if (md) { void openFile2(md); return }
-            const imgs = paths.filter((p) => /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i.test(p))
+            const imgs = filePaths.filter((p) => /\.(png|jpe?g|gif|svg|webp|bmp|avif|ico)$/i.test(p))
             if (imgs.length > 0) {
               // 若所见 V2 激活：交由所见模式自身处理（支持拖拽到编辑区）
               if (wysiwygV2Active) {
@@ -8496,6 +8542,15 @@ function bindEvents() {
     try { logInfo('打点:事件绑定完成') } catch {}
     await revealMainWindowOnce()
 
+    let handledStartupOpenPath = false
+    try {
+      const path = await invoke<string | null>('get_pending_open_path')
+      if (path && typeof path === 'string') {
+        handledStartupOpenPath = true
+        await openFile2(path)
+      }
+    } catch {}
+
     // 性能标记：首次渲染完成
     performance.mark('flymd-first-render')
     deferredStartupApi!.schedule()
@@ -8665,6 +8720,7 @@ function bindEvents() {
             } catch {}
           })
         } catch {}
+        setSyncBlockReasonProvider(() => isTemporaryLibraryActive() ? '临时库不参与 WebDAV 同步' : null)
         await initWebdavSync()
       } catch (e) {
         console.warn('[WebDAV] 延迟初始化失败:', e)
@@ -8747,28 +8803,31 @@ function bindEvents() {
     }
 
     // 兜底：主动询问后端是否有"默认程序/打开方式"传入的待打开路径
-    try {
-      const path = await invoke<string | null>('get_pending_open_path')
-      if (path && typeof path === 'string') {
-        void openFile2(path)
-      } else {
-        // macOS 兜底：通过后端命令读取启动参数，获取 Finder "打开方式"传入的文件
-        try {
-          const ua = navigator.userAgent || ''
-          const isMac = /Macintosh|Mac OS X/i.test(ua)
-          if (isMac) {
-            const args = await invoke<string[]>('get_cli_args')
-            const pick = (args || []).find((a) => {
-              if (!a || typeof a !== 'string') return false
-              const low = a.toLowerCase()
-              if (low.startsWith('-psn_')) return false
-              return /\.(md|markdown|txt|pdf)$/.test(low)
-            })
-            if (pick) { void openFile2(pick) }
-          }
-        } catch {}
-      }
-    } catch {}
+    if (!handledStartupOpenPath) {
+      try {
+        const path = await invoke<string | null>('get_pending_open_path')
+        if (path && typeof path === 'string') {
+          handledStartupOpenPath = true
+          void openFile2(path)
+        } else {
+          // macOS 兜底：通过后端命令读取启动参数，获取 Finder "打开方式"传入的文件
+          try {
+            const ua = navigator.userAgent || ''
+            const isMac = /Macintosh|Mac OS X/i.test(ua)
+            if (isMac) {
+              const args = await invoke<string[]>('get_cli_args')
+              const pick = (args || []).find((a) => {
+                if (!a || typeof a !== 'string') return false
+                const low = a.toLowerCase()
+                if (low.startsWith('-psn_')) return false
+                return /\.(md|markdown|txt|pdf)$/.test(low)
+              })
+              if (pick) { void openFile2(pick) }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
 
     // 尝试加载最近文件（可能失败）
     try {
