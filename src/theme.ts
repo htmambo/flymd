@@ -19,6 +19,7 @@ import { getSymbolAutoCompletionEnabled, setSymbolAutoCompletionEnabled } from '
 import { getContentFontSize, setContentFontSize } from './core/uiZoom'
 import { NETWORK_PROXY_DEFAULT_NO_PROXY, normalizeNetworkNoProxy } from './core/networkProxy'
 import { getUpdateCheckDisabled, setUpdateCheckDisabled } from './core/updateCheckPrefs'
+import { getDefaultOutlineTabEnabled, setDefaultOutlineTabEnabled } from './core/defaultOutlineTab'
 export type MdStyleId = 'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs' | 'typora' | 'obsidian' | 'bear' | 'minimalist'
 
 export interface ThemePrefs {
@@ -684,6 +685,13 @@ function createPanel(): HTMLDivElement {
           <span class="theme-toggle-text">${t('theme.sourceLineNumbers')}</span>
           <div class="theme-toggle-switch">
             <input type="checkbox" id="source-line-numbers-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="default-outline-tab-toggle" title="${t('theme.defaultOutlineTab.tip')}">
+          <span class="theme-toggle-text">${t('theme.defaultOutlineTab')}</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="default-outline-tab-toggle" class="theme-toggle-input" />
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
@@ -1617,6 +1625,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     const wysiwygDefaultToggle = panel.querySelector('#wysiwyg-default-toggle') as HTMLInputElement | null
     const sourcemodeDefaultToggle = panel.querySelector('#sourcemode-default-toggle') as HTMLInputElement | null
     const sourceLineNumbersToggle = panel.querySelector('#source-line-numbers-toggle') as HTMLInputElement | null
+    const defaultOutlineTabToggle = panel.querySelector('#default-outline-tab-toggle') as HTMLInputElement | null
     const symbolAutoCompletionToggle = panel.querySelector('#symbol-auto-completion-toggle') as HTMLInputElement | null
     const wysiwygHtmlTableToggle = panel.querySelector('#wysiwyg-html-table-toggle') as HTMLInputElement | null
     const pasteUrlTitleToggle = panel.querySelector('#paste-url-title-toggle') as HTMLInputElement | null
@@ -1729,6 +1738,13 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       libColorDepthToggle.checked = getLibColorDepthEnabled()
       libColorDepthToggle.addEventListener('change', () => {
         setLibColorDepthEnabled(libColorDepthToggle.checked)
+      })
+    }
+
+    if (defaultOutlineTabToggle) {
+      defaultOutlineTabToggle.checked = getDefaultOutlineTabEnabled()
+      defaultOutlineTabToggle.addEventListener('change', () => {
+        setDefaultOutlineTabEnabled(defaultOutlineTabToggle.checked)
       })
     }
 
