@@ -32,6 +32,7 @@ import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
 import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
+import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from '../../plugins/strongBoundaryCompat'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import { deleteColumn, deleteRow } from 'prosemirror-tables'
@@ -157,9 +158,10 @@ async function applyHtmlTableToGfmIfEnabled(): Promise<void> {
   if (!_editor) return
   try {
     const mdNow = await (_editor as any).action(getMarkdown())
-    const next = maybeConvertHtmlTableBlocksToGfm(String(mdNow || ''))
-    if (next !== String(mdNow || '')) {
-      await (_editor as any).action(replaceAll(next))
+    const current = stripStrongBoundaryGuard(String(mdNow || ''))
+    const next = maybeConvertHtmlTableBlocksToGfm(current)
+    if (next !== current) {
+      await (_editor as any).action(replaceAll(guardStrongBoundaryForCommonMark(next)))
     }
   } catch {}
 }
@@ -344,7 +346,8 @@ function insertMarkdownAtSelection(markdown: string): boolean {
     _editor?.action((ctx) => {
       const view = ctx.get(editorViewCtx)
       const parser = ctx.get(parserCtx)
-      const slice = parser(String(markdown || ''))
+      const source = guardStrongBoundaryForCommonMark(String(markdown || ''))
+      const slice = parser(source)
       if (!slice || typeof slice === 'string') {
         view.dispatch(view.state.tr.insertText(String(markdown || '')).scrollIntoView())
         inserted = true
@@ -514,7 +517,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   const content1 = transformInlineHtmlForWysiwyg(content0)
   const content = maybeConvertHtmlTableBlocksToGfm(content1)
   // 保护 Excel 公式里的 `$`，避免被 remark-math / 输入规则误识别为行内数学
-  const contentForEditor = protectExcelDollarRefs(content)
+  const contentForEditor = guardStrongBoundaryForCommonMark(protectExcelDollarRefs(content))
   console.log('[WYSIWYG V2] enableWysiwygV2 called, content length:', content.length)
 
   // 仅销毁旧编辑器与观察器，保留外层传入的 root（避免被移除导致空白）
@@ -820,7 +823,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
           return s
         } catch { return md2 }
       })()
-      const md4 = normalizeTabIndentText(unprotectExcelDollarRefs(restoreEscapedDollars(_lastMd, md3)))
+      const md3Clean = stripStrongBoundaryGuard(md3)
+      const md4 = normalizeTabIndentText(unprotectExcelDollarRefs(restoreEscapedDollars(_lastMd, md3Clean)))
       _lastMd = md4
       try { _onChange?.(md4) } catch {}
       try { setTimeout(() => { try { rewriteLocalImagesToAsset() } catch {} }, 0) } catch {}
@@ -897,7 +901,8 @@ export async function disableWysiwygV2() {
     if (_editor) {
       try {
         const mdNow = await (_editor as any).action(getMarkdown())
-        _lastMd = normalizeTabIndentText(unprotectExcelDollarRefs(restoreEscapedDollars(_lastMd, String(mdNow || ''))))
+        const clean = stripStrongBoundaryGuard(String(mdNow || ''))
+        _lastMd = normalizeTabIndentText(unprotectExcelDollarRefs(restoreEscapedDollars(_lastMd, clean)))
       } catch {}
     }
   } catch {}
@@ -2136,7 +2141,8 @@ function scheduleMathBlockReparse() {
     if (_mathEditingActive) return // 浮层打开中:再次检查
     try {
       const mdNow = await (_editor as any).action(getMarkdown())
-      if (/\$\$[\s\S]*?\$\$/m.test(String(mdNow || ''))) {
+      const current = stripStrongBoundaryGuard(String(mdNow || ''))
+      if (/\$\$[\s\S]*?\$\$/m.test(current)) {
         // replaceAll 会用 tr.replace(0, docSize, ...) 重建整篇文档,旧光标被映射到
         // 文档尾(且不带 scrollIntoView)。在含块级公式的文档里编辑任何内容都会触发,
         // 表现为光标瞬间跳到底部。这里先存光标,replace 后再就近恢复。
@@ -2144,7 +2150,7 @@ function scheduleMathBlockReparse() {
         const hadFocus = !!viewBefore?.hasFocus?.()
         const savedFrom: number | undefined = viewBefore?.state?.selection?.from
         const savedTo: number | undefined = viewBefore?.state?.selection?.to
-        await (_editor as any).action(replaceAll(String(mdNow || '')))
+        await (_editor as any).action(replaceAll(guardStrongBoundaryForCommonMark(current)))
         if (hadFocus && typeof savedFrom === 'number') {
           try {
             const viewAfter: any = (_editor as any)?.ctx?.get?.(editorViewCtx)

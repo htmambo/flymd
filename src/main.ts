@@ -496,6 +496,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
 
 // Mermaid 工具（已拆分到 core/mermaid.ts）
 import { isMermaidCacheDisabled, getMermaidScale, setMermaidScaleClamped, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCache, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache, MERMAID_SCALE_MIN, MERMAID_SCALE_MAX, MERMAID_SCALE_STEP } from './core/mermaid'
+import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from './plugins/strongBoundaryCompat'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
 let _currentPdfSrcUrl: string | null = null
 let _currentPdfIframe: HTMLIFrameElement | null = null
@@ -1852,7 +1853,8 @@ async function renderPreviewLight() {
   } catch {}
   // 按需加载文档中用到的 highlight.js 语言模块
   try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
-  const html = md!.render(raw)
+  raw = guardStrongBoundaryForCommonMark(raw)
+  const html = stripStrongBoundaryGuard(md!.render(raw))
   // 方案 A：占位符机制不需要 DOMPurify
   // KaTeX 占位符（data-math 属性）是安全的，后续会用 KaTeX.render() 替换
   const safe = html
@@ -2938,7 +2940,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   } catch {}
   // 按需加载文档中用到的 highlight.js 语言模块
   try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
-  const html = md!.render(raw)
+  raw = guardStrongBoundaryForCommonMark(raw)
+  const html = stripStrongBoundaryGuard(md!.render(raw))
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
   try {
     if (!katexCssLoaded && /katex/.test(html)) {
