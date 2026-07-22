@@ -240,6 +240,7 @@ import {
 } from './extensions/extensionsPanelFacade'
 import { ensureUpdateOverlay, showUpdateOverlayLinux, showUpdateDownloadedOverlay, showInstallFailedOverlay, loadUpdateExtra, renderUpdateDetailsHTML } from './ui/updateOverlay'
 import { openInBrowser, upMsg } from './core/updateUtils'
+import { getUpdateCheckDisabled } from './core/updateCheckPrefs'
 import { initLibraryContextMenu } from './ui/libraryContextMenu'
 import { initLibraryVaultList } from './ui/libraryVaultList'
 import { showTopMenu, type TopMenuItemSpec } from './ui/topMenu'
@@ -3389,8 +3390,34 @@ async function revealMainWindowOnce(): Promise<void> {
   } catch {}
 }
 
+function setUpdateBadge(on: boolean, tip?: string) {
+  try {
+    const btn = document.getElementById('btn-update') as HTMLDivElement | null
+    if (!btn) return
+    if (on) {
+      btn.classList.add('has-update')
+      if (tip) btn.title = tip
+    } else {
+      btn.classList.remove('has-update')
+      btn.title = tip || t('menu.update')
+    }
+  } catch {}
+}
+
+try {
+  window.addEventListener('flymd:updateCheckDisabled:changed', (ev) => {
+    const disabled = !!((ev as CustomEvent).detail?.disabled)
+    if (disabled) setUpdateBadge(false)
+  })
+} catch {}
+
 async function checkUpdateInteractive() {
   try {
+    if (getUpdateCheckDisabled()) {
+      setUpdateBadge(false)
+      NotificationManager.show('appUpdate', t('update.checkDisabled'), 3000)
+      return
+    }
     // 使用通知系统显示检查进度
     const checkingId = NotificationManager.show('appUpdate', '正在检查更新…', 0)
     const resp = await invoke('check_update', { force: true, include_prerelease: false }) as any as CheckUpdateResp
@@ -3591,8 +3618,10 @@ async function showUpdateOverlay(resp: CheckUpdateResp) {
 
 function checkUpdateSilentOnceAfterStartup() {
   try {
+    if (getUpdateCheckDisabled()) return
     setTimeout(async () => {
       try {
+        if (getUpdateCheckDisabled()) return
         const resp = await invoke('check_update', { force: false, include_prerelease: false }) as any as CheckUpdateResp
         if (resp && resp.hasUpdate) {
           titlebarStatusApi?.setUpdateBadge(true, `发现新版本 v${resp.latest}`)
