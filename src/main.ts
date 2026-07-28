@@ -4023,6 +4023,7 @@ async function openFile2(preset?: unknown) {
     editor.value = content
     currentFilePath = selectedPath
     dirty = false
+    await syncTemporaryLibraryRootForOpenedPath(selectedPath)
     titlebarStatusApi?.refreshTitle()
     titlebarStatusApi?.refreshStatus()
 
@@ -5968,6 +5969,7 @@ async function showLibraryMenu() {
         const { openLibrarySettingsDialog } = await import('./ui/librarySettingsDialog')
         await openLibrarySettingsDialog({
           onRefreshUi: async (opt) => {
+            if (opt?.rebuildTree) clearTemporaryLibraryRoot()
             await refreshLibraryUiAndTree(!!opt?.rebuildTree)
             try { if (mode === 'preview') await renderPreview() } catch {}
           },
