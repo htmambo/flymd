@@ -22,7 +22,7 @@
   position: absolute;
   top: 17px;
   right: 13px;
-  padding: 5px 12px;
+  padding: 5px 7px;
   border: 1px solid var(--code-border);
   border-radius: var(--radius-lg);
   background: rgba(127,127,127,0.08);
@@ -32,13 +32,30 @@
   font-weight: 600;
   transition: all var(--transition-normal);
   backdrop-filter: blur(4px);
+  /* 图标按钮(feather copy svg)居中显示 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
+.codebox .code-copy svg { display: block; }
 .codebox .code-copy:hover,
 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
   background: rgba(127,127,127,0.18);
   border-color: var(--fg);
   transform: translateY(-1px);
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+/* 复制反馈：成功绿色 / 失败红色(文字按钮"已复制/复制失败"与图标按钮对勾/叉共用) */
+.codebox .code-copy.copy-ok,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-ok {
+  color: #22c55e;
+  border-color: #22c55e;
+}
+.codebox .code-copy.copy-fail,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-fail {
+  color: #ef4444;
+  border-color: #ef4444;
 }
 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {

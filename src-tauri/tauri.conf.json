@@ -204,7 +204,8 @@
                 { "url": "https://*:*" },
                 { "url": "http://*:*" }
               ]
-            }
+            },
+            "clipboard-manager:allow-write-text"
           ]
         }
       ]

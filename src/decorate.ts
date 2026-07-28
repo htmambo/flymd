@@ -77,7 +77,9 @@ export function decorateCodeBlocks(preview: HTMLElement) {
       const btn = document.createElement('button')
       btn.type = 'button'
       btn.className = 'code-copy'
-      btn.textContent = '复制'
+      // 与所见模式一致的图标按钮(feather copy 图标);
+      // 反馈走 codeCopyEvents 图标分支:成功对勾/失败叉,1.2s 还原
+      btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
       box.appendChild(badge)
       box.appendChild(btn)
 

@@ -114,18 +114,45 @@ describe('initCodeCopyEvents', () => {
     expect(btn.textContent).toBe('已复制')
   })
 
-  it('shows "已复制" when execCommand returns false (pre-existing behavior — ok=true in finally)', async () => {
-    // 行为保留:main.ts 原代码 fallback 块末尾无条件 `ok = true`,
-    // 因此即便 execCommand 返回 false,按钮仍显示"已复制"。
-    // 真实场景下 execCommand 失败通常由 try/catch 抛错捕获,走更早的 fail 路径。
-    writeTextMock.mockRejectedValueOnce(new Error('nope'))
+  it('shows "复制失败" when execCommand also fails (returns false)', async () => {
+    // 修复后的行为:fallback 检查 execCommand 返回值,不再无条件视为成功。
+    // (旧行为:execCommand 返回 false 仍显示"已复制",导致"显示已复制但剪贴板为空")
+    // 注意:每次 beforeEach 都会在 document 上累加一个委托监听器,
+    // 用 mockRejectedValue(而非 Once)保证所有监听器都走 fallback 路径
+    writeTextMock.mockRejectedValue(new Error('nope'))
     document.execCommand = vi.fn(() => false)
-    const btn = makeCodebox({ code: 'fallback-still-ok' })
+    const btn = makeCodebox({ code: 'fallback-fail' })
     dispatchClick(btn)
     await Promise.resolve()
     await Promise.resolve()
     await Promise.resolve()
-    expect(btn.textContent).toBe('已复制')
+    expect(btn.textContent).toBe('复制失败')
+  })
+
+  it('copies when clicking a child element inside the button (e.g. SVG icon in wysiwyg)', async () => {
+    // 所见模式复制按钮内嵌 SVG:点击图标时 ev.target 是 <rect>/<path> 子元素,
+    // 委托需用 closest('.code-copy') 匹配,否则点击无效
+    const btn = makeCodebox({ code: 'icon-click' })
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13"></rect></svg>'
+    const rect = btn.querySelector('rect') as unknown as HTMLElement
+    dispatchClick(rect)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(writeTextMock).toHaveBeenCalledWith('icon-click')
+  })
+
+  it('swaps icon button to a check icon on success, then restores the original icon', async () => {
+    // 图标按钮(所见模式)的反馈:成功 → 对勾图标,1.2s 后还原;不能用文案反馈
+    const originalIcon = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13"></rect></svg>'
+    const btn = makeCodebox({ code: 'icon-feedback' })
+    btn.innerHTML = originalIcon
+    dispatchClick(btn)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(btn.querySelector('polyline')).toBeTruthy() // 对勾图标
+    expect(btn.textContent).not.toContain('已复制')
+    vi.advanceTimersByTime(1200)
+    expect(btn.innerHTML).toBe(originalIcon)
   })
 
   it('resets button text after 1.2s', async () => {
@@ -134,8 +161,10 @@ describe('initCodeCopyEvents', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(btn.textContent).toBe('已复制')
+    expect(btn.classList.contains('copy-ok')).toBe(true) // 成功反馈:绿色 class
     vi.advanceTimersByTime(1200)
     expect(btn.textContent).toBe('复制')
+    expect(btn.classList.contains('copy-ok')).toBe(false) // 复位后移除
   })
 
   it('ignores clicks on non .code-copy elements', async () => {

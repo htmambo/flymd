@@ -1739,7 +1739,7 @@ body.lib-resizing {
 .library.side-right.hidden {
   transform: translateX(100%);
 }
-.library .lib-header { position: sticky; top: 0; background: var(--chrome-panel-bg, var(--panel-bg)); border-bottom: none; padding: 8px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; z-index: 1; }
+.library .lib-header { position: sticky; top: 0; background: var(--chrome-panel-bg, var(--panel-bg)); border-bottom: none; padding: 8px 10px 8px 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; }
 /* 库选择器行：Obsidian 风格 vault 按钮 + 搜索 */
 .library .lib-vault-row { display: flex; align-items: center; gap: 4px; }
 .library .lib-vault-btn { -webkit-app-region: no-drag; flex: 1; display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: transparent; border: none; border-radius: var(--radius-md); cursor: pointer; color: var(--fg); font-size: 13px; font-weight: 500; text-align: left; min-width: 0; transition: background 0.15s; font-family: inherit; }
@@ -5611,7 +5611,7 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
   position: absolute;
   top: 17px;
   right: 13px;
-  padding: 5px 12px;
+  padding: 5px 7px;
   border: 1px solid var(--code-border);
   border-radius: var(--radius-lg);
   background: rgba(127,127,127,0.08);
@@ -5621,7 +5621,13 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
   font-weight: 600;
   transition: all var(--transition-normal);
   backdrop-filter: blur(4px);
+  /* 图标按钮(feather copy svg)居中显示 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
+.codebox .code-copy svg { display: block; }
 .codebox .code-copy:hover,
 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
   background: rgba(127,127,127,0.18);
@@ -5666,6 +5672,42 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
 }
 /* 提升角标/复制按钮层级，避免被行号列覆盖 */
 .codebox .code-lang, .codebox .code-copy { z-index: 2; }
+
+/* 复制反馈：成功绿色 / 失败红色(优先级需压过上方 wysiwyg-v2 基础色/hover 及暗色变体) */
+.codebox .code-copy.copy-ok {
+  color: #22c55e !important;
+  border-color: #22c55e !important;
+}
+.codebox .code-copy.copy-fail {
+  color: #ef4444 !important;
+  border-color: #ef4444 !important;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-ok {
+  color: #22c55e !important;
+  border-color: #22c55e !important;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-fail {
+  color: #ef4444 !important;
+  border-color: #ef4444 !important;
+}
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-ok {
+  color: #4ade80 !important;
+  border-color: #4ade80 !important;
+}
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy.copy-fail {
+  color: #f87171 !important;
+  border-color: #f87171 !important;
+}
+/* 暗色全局规则 body.dark-mode button:not(.typo-btn):not(.md-btn) 用 !important 把按钮颜色钉成
+   #e5e7eb(优先级 0,3,2),阅读模式文字按钮的反馈色需要 !important + 更高优先级(0,4,1)才能覆盖 */
+body.dark-mode .codebox .code-copy.copy-ok {
+  color: #4ade80 !important;
+  border-color: #4ade80 !important;
+}
+body.dark-mode .codebox .code-copy.copy-fail {
+  color: #f87171 !important;
+  border-color: #f87171 !important;
+}
 
 /* 阅读模式：移除代码块边框，仅保留背景，不要出现内部横向分隔线 */
 .container:not(.wysiwyg) .preview pre { border: none; }
