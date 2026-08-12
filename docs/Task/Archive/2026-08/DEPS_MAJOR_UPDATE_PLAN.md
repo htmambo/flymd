@@ -42,3 +42,14 @@
 ## 回滚方案
 
 git checkout 提交前的 package.json/package-lock.json 重新 install
+
+## External Review Opinion (coding-bridge, 2026-08-12)
+
+- **Round 1**: REJECTED — 5 risks(R1 async 语义变更 P0、R2 diff 30s 掩盖回归 P0、R3 参数未收窄 P1、R4 mermaid any P1、R5 namespace 等价 P2)
+- **Round 2**: APPROVED — 逐项验证后全部解决
+  - R1:`scheduleRenderPreview(): void`(main.ts:2800),4 调用点签名要求 `Promise<void>`,TS 7 收紧返回类型协变故 async 为必要适配;调用方全部 await(plainPaste:17 / stickyNoteUi:199 / stickyNote:373 / mainTopMenus:133),无异常吞没或逻辑翻转
+  - R2:diff@9 5000 行实测 1606ms,无性能回归,30s 为 CI 防御性余量
+  - R3:参数实际已收窄 `Uint8Array<ArrayBuffer>`(Round 1 描述遗漏致误判),早退 `return data` 类型匹配,tsc EXIT=0
+  - R4:mermaid.core.mjs 用 any 与既有 mermaid.esm.mjs 风格一致,内部路径无官方类型
+  - R5:`import type * as X` 类型位置擦除,与 named typeof 等价
+- **verdict**: APPROVED,准予合入
