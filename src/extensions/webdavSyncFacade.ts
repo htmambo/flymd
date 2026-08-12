@@ -1,26 +1,17 @@
 // WebDAV 同步模块异步门面
 // 避免启动时加载整个 webdavSync chunk
 
-import type {
-  initWebdavSync,
-  openWebdavSyncDialog,
-  getWebdavSyncConfig,
-  isWebdavConfiguredForActiveLibrary,
-  syncNow,
-  setOnSyncComplete,
-  openSyncLog,
-  appendSyncLog,
-} from './webdavSync'
+import type * as Webdav from './webdavSync'
 
 type WebdavMod = {
-  initWebdavSync: typeof initWebdavSync
-  openWebdavSyncDialog: typeof openWebdavSyncDialog
-  getWebdavSyncConfig: typeof getWebdavSyncConfig
-  isWebdavConfiguredForActiveLibrary: typeof isWebdavConfiguredForActiveLibrary
-  syncNow: typeof syncNow
-  setOnSyncComplete: typeof setOnSyncComplete
-  openSyncLog: typeof openSyncLog
-  appendSyncLog: typeof appendSyncLog
+  initWebdavSync: typeof Webdav.initWebdavSync
+  openWebdavSyncDialog: typeof Webdav.openWebdavSyncDialog
+  getWebdavSyncConfig: typeof Webdav.getWebdavSyncConfig
+  isWebdavConfiguredForActiveLibrary: typeof Webdav.isWebdavConfiguredForActiveLibrary
+  syncNow: typeof Webdav.syncNow
+  setOnSyncComplete: typeof Webdav.setOnSyncComplete
+  openSyncLog: typeof Webdav.openSyncLog
+  appendSyncLog: typeof Webdav.appendSyncLog
 }
 
 let _modPromise: Promise<WebdavMod> | null = null
@@ -42,7 +33,7 @@ export async function openWebdavSyncDialog(): Promise<void> {
   return mod.openWebdavSyncDialog()
 }
 
-export async function getWebdavSyncConfig(): Promise<ReturnType<typeof getWebdavSyncConfig>> {
+export async function getWebdavSyncConfig(): Promise<ReturnType<typeof Webdav.getWebdavSyncConfig>> {
   const mod = await loadMod()
   return mod.getWebdavSyncConfig()
 }
@@ -52,12 +43,12 @@ export async function isWebdavConfiguredForActiveLibrary(): Promise<boolean> {
   return mod.isWebdavConfiguredForActiveLibrary()
 }
 
-export async function syncNow(reason: Parameters<typeof syncNow>[0]): Promise<ReturnType<typeof syncNow>> {
+export async function syncNow(reason: Parameters<typeof Webdav.syncNow>[0]): Promise<ReturnType<typeof Webdav.syncNow>> {
   const mod = await loadMod()
   return mod.syncNow(reason)
 }
 
-export async function setOnSyncComplete(callback: Parameters<typeof setOnSyncComplete>[0]): Promise<void> {
+export async function setOnSyncComplete(callback: Parameters<typeof Webdav.setOnSyncComplete>[0]): Promise<void> {
   const mod = await loadMod()
   mod.setOnSyncComplete(callback)
 }

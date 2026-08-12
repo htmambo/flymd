@@ -1,19 +1,13 @@
 // 扩展管理面板异步门面
 // 避免启动时加载整个 extensionsPanel chunk
 
-import type {
-  initExtensionsPanel,
-  refreshExtensionsUI,
-  showExtensionsOverlay,
-  prewarmExtensionsPanel,
-  ExtensionsPanelHost,
-} from './extensionsPanel'
+import type * as ExtensionsPanel from './extensionsPanel'
 
 type ExtensionsPanelMod = {
-  initExtensionsPanel: typeof initExtensionsPanel
-  refreshExtensionsUI: typeof refreshExtensionsUI
-  showExtensionsOverlay: typeof showExtensionsOverlay
-  prewarmExtensionsPanel: typeof prewarmExtensionsPanel
+  initExtensionsPanel: typeof ExtensionsPanel.initExtensionsPanel
+  refreshExtensionsUI: typeof ExtensionsPanel.refreshExtensionsUI
+  showExtensionsOverlay: typeof ExtensionsPanel.showExtensionsOverlay
+  prewarmExtensionsPanel: typeof ExtensionsPanel.prewarmExtensionsPanel
 }
 
 let _modPromise: Promise<ExtensionsPanelMod> | null = null
@@ -25,7 +19,7 @@ function loadMod(): Promise<ExtensionsPanelMod> {
   return _modPromise
 }
 
-export async function initExtensionsPanel(host: ExtensionsPanelHost): Promise<void> {
+export async function initExtensionsPanel(host: ExtensionsPanel.ExtensionsPanelHost): Promise<void> {
   const mod = await loadMod()
   return mod.initExtensionsPanel(host)
 }

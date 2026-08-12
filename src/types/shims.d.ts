@@ -38,6 +38,12 @@ declare module 'mermaid/dist/mermaid.esm.mjs' {
   export default mermaid
 }
 
+// mermaid 的 core 路径（动态 import，仅做类型透传）
+declare module 'mermaid/dist/mermaid.core.mjs' {
+  const mermaid: any
+  export default mermaid
+}
+
 // 通用 CSS / 资源模块声明（与 vite 静态资源加载约定一致）
 declare module '*.css'
 

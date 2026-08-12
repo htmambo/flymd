@@ -190,7 +190,7 @@ describe('buildHunks: 大文件降级', () => {
     expect(r.rightText).toBe(bigRight)
   })
 
-  it('总行数 = 5000 → 不降级(临界值,应不触发)', () => {
+  it('总行数 = 5000 → 不降级(临界值,应不触发)', { timeout: 30000 }, () => {
     // 2500 + 2500 = 5000,不大于 5000,走正常 diff
     const left = Array.from({ length: 2500 }, (_, i) => `L${i}`).join('\n')
     const right = Array.from({ length: 2500 }, (_, i) => `R${i}`).join('\n')

@@ -66,7 +66,7 @@ describe('parseFrontMatterMeta', () => {
     expect(parseFrontMatterMeta('---\ntitle: Hello\n---\n')).toEqual({ title: 'Hello' })
   })
   it('returns null on invalid yaml', () => {
-    expect(parseFrontMatterMeta('---\n: not yaml ::\n---\n')).toBeNull()
+    expect(parseFrontMatterMeta('---\na: [1,\n---\n')).toBeNull()
   })
   it('returns null for non-object yaml (e.g. plain string)', () => {
     expect(parseFrontMatterMeta('---\njust a string\n---\n')).toBeNull()

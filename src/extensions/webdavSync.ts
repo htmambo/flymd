@@ -903,7 +903,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   }
 }
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   try {
     const bin = atob(b64)
     const out = new Uint8Array(bin.length)
@@ -921,7 +921,7 @@ function base64ToBytes(b64: string): Uint8Array {
   }
 }
 
-function randomBytes(length: number): Uint8Array {
+function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   const buf = new Uint8Array(length)
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
@@ -2030,7 +2030,7 @@ function looksLikeEncrypted(data: Uint8Array): boolean {
   return true
 }
 
-async function encryptBytesIfEnabled(data: Uint8Array, cfg: WebdavSyncConfig): Promise<Uint8Array> {
+async function encryptBytesIfEnabled(data: Uint8Array<ArrayBuffer>, cfg: WebdavSyncConfig): Promise<Uint8Array<ArrayBuffer>> {
   const encCfg = getEncryptionRuntimeConfig(cfg)
   if (!encCfg) return data
   const key = await getCryptoKeyForEncryption(encCfg)

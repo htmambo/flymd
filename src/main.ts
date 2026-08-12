@@ -1042,7 +1042,7 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
           insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
           isPreviewMode: () => mode === 'preview',
           isWysiwygMode: () => wysiwyg,
-          renderPreview: () => scheduleRenderPreview(),
+          renderPreview: async () => scheduleRenderPreview(),
           scheduleWysiwygRender: () => scheduleWysiwygRender(),
         }
         await applyPlainTextPaste(text, env)
@@ -4715,7 +4715,7 @@ try {
         mode = 'edit'
         try { preview.classList.add('hidden') } catch {}
         try { editor.focus({ preventScroll: true } as any) } catch { try { editor.focus() } catch {} }
-        try { syncToggleButton() } catch {}
+        try { titlebarStatusApi?.syncToggleButton() } catch {}
         try { window.dispatchEvent(new CustomEvent('flymd:mode:changed', { detail: { mode } })) } catch {}
         return true
       } catch {
@@ -5532,7 +5532,7 @@ const stickyNoteUi: StickyNoteUiHandles = createStickyNoteUi({
     } catch {}
   },
   flushAutoSave: () => _stickyAutoSaver.flush(),
-  renderPreview: () => scheduleRenderPreview(),
+  renderPreview: async () => scheduleRenderPreview(),
   syncToggleButton: () => { try { titlebarStatusApi?.syncToggleButton() } catch {} },
   notifyModeChange: () => { try { notifyModeChange() } catch {} },
   getStickyNoteLocked: () => stickyNoteLocked,
@@ -5569,7 +5569,7 @@ const stickyNoteModeDeps: StickyNoteModeDeps = {
   setMode: (m) => { mode = m },
   isWysiwygActive: () => !!wysiwyg || !!wysiwygV2Active,
   disableWysiwyg: () => setWysiwygEnabled(false),
-  renderPreview: () => scheduleRenderPreview(),
+  renderPreview: async () => scheduleRenderPreview(),
   showPreviewPanel: (show) => {
     try {
       preview.classList.toggle('hidden', !show)
@@ -7732,7 +7732,7 @@ function bindEvents() {
             insertAtCursor: (t) => editorInsertApi?.insertAtCursor(t),
             isPreviewMode: () => mode === 'preview',
             isWysiwygMode: () => wysiwyg,
-            renderPreview: () => scheduleRenderPreview(),
+            renderPreview: async () => scheduleRenderPreview(),
             scheduleWysiwygRender: () => scheduleWysiwygRender(),
           }
           await applyPlainTextPaste(plainText, env)

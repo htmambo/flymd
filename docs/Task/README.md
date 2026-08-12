@@ -410,3 +410,13 @@ docs/Task/
     - Nit: 测试没观察 console.warn 字符串(已采纳,spy 测 + 字符串类型断言)
   - 验证:`npx tsc --noEmit` 0 错误、`npm test` 553/553 通过(原 547 + 5 + 1 nit 补)、main.ts 净 -20 行(8951→8931)
   - 提交:`aad5b13`(已推送 origin)
+
+#### 2026-08
+
+- ✅ [DEPS_MAJOR_UPDATE_PLAN.md](Archive/2026-08/DEPS_MAJOR_UPDATE_PLAN.md) - major 版本依赖升级 + TS7/Vite8 适配(完成 2026-08-12，⚠️ 未经 External Review MCP 复核)
+  - **依赖**:typescript 5.4->7.0、vite 5->8.2、vitest 2.1->4.1、markdown-it 13->15、katex 0.16->0.18、js-yaml 4->5、diff 7->9、pdfjs-dist 5->6、html2pdf 0.10->0.14、markdown-it-footnote 3->4、jsdom 27->30；移除未用 html-docx-js/markdown-it-katex；新增 esbuild
+  - **源码适配**:门面改 namespace 导入(TS7)、webdavSync `Uint8Array<ArrayBuffer>`、`async () => scheduleRenderPreview()` 签名、`titlebarStatusApi?.syncToggleButton()` 一致性修复、tsconfig 移除 baseUrl、shims.d.ts 补 mermaid core 声明
+  - **测试适配**:frontMatter 用例适配 js-yaml 5 严格解析；diffMerge 5000 行用例补 30s timeout
+  - **验证**:`npx tsc --noEmit` EXIT=0、`npm test` 646/646 通过、`npm run build` 成功(5.83s,EXIT=0)
+  - **未验证**:npm audit 漏洞清零；运行时 PDF/公式人工回归
+  - **External Review**:codex 未在会话注册、coding-bridge 401 invalid_iam_token、kimi 未注册；按 §1.4 第三优先级用 tsc+vitest+build 本地交叉验证
