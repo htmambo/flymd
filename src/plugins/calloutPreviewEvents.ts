@@ -1,15 +1,18 @@
 // 预览里 callout 元素的交互事件 handler(折叠 + 复制)
 // 抽离自 main.ts:1943-1982。
-// 抽离理由:两个 handler 只依赖 ev.target / DOM / navigator.clipboard,完全无 main.ts 闭包依赖;
+// 抽离理由:两个 handler 只依赖 ev.target / DOM / 剪贴板工具,完全无 main.ts 闭包依赖;
 // 与 src/plugins/markdownItCallout.ts(产生 .callout DOM 的插件)同级。
-// 复制按钮文案沿用 .code-copy 的"已复制"反馈,1.2s 还原。
-// 与 codeCopyEvents 行为差异(本块设计):
-//   - 失败时静默,不写"复制失败"(callout 标题栏空间有限)
-//   - 无 clipboard API 兜底(textarea + execCommand);失败时直接放弃反馈
+// 复制按钮为图标式,反馈与 codeCopyEvents 图标分支一致:
+//   成功对勾(copy-ok 绿)/失败叉(copy-fail 红),1.2s 还原原始图标。
+// 剪贴板写入走 copyTextToClipboard(Tauri 原生插件 → navigator.clipboard → execCommand 兜底)。
 
-const COPIED_TEXT = '已复制'
-const RESET_TEXT = '复制'
+import { copyTextToClipboard } from '../utils/clipboard'
+
 const RESET_DELAY_MS = 1200
+
+// 图标按钮的成功/失败反馈图标,风格与复制图标一致(feather icons),同 codeCopyEvents
+const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+const X_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
 
 /**
  * 处理 .callout-fold-icon 上的点击:toggle .folded class + 隐藏内容 + 旋转 SVG。
@@ -36,7 +39,7 @@ export function onCalloutFoldClick(ev: Event): void {
 
 /**
  * 处理 .callout-copy-icon 上的点击:把 callout-content 的直接子元素文本用空行拼起来,
- * 写入剪贴板。复制成功后按钮文案临时改"已复制",1.2s 后还原"复制"。
+ * 写入剪贴板。按钮为图标式:成功后换对勾(copy-ok 绿)、失败换叉(copy-fail 红),1.2s 还原。
  */
 export function onCalloutCopyClick(ev: Event): void {
   try {
@@ -56,11 +59,18 @@ export function onCalloutCopyClick(ev: Event): void {
     const result = texts.join('\n\n')
     if (!result) return
     void (async () => {
-      let ok = false
-      try { await navigator.clipboard.writeText(result); ok = true } catch {}
-      if (!ok) return
-      copyBtn.textContent = COPIED_TEXT
-      setTimeout(() => { copyBtn.textContent = RESET_TEXT }, RESET_DELAY_MS)
+      const ok = await copyTextToClipboard(result)
+      // 不能用 textContent 文案反馈——会把 SVG 图标永久替换掉
+      copyBtn.classList.remove('copy-ok', 'copy-fail')
+      copyBtn.classList.add(ok ? 'copy-ok' : 'copy-fail')
+      if (!(copyBtn as any).__copyIconHTML) (copyBtn as any).__copyIconHTML = copyBtn.innerHTML
+      copyBtn.innerHTML = ok ? CHECK_ICON_SVG : X_ICON_SVG
+      try { if ((copyBtn as any).__copyResetTimer) clearTimeout((copyBtn as any).__copyResetTimer) } catch {}
+      ;(copyBtn as any).__copyResetTimer = setTimeout(() => {
+        copyBtn.innerHTML = (copyBtn as any).__copyIconHTML
+        copyBtn.classList.remove('copy-ok', 'copy-fail')
+        ;(copyBtn as any).__copyResetTimer = null
+      }, RESET_DELAY_MS)
     })()
   } catch {}
 }

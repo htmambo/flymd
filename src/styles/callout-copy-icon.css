@@ -1,13 +1,10 @@
-/* ---- Callout 复制按钮(文字式) ---- */
+/* ---- Callout 复制按钮(图标式,与代码块/所见模式复制按钮风格一致) ---- */
 .callout-copy-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
+  width: 22px;
   height: 20px;
-  padding: 0 6px;
-  font-size: 12px;
-  line-height: 1;
   color: inherit;
   cursor: pointer;
   user-select: none;
@@ -18,6 +15,10 @@
   opacity: 0.55;
 }
 
+.callout-copy-icon svg {
+  display: block;
+}
+
 .callout-copy-icon:hover {
   background: rgba(var(--callout-accent-rgb), 0.12);
   opacity: 1;
@@ -26,4 +27,46 @@
 /* 标题栏hover时显示复制按钮（可选，当前保持始终可见但半透明） */
 .callout-title:hover .callout-copy-icon {
   opacity: 0.85;
+}
+
+/* 复制反馈：成功绿色 / 失败红色。
+   注意:反馈色与 callout 强调色可能撞车(tip/success 的强调色也是 #22c55e,
+   danger 系也是 #ef4444),仅靠颜色变化在同类色 callout 上不可见,
+   因此同时叠加浅色背景徽章,保证任何类型下反馈都可辨。
+   对齐 codeCopyEvents 的做法:颜色用 !important 压过潜在的高优先级覆盖,
+   并直接钉死 svg 的 stroke,不依赖 currentColor 沿 color 继承链解析。 */
+.callout-copy-icon.copy-ok {
+  color: #22c55e !important;
+  background: rgba(34, 197, 94, 0.18);
+  opacity: 1;
+}
+
+.callout-copy-icon.copy-fail {
+  color: #ef4444 !important;
+  background: rgba(239, 68, 68, 0.18);
+  opacity: 1;
+}
+
+.callout-copy-icon.copy-ok svg {
+  stroke: #22c55e;
+}
+
+.callout-copy-icon.copy-fail svg {
+  stroke: #ef4444;
+}
+
+body.dark-mode .callout-copy-icon.copy-ok {
+  color: #4ade80 !important;
+}
+
+body.dark-mode .callout-copy-icon.copy-fail {
+  color: #f87171 !important;
+}
+
+body.dark-mode .callout-copy-icon.copy-ok svg {
+  stroke: #4ade80;
+}
+
+body.dark-mode .callout-copy-icon.copy-fail svg {
+  stroke: #f87171;
 }

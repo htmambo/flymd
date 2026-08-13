@@ -7,6 +7,7 @@ import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { visit } from 'unist-util-visit'
 import type { Root } from 'mdast'
+import { copyTextToClipboard } from '../../../utils/clipboard'
 
 // ---- 常量与工具 ----
 
@@ -34,11 +35,14 @@ function normalizeType(type: string): string {
   return TYPE_ALIASES[t] || t
 }
 
-// 名称保留(用于 diff 收敛):实际上返回的是文字 label 而非 SVG。
-// 沿用 .code-copy 的"复制"按钮文案 + 1.2s 还原反馈(对齐 codeCopyEvents)。
+// 复制按钮图标(feather copy),与代码块复制按钮及阅读模式 callout 风格一致
 function getCopyIconSvg(): string {
-  return '复制'
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 }
+
+// 复制成功/失败反馈图标(对勾/叉),风格同 codeCopyEvents
+const COPY_CHECK_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+const COPY_X_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
 
 function getFoldIconSvg(folded: boolean): string {
   // chevron-down / chevron-right
@@ -252,7 +256,7 @@ class CalloutNodeView implements NodeView {
     const copyBtn = document.createElement('div')
     copyBtn.className = 'callout-copy-icon'
     copyBtn.title = '复制内容'
-    copyBtn.textContent = getCopyIconSvg()
+    copyBtn.innerHTML = getCopyIconSvg()
     copyBtn.contentEditable = 'false'
     copyBtn.addEventListener('mousedown', (e) => {
       e.preventDefault()
@@ -292,13 +296,21 @@ class CalloutNodeView implements NodeView {
       const result = texts.join('\n\n')
       if (!result) return
       void (async () => {
-        let ok = false
-        try { await navigator.clipboard.writeText(result); ok = true } catch {}
-        if (!ok) return
+        const ok = await copyTextToClipboard(result)
         const btn = this.dom.querySelector('.callout-copy-icon') as HTMLElement | null
         if (!btn) return
-        btn.textContent = '已复制'
-        setTimeout(() => { btn.textContent = '复制' }, 1200)
+        // 图标反馈:成功对勾(copy-ok 绿)/失败叉(copy-fail 红),1.2s 还原原始图标
+        // (不能用 textContent 文案反馈——会把 SVG 图标永久替换掉)
+        btn.classList.remove('copy-ok', 'copy-fail')
+        btn.classList.add(ok ? 'copy-ok' : 'copy-fail')
+        if (!(btn as any).__copyIconHTML) (btn as any).__copyIconHTML = btn.innerHTML
+        btn.innerHTML = ok ? COPY_CHECK_ICON_SVG : COPY_X_ICON_SVG
+        try { if ((btn as any).__copyResetTimer) clearTimeout((btn as any).__copyResetTimer) } catch {}
+        ;(btn as any).__copyResetTimer = setTimeout(() => {
+          btn.innerHTML = (btn as any).__copyIconHTML
+          btn.classList.remove('copy-ok', 'copy-fail')
+          ;(btn as any).__copyResetTimer = null
+        }, 1200)
       })()
     } catch {}
   }

@@ -15,6 +15,7 @@ function makeCallout(opts: { folded?: boolean } = {}) {
   foldIcon.appendChild(svg)
   const copyIcon = document.createElement('span')
   copyIcon.classList.add('callout-copy-icon')
+  copyIcon.innerHTML = '<svg><rect x="9" y="9" width="13" height="13"/></svg>'
   const content = document.createElement('div')
   content.classList.add('callout-content')
   const child1 = document.createElement('p')
@@ -114,29 +115,33 @@ describe('onCalloutCopyClick', () => {
     ;(navigator as any).clipboard = { writeText }
   })
 
-  it('changes button text to "已复制" after successful copy and resets after 1.2s', async () => {
+  it('shows check icon + copy-ok after successful copy and restores original icon after 1.2s', async () => {
     vi.useFakeTimers()
     const { copyIcon } = makeCallout()
-    copyIcon.textContent = '复制'
+    const originalHTML = copyIcon.innerHTML
     ;(navigator as any).clipboard = { writeText: () => Promise.resolve() }
     onCalloutCopyClick({ target: copyIcon } as any)
     await Promise.resolve()
     await Promise.resolve()
-    expect(copyIcon.textContent).toBe('已复制')
+    expect(copyIcon.classList.contains('copy-ok')).toBe(true)
+    expect(copyIcon.innerHTML).toContain('polyline')
     vi.advanceTimersByTime(1200)
-    expect(copyIcon.textContent).toBe('复制')
+    expect(copyIcon.innerHTML).toBe(originalHTML)
+    expect(copyIcon.classList.contains('copy-ok')).toBe(false)
     vi.useRealTimers()
     ;(navigator as any).clipboard = { writeText }
   })
 
-  it('does not change button text when clipboard write fails', async () => {
+  it('shows x icon + copy-fail when clipboard write fails', async () => {
     const { copyIcon } = makeCallout()
-    copyIcon.textContent = '复制'
     ;(navigator as any).clipboard = { writeText: () => Promise.reject(new Error('denied')) }
     onCalloutCopyClick({ target: copyIcon } as any)
     await Promise.resolve()
     await Promise.resolve()
-    expect(copyIcon.textContent).toBe('复制')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(copyIcon.classList.contains('copy-fail')).toBe(true)
+    expect(copyIcon.innerHTML).toContain('line')
     ;(navigator as any).clipboard = { writeText }
   })
 })

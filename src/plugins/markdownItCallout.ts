@@ -46,6 +46,11 @@ function getFoldIcon(): string {
   return '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
 }
 
+// 复制按钮图标(feather copy),与代码块复制按钮(所见模式)风格一致
+function getCopyIcon(): string {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+}
+
 function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!))
 }
@@ -272,7 +277,7 @@ function renderCalloutOpen(token: any, md: MarkdownIt): string {
     `<div class="callout-icon">${iconSvg}</div>` +
     `<div class="callout-title-inner">${titleHtml}</div>` +
     (foldable ? `<div class="callout-fold-icon" data-callout-fold>${getFoldIcon()}</div>` : '') +
-    `<div class="callout-copy-icon" data-callout-copy title="复制内容">复制</div>` +
+    `<div class="callout-copy-icon" data-callout-copy title="复制内容">${getCopyIcon()}</div>` +
     `</div>` +
     `<div class="callout-content"${folded ? ' style="display:none"' : ''}>`
 }
