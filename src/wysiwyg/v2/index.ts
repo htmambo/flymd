@@ -26,7 +26,6 @@ import { resolveLocalImageAbsPathFromSrc } from '../../utils/localImageSrcResolv
 import { normalizeTabIndentText } from '../../utils/tabIndent'
 import { getSymbolAutoCompletionEnabled } from '../../core/symbolAutoCompletion'
 import { mermaidPlugin } from './plugins/mermaid'
-import { htmlToMarkdown } from '../../html2md'
 import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
 import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
@@ -631,8 +630,14 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   if (mathHit) { ev.stopPropagation(); try { enterLatexSourceEdit(mathHit as HTMLElement) } catch {}; return; }
   const imgHit = t?.closest?.('img');
   if (imgHit) { ev.stopPropagation(); try { enterImageSourceEdit(imgHit as HTMLElement) } catch {}; return; }
-  const tableHit = t?.closest?.('table');
-  if (tableHit) { ev.stopPropagation(); try { enterTableSourceEdit(tableHit as HTMLElement) } catch {}; return; }
+  // 仅对 HTML 块级表格（htmlMediaPlugin 渲染的 span[data-type="html"] > table）
+  // 提供 HTML 源码编辑；GFM 表格本身即可见即可编辑，无需此入口。
+  const tableHit = t?.closest('table');
+  if (tableHit && tableHit.closest('span[data-type="html"]')) {
+    ev.stopPropagation();
+    try { enterTableSourceEdit(tableHit as HTMLElement) } catch {};
+    return;
+  }
 }, true) } catch {} 
       try {
         pm.addEventListener('keydown', (ev) => {
@@ -1965,12 +1970,14 @@ function setupTableHoverButton(host: HTMLElement | null) {
         currentTbl = tbl
       } catch {}
     }
-    // mouseover 委托:命中 table 或其后代时显示按钮,离开时隐藏
+    // mouseover 委托:命中 HTML 块级表格（span[data-type="html"] > table）时显示按钮,离开时隐藏
+    // GFM 表格本身即可见即可编辑,不提供 HTML 源码编辑入口。
     const onOver = (ev: Event) => {
       try {
         const t = ev.target as HTMLElement | null
         const tbl = t?.closest?.('table') as HTMLElement | null
         if (!tbl) { hide(); return }
+        if (!tbl.closest('span[data-type="html"]')) { hide(); return }
         show(tbl)
       } catch {}
     }
@@ -3075,7 +3082,27 @@ function serializeTableEl(tableEl: HTMLElement): string {
   }
 }
 
-function updateMilkdownTableFromDom(
+// 定位 HTML 块表格对应的 ProseMirror html 节点位置
+// 仅用于 span[data-type="html"] > table 这种 HTML 块表格（由 htmlMediaPlugin 渲染）
+function findHtmlTableNodePos(tableEl: HTMLElement): { view: any; from: number; to: number } {
+  const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+  if (!view) return { view: null, from: -1, to: -1 }
+  let pos: number | null = null
+  try { pos = view.posAtDOM(tableEl, 0) } catch {}
+  if (pos == null || typeof pos !== 'number') return { view, from: -1, to: -1 }
+  const state = view.state
+  const $pos = state.doc.resolve(pos)
+  for (let d = $pos.depth; d > 0; d--) {
+    if ($pos.node(d)?.type?.name === 'html') {
+      return { view, from: $pos.before(d), to: $pos.after(d) }
+    }
+  }
+  return { view, from: -1, to: -1 }
+}
+
+// 用新 HTML 源码替换 html 块节点的 value
+// 仅用于 HTML 块表格（GFM 表格不走这个路径，它本身即可见即可编辑）
+function updateHtmlTableNode(
   tableEl: HTMLElement,
   newHtml: string,
   cachedFrom: number,
@@ -3085,39 +3112,26 @@ function updateMilkdownTableFromDom(
     const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
     if (!view) return { ok: false, view: null }
     let from = cachedFrom, to = cachedTo
+    // 缓存无效时重新定位（如编辑期间文档发生了其它变更）
     if (from < 0 || to < 0) {
-      let pos: number | null = null
-      try { pos = view.posAtDOM(tableEl, 0) } catch {}
-      if (pos == null || typeof pos !== 'number') return { ok: false, view }
-      const state = view.state
-      const $pos = state.doc.resolve(pos)
-      for (let d = $pos.depth; d > 0; d--) {
-        const name = $pos.node(d)?.type?.name
-        if (name === 'table') {
-          from = $pos.before(d)
-          to = $pos.after(d)
-          break
-        }
-      }
+      const found = findHtmlTableNodePos(tableEl)
+      from = found.from
+      to = found.to
     }
     if (from < 0 || to < 0 || from === to) return { ok: false, view }
 
-    // 二次尝试:转换失败时回退为整段 GFM 文本替换
-    const nextMd = htmlToMarkdown(String(newHtml || ''))
-    if (!nextMd || !nextMd.trim()) return { ok: false, view }
+    const trimmed = String(newHtml || '').trim()
+    if (!trimmed) return { ok: false, view }
 
     const state = view.state
-    // 走标准路径:删除 table 节点后,在原位置插入由 Markdown 解析得到的 slice
-    // 先解析 Markdown → slice,然后用 replaceRange 替换 table 区间
-    let slice: any = null
-    try {
-      const ctx: any = (_editor as any).ctx
-      const p = ctx.get(parserCtx)
-      slice = p(nextMd)
-    } catch {}
-    if (!slice) return { ok: false, view }
+    // from 是 html 节点的起始位置（$pos.before(d)），nodeAt(from) 直接命中该叶子节点
+    const node = state.doc.nodeAt(from)
+    if (!node || node.type?.name !== 'html') return { ok: false, view }
 
-    let tr = state.tr.replace(from, to, (slice as any).content || slice)
+    // 保留原有 attrs，只更新 value
+    const newAttrs = { ...(node.attrs as any), value: trimmed }
+    const newNode = node.type.create(newAttrs)
+    const tr = state.tr.replaceWith(from, to, newNode)
     view.dispatch(tr.scrollIntoView())
     return { ok: true, view }
   } catch (e) {
@@ -3133,25 +3147,34 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
     if (!ov) return
 
     // 缓存位置:避免 overlay 内 DOM 变化后 posAtDOM 失效
+    // 注：apply 时若缓存失效（文档已变更）会自动重新定位
     let cachedFrom = -1, cachedTo = -1
     try {
-      const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
-      if (view) {
-        const pos = view.posAtDOM(tableEl, 0)
-        if (typeof pos === 'number') {
-          const $pos = view.state.doc.resolve(pos)
-          for (let d = $pos.depth; d > 0; d--) {
-            if ($pos.node(d)?.type?.name === 'table') {
-              cachedFrom = $pos.before(d)
-              cachedTo = $pos.after(d)
-              break
-            }
-          }
-        }
-      }
+      const found = findHtmlTableNodePos(tableEl)
+      cachedFrom = found.from
+      cachedTo = found.to
     } catch {}
 
-    const sourceHtml = serializeTableEl(tableEl)
+    // 取值：从 html 节点的 value 属性取原始 HTML 源码（而非 DOM 序列化，
+    // 因为 htmlMediaPlugin 渲染出的 DOM 是简化版，可能丢失原始结构）
+    let sourceHtml = ''
+    if (cachedFrom >= 0) {
+      try {
+        const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (view) {
+          // cachedFrom 是 html 节点起始位置（$pos.before(d)），nodeAt(from) 直接命中
+          const node = view.state.doc.nodeAt(cachedFrom)
+          if (node && node.type?.name === 'html') {
+            const v = (node.attrs as any)?.value
+            if (typeof v === 'string') sourceHtml = v
+          }
+        }
+      } catch {}
+    }
+    // 兜底：拿不到节点 value 时用 DOM 序列化
+    if (!sourceHtml) {
+      sourceHtml = serializeTableEl(tableEl)
+    }
     const hostRc = (_root as HTMLElement).getBoundingClientRect()
     const rc = tableEl.getBoundingClientRect()
     const hostWidth = hostRc.width || 0
@@ -3220,7 +3243,7 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
         return
       }
       try {
-        const result = updateMilkdownTableFromDom(tableEl, nextHtml, cachedFrom, cachedTo)
+        const result = updateHtmlTableNode(tableEl, nextHtml, cachedFrom, cachedTo)
         if (!result.ok) {
           errHandle.setError('无法应用:仅支持简单 HTML 表格(无 rowspan/colspan/嵌套)')
           return
