@@ -6410,6 +6410,56 @@ textarea:focus {
   white-space: pre-line;
 }
 
+/* WYSIWYG：GFM 任务列表复选框
+   Milkdown 只输出 li[data-item-type="task"][data-checked]，不渲染 checkbox 元素，
+   这里用 ::before/::after 伪元素补齐外观（与阅读模式 input.task-list-item-checkbox 对齐）；
+   点击切换勾选由 wysiwyg/v2/plugins/taskList.ts 处理 */
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"] {
+  list-style: none;
+  position: relative;
+}
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"]::before {
+  content: '';
+  position: absolute;
+  left: -1.4em;
+  top: 0.28em;
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--border-strong, var(--border));
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"]:hover::before {
+  border-color: var(--accent);
+}
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"]::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+/* 勾选对勾（仅已勾选时渲染） */
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"]::after {
+  content: '';
+  position: absolute;
+  left: calc(-1.4em + 3px);
+  top: calc(0.28em + 4px);
+  width: 8px;
+  height: 4px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg);
+  pointer-events: none;
+}
+/* 已完成项弱化显示，与阅读模式一致 */
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"] {
+  opacity: 0.65;
+}
+.container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"] > p {
+  text-decoration: line-through;
+}
+
 
 /* === 更新弹窗（#update-overlay）定制样式 === */
 #update-overlay .link-dialog {

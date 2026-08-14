@@ -32,6 +32,7 @@ import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
 import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
+import { taskListTogglePlugin } from './plugins/taskList'
 import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from '../../plugins/strongBoundaryCompat'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -566,6 +567,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     })
     .use(commonmark)
     .use(gfm)
+    .use(taskListTogglePlugin)
     .use(upload)
     .use(remarkMathPlugin)
     .use(katexOptionsCtx)
