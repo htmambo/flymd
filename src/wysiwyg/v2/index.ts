@@ -67,6 +67,10 @@ let _codeCopyWindowResizeHandler: (() => void) | null = null
 let _inlineCodeMouseTimer: number | null = null
 let _rootMouseDownHandler: ((ev: MouseEvent) => void) | null = null
 
+// HTML 块节点视图选择器（耦合 Milkdown html 节点视图渲染结构）
+const HTML_BLOCK_SELECTOR = 'span[data-type="html"]'
+const HTML_NODE_TYPE = 'html'
+
 // 所见模式 preprocessor:只处理所见模式不原生支持但有等价 GFM 语法的标签
 // - <s>x</s>     → ~~x~~  (GFM strikethrough,preset-gfm 已支持,等价不污染)
 // - <sub>/<sup>/<abbr> 通过 remark 插件 + $mark 扩展渲染,不动源 markdown
@@ -632,8 +636,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   if (imgHit) { ev.stopPropagation(); try { enterImageSourceEdit(imgHit as HTMLElement) } catch {}; return; }
   // 仅对 HTML 块级表格（htmlMediaPlugin 渲染的 span[data-type="html"] > table）
   // 提供 HTML 源码编辑；GFM 表格本身即可见即可编辑，无需此入口。
-  const tableHit = t?.closest('table');
-  if (tableHit && tableHit.closest('span[data-type="html"]')) {
+  const tableHit = t?.closest?.('table');
+  if (tableHit && tableHit.closest?.(HTML_BLOCK_SELECTOR)) {
     ev.stopPropagation();
     try { enterTableSourceEdit(tableHit as HTMLElement) } catch {};
     return;
@@ -1977,7 +1981,7 @@ function setupTableHoverButton(host: HTMLElement | null) {
         const t = ev.target as HTMLElement | null
         const tbl = t?.closest?.('table') as HTMLElement | null
         if (!tbl) { hide(); return }
-        if (!tbl.closest('span[data-type="html"]')) { hide(); return }
+        if (!tbl.closest?.(HTML_BLOCK_SELECTOR)) { hide(); return }
         show(tbl)
       } catch {}
     }
@@ -3083,17 +3087,17 @@ function serializeTableEl(tableEl: HTMLElement): string {
 }
 
 // 定位 HTML 块表格对应的 ProseMirror html 节点位置
-// 仅用于 span[data-type="html"] > table 这种 HTML 块表格（由 htmlMediaPlugin 渲染）
+// 仅用于 HTML_BLOCK_SELECTOR > table 这种 HTML 块表格（由 htmlMediaPlugin 渲染）
 function findHtmlTableNodePos(tableEl: HTMLElement): { view: any; from: number; to: number } {
   const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
   if (!view) return { view: null, from: -1, to: -1 }
   let pos: number | null = null
   try { pos = view.posAtDOM(tableEl, 0) } catch {}
-  if (pos == null || typeof pos !== 'number') return { view, from: -1, to: -1 }
+  if (pos === null || typeof pos !== 'number') return { view, from: -1, to: -1 }
   const state = view.state
   const $pos = state.doc.resolve(pos)
   for (let d = $pos.depth; d > 0; d--) {
-    if ($pos.node(d)?.type?.name === 'html') {
+    if ($pos.node(d)?.type?.name === HTML_NODE_TYPE) {
       return { view, from: $pos.before(d), to: $pos.after(d) }
     }
   }
@@ -3108,17 +3112,19 @@ function updateHtmlTableNode(
   cachedFrom: number,
   cachedTo: number
 ): { ok: boolean; view: any } {
+  let view: any = null
   try {
-    const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+    view = (_editor as any)?.ctx?.get?.(editorViewCtx)
     if (!view) return { ok: false, view: null }
-    let from = cachedFrom, to = cachedTo
+    let from = cachedFrom
     // 缓存无效时重新定位（如编辑期间文档发生了其它变更）
-    if (from < 0 || to < 0) {
+    // 注意：cachedTo 不直接使用，替换前从实际节点重新推导 actualTo，
+    // 防止文档变更导致 to 偏移进而误删相邻内容。
+    if (from < 0 || cachedTo < 0) {
       const found = findHtmlTableNodePos(tableEl)
       from = found.from
-      to = found.to
     }
-    if (from < 0 || to < 0 || from === to) return { ok: false, view }
+    if (from < 0) return { ok: false, view }
 
     const trimmed = String(newHtml || '').trim()
     if (!trimmed) return { ok: false, view }
@@ -3126,16 +3132,19 @@ function updateHtmlTableNode(
     const state = view.state
     // from 是 html 节点的起始位置（$pos.before(d)），nodeAt(from) 直接命中该叶子节点
     const node = state.doc.nodeAt(from)
-    if (!node || node.type?.name !== 'html') return { ok: false, view }
+    if (!node || node.type?.name !== HTML_NODE_TYPE) return { ok: false, view }
+
+    // 从实际节点推导 to，避免缓存的 cachedTo 过期导致范围错误
+    const actualTo = from + node.nodeSize
 
     // 保留原有 attrs，只更新 value
     const newAttrs = { ...(node.attrs as any), value: trimmed }
     const newNode = node.type.create(newAttrs)
-    const tr = state.tr.replaceWith(from, to, newNode)
+    const tr = state.tr.replaceWith(from, actualTo, newNode)
     view.dispatch(tr.scrollIntoView())
     return { ok: true, view }
   } catch (e) {
-    return { ok: false, view: null }
+    return { ok: false, view }
   }
 }
 
@@ -3164,7 +3173,7 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
         if (view) {
           // cachedFrom 是 html 节点起始位置（$pos.before(d)），nodeAt(from) 直接命中
           const node = view.state.doc.nodeAt(cachedFrom)
-          if (node && node.type?.name === 'html') {
+          if (node && node.type?.name === HTML_NODE_TYPE) {
             const v = (node.attrs as any)?.value
             if (typeof v === 'string') sourceHtml = v
           }
