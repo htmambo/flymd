@@ -586,6 +586,7 @@ export class TabManager {
 
     return {
       tabs: this.tabs.map(t => ({
+        id: t.id,
         filePath: t.filePath,
         displayName: t.displayName,
         // 默认：只保存未保存的内容；discard 路径：dirty 内容不持久化
@@ -609,6 +610,8 @@ export class TabManager {
     for (const saved of state.tabs) {
       if (!saved.filePath) {
         const tab = createEmptyTab(saved.displayName || this.getNextUntitledName())
+        // 复用持久化的 id，保证 activeTabId 能对上（老快照无 id 时保持新 id）
+        if (saved.id) tab.id = saved.id
         tab.content = saved.content
         tab.dirty = saved.dirty
         tab.mode = saved.mode
@@ -630,6 +633,8 @@ export class TabManager {
       }
 
       const tab = createTabFromFile(saved.filePath, content)
+      // 复用持久化的 id，保证 activeTabId 能对上（老快照无 id 时保持新 id）
+      if (saved.id) tab.id = saved.id
       tab.dirty = saved.dirty
       tab.mode = saved.mode
       tab.wysiwygEnabled = saved.wysiwygEnabled

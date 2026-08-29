@@ -1,6 +1,13 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { TabManager } from './TabManager'
 import type { TabManagerHooks } from './TabManager'
+
+// importState → restoreTabState 会调度 requestAnimationFrame，Node 测试环境没有该 API
+beforeAll(() => {
+  if (typeof globalThis.requestAnimationFrame !== 'function') {
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+  }
+})
 
 /**
  * 构造一组最小可控的 hooks：只关心 dirty / content，其余给无副作用默认值。
@@ -77,5 +84,48 @@ describe('TabManager.exportState — discard 语义', () => {
 
     expect(tm.exportState().tabs[0].content).toBe('')
     expect(tm.exportState({ includeDirtyContent: false }).tabs[0].content).toBe('')
+  })
+})
+
+describe('TabManager.importState — 活跃标签恢复', () => {
+  it('恢复会话后激活的是导出时的活跃标签（tab id 跨会话复用）', async () => {
+    // 第一段会话：打开 a/b 两个文件，最终 b 处于激活状态
+    const tm1 = new TabManager()
+    const hooks1 = makeHooks()
+    tm1.init(hooks1)
+    hooks1.setCurrentFilePath('/tmp/a.md')
+    tm1.openFile('/tmp/a.md')
+    hooks1.setCurrentFilePath('/tmp/b.md')
+    tm1.openFile('/tmp/b.md')
+    expect(tm1.getActiveTab()?.filePath).toBe('/tmp/b.md')
+
+    const state = tm1.exportState()
+
+    // 第二段会话（应用重启）：从持久化快照恢复
+    const tm2 = new TabManager()
+    tm2.init(makeHooks())
+    await tm2.importState(state, async () => '磁盘内容')
+
+    // 修复前：快照中的 tab 没有 id，importState 重新生成 id，
+    // activeTabId 永远匹配不上而回落到第一个标签
+    expect(tm2.getActiveTabId()).toBe(state.activeTabId)
+    expect(tm2.getActiveTab()?.filePath).toBe('/tmp/b.md')
+  })
+
+  it('老快照（无 id 字段）兼容：不报错并回落激活第一个标签', async () => {
+    const legacy = {
+      tabs: [
+        { filePath: '/tmp/a.md', content: '', dirty: false, mode: 'edit', wysiwygEnabled: false },
+        { filePath: '/tmp/b.md', content: '', dirty: false, mode: 'edit', wysiwygEnabled: false },
+      ],
+      activeTabId: 'tab_legacy_stale',
+    } as any
+
+    const tm = new TabManager()
+    tm.init(makeHooks())
+    await tm.importState(legacy, async () => '磁盘内容')
+
+    expect(tm.getTabs()).toHaveLength(2)
+    expect(tm.getActiveTab()?.filePath).toBe('/tmp/a.md')
   })
 })

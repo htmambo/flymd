@@ -45,6 +45,9 @@ export interface TabBarOptions {
 // 持久化的标签状态（用于应用重启恢复）
 export interface PersistedTabState {
   tabs: Array<{
+    // 持久化 tab id：importState 需复用同一 id，否则 activeTabId 无法对上、
+    // 恢复后会错误地激活第一个标签
+    id: string
     filePath: string | null
     displayName?: string
     content: string
