@@ -187,3 +187,53 @@ describe('initCodeCopyEvents', () => {
     expect(writeTextMock).toHaveBeenCalledWith('preset')
   })
 })
+
+// 缩放按钮委托：切换 .codebox 限高/全高显示
+describe('initCodeCopyEvents .code-expand', () => {
+  function makeExpandBox(): { box: HTMLElement; pre: HTMLElement; btn: HTMLElement } {
+    const box = document.createElement('div')
+    box.className = 'codebox'
+    const pre = document.createElement('pre')
+    const code = document.createElement('code')
+    code.textContent = 'code'
+    pre.appendChild(code)
+    box.appendChild(pre)
+    const btn = document.createElement('button')
+    btn.className = 'code-expand'
+    btn.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="15 3 21 3"></polyline></svg>'
+    box.appendChild(btn)
+    document.body.appendChild(box)
+    return { box, pre, btn }
+  }
+
+  it('第一次点击：加 .code-expanded 并切换为收起图标与文案', () => {
+    const { box, btn } = makeExpandBox()
+    dispatchClick(btn)
+    expect(box.classList.contains('code-expanded')).toBe(true)
+    expect(btn.title).toBe('恢复限高显示')
+    expect(btn.innerHTML).toContain('points="4 14') // 收起图标（minimize-2）特征
+    expect(btn.innerHTML).not.toContain('points="15 3') // 展开图标已被替换
+  })
+
+  it('第二次点击：移除 .code-expanded 还原展开图标', () => {
+    const { box, btn } = makeExpandBox()
+    dispatchClick(btn)
+    dispatchClick(btn)
+    expect(box.classList.contains('code-expanded')).toBe(false)
+    expect(btn.title).toBe('全高显示代码块')
+    expect(btn.innerHTML).toContain('15 3 21 3') // 展开图标还原
+  })
+
+  it('点击 SVG 子元素也能命中（closest 兜底）', () => {
+    const { box, btn } = makeExpandBox()
+    const poly = btn.querySelector('polyline') as unknown as HTMLElement
+    dispatchClick(poly)
+    expect(box.classList.contains('code-expanded')).toBe(true)
+  })
+
+  it('.code-expand 点击不会触发复制', () => {
+    const { btn } = makeExpandBox()
+    dispatchClick(btn)
+    expect(writeTextMock).not.toHaveBeenCalled()
+  })
+})

@@ -90,6 +90,16 @@ function appendPrintCss(doc: Document, extraCss?: string): void {
       box-sizing: border-box !important;
     }
 
+    /* 代码块取消限高，打印完整输出；隐藏缩放按钮 */
+    .flymd-print-preview .codebox pre,
+    .flymd-print-preview pre.code-block-wrapper {
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    .flymd-print-preview .code-expand {
+      display: none !important;
+    }
+
     /* 强制使用浅色变量（深色模式下也能看清） */
     .flymd-print-preview {
       --bg: #ffffff;

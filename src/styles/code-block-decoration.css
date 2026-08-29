@@ -38,9 +38,33 @@
   justify-content: center;
   line-height: 1;
 }
-.codebox .code-copy svg { display: block; }
+/* 缩放按钮（预览模式钉在复制按钮左侧；所见模式 overlay 内为 flex 排列） */
+.codebox .code-expand,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
+  position: absolute;
+  top: 17px;
+  right: 42px;
+  padding: 5px 7px;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-lg);
+  background: rgba(127,127,127,0.08);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all var(--transition-normal);
+  backdrop-filter: blur(4px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.codebox .code-copy svg,
+.codebox .code-expand svg { display: block; }
 .codebox .code-copy:hover,
-#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
+.codebox .code-expand:hover,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
   background: rgba(127,127,127,0.18);
   border-color: var(--fg);
   transform: translateY(-1px);
@@ -58,7 +82,8 @@
   border-color: #ef4444;
 }
 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
-#md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-delete,
+#md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
   position: static;
   top: auto;
   right: auto;
@@ -67,11 +92,22 @@
   margin: 0; position: relative; /* 让行号层可绝对定位 */
   /* 使用 !important 防止被后续 .preview pre { padding: ... } 与主题样式覆盖，导致代码与行号重叠 */
   padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)) !important; /* 给语言角标让位 */
+  /* 超高代码块默认限高内部滚动；.code-expanded（缩放按钮切换）全高显示。
+     限高挂在 pre 上，按钮（.code-lang/.code-copy/.code-expand）是 .codebox 的子元素，
+     钉在 .codebox 外框右上角，不随 pre 内部滚动。 */
+  max-height: min(480px, 60vh);
+  overflow-y: auto !important;
+}
+.codebox.code-expanded pre {
+  max-height: none;
 }
 /* 行号列：绝对定位在 pre 内部左侧，随内容滚动 */
 .codebox .code-lnums {
   position: absolute;
-  top: 0; bottom: 0; left: 0;
+  top: 0;
+  /* 不设 bottom:0 —— pre 限高滚动时 bottom:0 会把行号层裁剪到可视高度，滚出首屏后行号缺失；
+     高度改由行号内容自身撑起（行数与代码一致），随 pre 滚动保持逐行对齐 */
+  left: 0;
   width: 3.5em;                /* 预留固定列宽 */
   padding-left: 0.6em;         /* 数字向内缩进，贴齐左侧 */
   padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)) !important; /* 强制与pre的padding-top一致，不使用JS计算 */

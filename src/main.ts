@@ -4297,6 +4297,8 @@ async function saveAs() {
           await renderPreview({ forPrint: true });
           const el = preview.querySelector('.preview-body') as HTMLElement | null;
           if (!el) throw new Error('未找到预览内容容器');
+          // 代码块缩放按钮是交互控件，不属于文档内容，导出前移除
+          try { el.querySelectorAll('.code-expand').forEach((n) => n.remove()) } catch {}
           const html = el.outerHTML;
           if (ext === 'docx') {
             const { exportDocx } = await import('./exporters/docx');

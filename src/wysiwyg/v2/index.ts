@@ -2,9 +2,10 @@
 // 暴露 enable/disable 与 setMarkdown/getMarkdown 能力，供主流程挂接
 
 import { history } from '@milkdown/plugin-history'
+import { isCodeContentClipped } from '../../ui/codeExpandClip'
 import { acquireEditLock, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
-import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, commandsCtx, remarkStringifyOptionsCtx, parserCtx } from '@milkdown/core'
+import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, commandsCtx, remarkStringifyOptionsCtx, parserCtx, prosePluginsCtx } from '@milkdown/core'
 import { TextSelection, type Command } from '@milkdown/prose/state'
 import { DOMParser as ProseDOMParser } from '@milkdown/prose/model'
 import { convertFileSrc } from '@tauri-apps/api/core'
@@ -32,6 +33,8 @@ import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout
 import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
 import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
 import { taskListTogglePlugin } from './plugins/taskList'
+import { docBoundaryEscapePlugin, trailingParagraphPlugin } from './plugins/docBoundaryEscape'
+import { clearExpandedCodeBlocks, codeBlockIndexFromDom, setCodeBlockExpandedByIndex, codeExpandDecorationPlugin, isCodeBlockExpandedByIndex } from './plugins/codeExpandState'
 import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from '../../plugins/strongBoundaryCompat'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -59,6 +62,7 @@ let _mermaidObserver: MutationObserver | null = null
 const _codeCopyWraps = new Map<HTMLElement, HTMLDivElement>()
 let _codeCopyRaf: number | null = null
 let _codeCopyHost: HTMLElement | null = null
+let _pmView: any = null // 当前 milkdown EditorView（代码块序号计算等需要）
 let _codeCopyScrollHandler: (() => void) | null = null
 let _codeCopyRoot: HTMLElement | null = null
 let _codeCopyRootScrollCaptureHandler: (() => void) | null = null
@@ -537,6 +541,9 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       ctx.set(defaultValueCtx, contentForEditor)
       // 配置编辑器视图选项，确保可编辑
       ctx.set(editorViewOptionsCtx, { editable: () => true })
+      // 文档边界插件（首块上方逃逸 + 末尾空段落）：直接注入 prose 插件列表。
+      // 不走 .use($prose(...)) —— 其 SchemaReady 异步加载链路在本接入方式下会静默不生效。
+      ctx.update(prosePluginsCtx, (ps) => [...ps, docBoundaryEscapePlugin, trailingParagraphPlugin, codeExpandDecorationPlugin])
       // 配置上传：接入现有图床上传逻辑，同时允许从 HTML 粘贴的文件触发上传
       try {
         ctx.update(uploadConfig.key, (prev) => ({
@@ -593,6 +600,25 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(listener)
     .use(history)
     .create()
+
+  // 文档边界规范化：当文档末尾是 code_block/math_block 等"无文本入口"的块时，
+  // plugin-trailing 需要通过一次事务在末尾补空段落（否则点击块下方/按↓无法逃出）。
+  // 在注册 listener 之前静默派发一次空事务触发该规则，避免打开文档即触发 onChange/脏标记；
+  // 若文档确有变化，同步刷新 _lastMd 使后续编辑的转义还原逻辑基于最新序列化结果。
+  try {
+    const view0 = (editor as any).ctx.get(editorViewCtx)
+    if (view0?.state) {
+      const docBefore = view0.state.doc
+      view0.dispatch(view0.state.tr.setMeta('addToHistory', false))
+      if (!view0.state.doc.eq(docBefore)) {
+        const mdAfter = String(await (editor as any).action(getMarkdown()) || '')
+        _lastMd = mdAfter
+      }
+    }
+  } catch {}
+  // 代码块展开状态按会话记忆，切换文档/重建编辑器时清空；缓存 view 供序号计算
+  try { clearExpandedCodeBlocks() } catch {}
+  try { _pmView = (editor as any).ctx.get(editorViewCtx) } catch {}
 
   try { rewriteLocalImagesToAsset() } catch {}
 
@@ -919,6 +945,8 @@ export async function disableWysiwygV2() {
   } catch {}
   try { if (_imgObserver) { _imgObserver.disconnect(); _imgObserver = null } } catch {}
   try { cleanupCodeCopyOverlay() } catch {}
+  try { clearExpandedCodeBlocks() } catch {}
+  try { _pmView = null } catch {}
   try { if (_overlayHost && _overlayHost.parentElement) { _overlayHost.parentElement.removeChild(_overlayHost); _overlayHost = null } } catch {}
   if (_editor) {
     try { await _editor.destroy() } catch {}
@@ -1830,6 +1858,28 @@ function positionCodeCopyWrap(pre: HTMLElement, wrap: HTMLDivElement, rootRc: DO
   } catch {}
 }
 
+// 代码块“缩放”按钮图标（feather maximize-2 / minimize-2）
+const CODE_EXPAND_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+const CODE_COLLAPSE_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+
+// 切换所见模式代码块的限高/全高显示（配合 CSS .code-expanded）
+// 展开状态按代码块序号记入 codeExpandState，由 codeExpandDecorationPlugin 以
+// Decoration 形式应用 class（对节点重建免疫）；切换后派发空事务刷新装饰。
+// 切勿直接 pre.classList.toggle —— 会触发 automd 读 DOM → 重建节点 → 再加 class
+// 的无限重建循环（实测每帧一次）。
+function toggleWysiwygCodeExpand(view: any, pre: HTMLElement, btn: HTMLButtonElement): void {
+  try {
+    const idx = codeBlockIndexFromDom(view, pre)
+    const expanded = !isCodeBlockExpandedByIndex(idx)
+    setCodeBlockExpandedByIndex(idx, expanded)
+    btn.title = expanded ? '恢复限高显示' : '全高显示代码块'
+    btn.innerHTML = expanded ? CODE_COLLAPSE_ICON : CODE_EXPAND_ICON
+    try { view.dispatch(view.state.tr) } catch {}
+    // pre 高度变化后刷新按钮组定位与显隐
+    try { scheduleCodeCopyRefresh() } catch {}
+  } catch {}
+}
+
 function refreshCodeCopyButtonsNow() {
   try {
     const host = getHost()
@@ -1893,6 +1943,20 @@ function refreshCodeCopyButtonsNow() {
         btn.style.pointerEvents = 'auto'
         ;(btn as any).__copyText = copyText
         wrap.appendChild(btn)
+        // 缩放按钮（最右）：仅当内容超高（限高生效）或已展开时显示，点击切换限高/全高
+        const expandBtn = document.createElement('button')
+        expandBtn.type = 'button'
+        expandBtn.className = 'code-expand'
+        expandBtn.title = '全高显示代码块'
+        expandBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+        expandBtn.style.pointerEvents = 'auto'
+        expandBtn.style.display = 'none'
+        expandBtn.addEventListener('click', (ev) => {
+          ev.preventDefault()
+          ev.stopPropagation()
+          try { toggleWysiwygCodeExpand(_pmView, pre, expandBtn as HTMLButtonElement) } catch {}
+        })
+        wrap.appendChild(expandBtn)
         ov.appendChild(wrap)
         _codeCopyWraps.set(pre, wrap)
       } else {
@@ -1902,6 +1966,15 @@ function refreshCodeCopyButtonsNow() {
         }
       }
       positionCodeCopyWrap(pre, wrap, rootRc)
+      // 刷新缩放按钮显隐：已展开时保持显示（供收回）；限高中内容超高才显示
+      const expandBtn = wrap.querySelector('button.code-expand') as HTMLButtonElement | null
+      if (expandBtn) {
+        try {
+          const expanded = pre.classList.contains('code-expanded')
+          const overflowable = expanded || isCodeContentClipped(pre)
+          expandBtn.style.display = overflowable ? '' : 'none'
+        } catch {}
+      }
     }
     for (const [pre, wrap] of Array.from(_codeCopyWraps.entries())) {
       if (!alive.has(pre) || !pre.isConnected) {

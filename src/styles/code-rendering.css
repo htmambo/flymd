@@ -148,6 +148,17 @@
   overflow: auto;
   box-shadow: none !important;
 }
+/* 超高代码块默认限高内部滚动；按钮组“缩放”按钮切换 .code-expanded 全高显示。
+   限高挂在 pre 上（code-layers 的父级），双层（编辑层+高亮层）同属 code-layers
+   会整体滚动，两层天然保持对齐，无需同步逻辑。 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
+  max-height: min(480px, 60vh);
+  /* !important:pre 的 overflow 在多处主题/基础样式中被反复声明，这里必须是滚动容器 */
+  overflow-y: auto !important;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper.code-expanded {
+  max-height: none;
+}
 /* 代码块内的高亮层和编辑层不需要单独背景 */
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code,
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .highlight-layer,
@@ -278,7 +289,8 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
 /* 代码块语言选择器 */
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
   position: relative;
-  overflow: visible !important; /* 允许下拉菜单溢出 */
+  /* pre 自身是限高滚动容器（overflow-y:auto 见上方规则）；
+     语言下拉已改为 position:fixed 定位，不依赖父容器 overflow 溢出 */
   margin-bottom: 40px; /* 为语言选择器留出空间 */
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-selector {
@@ -401,6 +413,36 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
   opacity: 1;
 }
 
+/* 所见模式缩放按钮：与复制按钮样式一致（超高代码块才显示，切换限高/全高） */
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
+  background: var(--active-bg);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: var(--fg);
+  padding: 3px 4px;
+  font-size: 0;
+  line-height: 1;
+  min-width: auto;
+  width: auto;
+  height: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  opacity: 0.75;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand svg {
+  display: block;
+  flex-shrink: 0;
+}
+.container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
+  background: rgba(127, 127, 127, 0.20);
+  border-color: rgba(0, 0, 0, 0.22);
+  color: var(--fg);
+  opacity: 1;
+}
+
 /* 所见模式删除按钮：与复制按钮样式一致 */
 .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
   background: var(--active-bg);
@@ -443,12 +485,14 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
 /* 所见模式复制/删除按钮：深色模式下使用浅色样式 */
 @media (prefers-color-scheme: dark) {
   .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete,
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #e5e7eb;
   }
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover,
+  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
     background: rgba(255, 255, 255, 0.2);
     border-color: rgba(255, 255, 255, 0.4);
     color: #fff;
@@ -467,12 +511,14 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
 
 /* 夜间模式切换时的复制/删除按钮样式 */
 body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
-body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete {
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete,
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #e5e7eb;
 }
-body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover {
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover,
+body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.4);
   color: #fff;

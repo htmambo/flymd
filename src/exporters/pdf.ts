@@ -692,6 +692,11 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     .flymd-export-preview .preview-body { width: 100% !important; max-width: 100% !important; }
     .flymd-export-preview .preview-body { margin: 0 !important; padding: 10mm 10mm 12mm 10mm; }
 
+    /* 代码块取消限高，PDF 完整输出；隐藏缩放按钮 */
+    .flymd-export-preview .codebox pre,
+    .flymd-export-preview pre.code-block-wrapper { max-height: none !important; overflow: visible !important; }
+    .flymd-export-preview .code-expand { display: none !important; }
+
     /* 导出 PDF：给列表 marker 留稳定槽位，避免 html2canvas 把符号压到正文上 */
     .flymd-export-preview ul,
     .flymd-export-preview ol {

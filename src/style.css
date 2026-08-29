@@ -5241,7 +5241,14 @@ html, body { overflow: hidden; }
   margin: 0.5em 0;
   border-radius: var(--radius-sm);
   overflow: auto;
+  /* 超高代码块默认限高内部滚动；.code-expanded 全高（与 code-rendering.css 保持一致，
+     本文件在 import 之后加载，此处规则在级联中生效） */
+  max-height: min(480px, 60vh);
+  overflow-y: auto;
   box-shadow: none !important;
+}
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper.code-expanded {
+  max-height: none;
 }
 /* 代码块内的高亮层和编辑层不需要单独背景 */
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code,
@@ -5373,7 +5380,10 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
 /* 代码块语言选择器 */
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
   position: relative;
-  overflow: visible !important; /* 允许下拉菜单溢出 */
+  /* pre 是限高滚动容器（overflow-y:auto，见上方规则与本文件 wrapper 规则）；
+     语言下拉已改为 position:fixed 定位，不依赖父容器 overflow 溢出。
+     注意：此处不能用 overflow:visible !important 压过滚动，
+     否则超高代码块限高失效（内容溢出绘制到块外）。 */
   margin-bottom: 40px; /* 为语言选择器留出空间 */
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-selector {
@@ -5646,7 +5656,9 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
 /* 行号列：绝对定位在 pre 内部左侧，随内容滚动 */
 .codebox .code-lnums {
   position: absolute;
-  top: 0; bottom: 0; left: 0;
+  /* 不设 bottom:0 —— pre 限高滚动时 bottom:0 会把行号层裁剪到可视高度，滚出首屏后行号缺失；
+     高度改由行号内容自身撑起（行数与代码一致），随 pre 滚动保持逐行对齐 */
+  top: 0; left: 0;
   width: 3.5em;                /* 预留固定列宽 */
   padding-left: 0.6em;         /* 数字向内缩进，贴齐左侧 */
   padding-top: calc(var(--code-pre-pad-y, 20px) + var(--code-lang-gap)) !important; /* 强制与pre的padding-top一致，不使用JS计算 */

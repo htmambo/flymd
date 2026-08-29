@@ -1,4 +1,6 @@
 // 代码块装饰：语言角标、行号与复制按钮（仅阅读模式生成行号；不改动 hljs 结构，避免 HTML 等语言错位）
+import { isCodeContentClipped } from './ui/codeExpandClip'
+
 export function decorateCodeBlocks(preview: HTMLElement) {
   try {
     const codes = Array.from(preview.querySelectorAll('pre > code.hljs')) as HTMLElement[]
@@ -82,6 +84,18 @@ export function decorateCodeBlocks(preview: HTMLElement) {
       btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
       box.appendChild(badge)
       box.appendChild(btn)
+
+      // 缩放按钮（复制按钮左侧，点击行为在 codeCopyEvents 的全局委托中统一处理）：
+      // 仅当内容实际超高（限高生效）时显示，展开状态由 .codebox 上的 .code-expanded 标记
+      const expandBtn = document.createElement('button')
+      expandBtn.type = 'button'
+      expandBtn.className = 'code-expand'
+      expandBtn.title = '全高显示代码块'
+      expandBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+      try {
+        expandBtn.style.display = isCodeContentClipped(pre) ? '' : 'none'
+      } catch {}
+      box.appendChild(expandBtn)
 
       pre.setAttribute('data-codebox', '1')
     }

@@ -116,7 +116,17 @@ export class HighlightCodeBlockNodeView implements NodeView {
     this.highlightLayer.style.display = 'block'
     this.highlightLayer.style.whiteSpace = 'pre'
     this.highlightLayer.style.pointerEvents = 'none'
-    this.codeWrapper.appendChild(this.highlightLayer)
+    // 禁止文本选中：contenteditable=false 只影响键盘光标运动，点击命中测试
+    // （caretPositionFromPoint）仍会落在该层文本上，导致 DOM 光标进入高亮镜像层、
+    // 方向键在两层之间游走（光标莫名跳到代码块顶部/底部）。user-select:none 让
+    // caret 命中测试跳过该层，点击光标稳定落在 editable 层。
+    this.highlightLayer.style.userSelect = 'none'
+    // 必须标记为不可编辑：否则浏览器的光标引擎把它当作可编辑文本，
+    // 方向键会在两层镜像文本之间游走，表现为光标在代码块内莫名跳到顶部/底部
+    this.highlightLayer.setAttribute('contenteditable', 'false')
+    // DOM 顺序：editable 层在前、高亮层在后。点击命中测试（caretPositionFromPoint）
+    // 对重叠文本层优先取 DOM 靠前的节点，editable 层在前才能让点击定位到精确列；
+    // 高亮层仅靠 user-select/contenteditable 仍会被部分命中路径跳过到容器边界。
     this.renderRawCode(this.getNodeCode())
 
     // 创建 <code> 作为 contentDOM（ProseMirror 可编辑区域）
@@ -140,10 +150,14 @@ export class HighlightCodeBlockNodeView implements NodeView {
     this.contentDOM.style.margin = '0'
     this.contentDOM.style.padding = '0'
     this.codeWrapper.appendChild(this.contentDOM)
+    this.codeWrapper.appendChild(this.highlightLayer)
 
     // 初始高亮（延迟执行，等待 ProseMirror 填充内容）
     requestAnimationFrame(() => {
       this.scheduleHighlight()
+      // 注意：不要在这里手动恢复 .code-expanded —— 展开状态由 codeExpandDecorationPlugin
+      // 以 Decoration 形式应用（PM 重建节点时自动跟随）；手动加 class 会触发
+      // automd 读 DOM → 重建节点 → 再加 class 的无限重建循环（实测每帧一次）
     })
   }
 

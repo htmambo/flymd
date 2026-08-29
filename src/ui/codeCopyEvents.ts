@@ -5,6 +5,7 @@
 // 复制策略:默认复制纯文本;按住 Alt 点击时复制为 Markdown 围栏代码块(向后兼容旧行为)。
 
 import { copyTextToClipboard } from '../utils/clipboard'
+import { isCodeContentClipped } from './codeExpandClip'
 
 const COPIED_TEXT = '已复制'
 const FAILED_TEXT = '复制失败'
@@ -21,6 +22,31 @@ const X_ICON_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" 
  * 如需去重,可由调用方管理 lifecycle。
  */
 export function initCodeCopyEvents(): void {
+  // 缩放按钮委托（toggle 语义，必须去重注册——复制分支幂等可容忍重复监听，
+  // 翻转类操作被重复执行偶数次会互相抵消）。window 标记保证单页面仅注册一次。
+  const w = window as any
+  if (!w.__flymdCodeExpandDelegated) {
+    w.__flymdCodeExpandDelegated = true
+    document.addEventListener('click', (ev) => {
+      // 缩放按钮：切换 .codebox 限高/全高显示（图标 feather maximize-2/minimize-2，
+      // 与所见模式 overlay 按钮同款；点击 SVG 子元素时 closest 兜底）
+      const expandT = (ev?.target as HTMLElement | null)?.closest?.('.code-expand') as HTMLElement | null
+      if (!expandT) return
+      ev.preventDefault()
+      const box = expandT.closest('.codebox') as HTMLElement | null
+      const pre = box?.querySelector('pre') as HTMLElement | null
+      if (!box || !pre) return
+      const expanded = box.classList.toggle('code-expanded')
+      expandT.title = expanded ? '恢复限高显示' : '全高显示代码块'
+      expandT.innerHTML = expanded
+        ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="14" y1="10" x2="21" y2="3"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+        : '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+      // 展开状态保持按钮可见（供收回）；限高状态仅内容实际超高时显示
+      try {
+        expandT.style.display = (expanded || isCodeContentClipped(pre)) ? '' : 'none'
+      } catch {}
+    })
+  }
   document.addEventListener('click', async (ev) => {
     // 用 closest 匹配:所见模式的复制按钮内嵌 SVG 图标,点击图标时 ev.target 是
     // <rect>/<path> 等子元素而非按钮本身,classList.contains('code-copy') 会漏判
