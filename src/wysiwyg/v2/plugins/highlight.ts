@@ -50,6 +50,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
   contentDOM: HTMLElement
   private highlightLayer: HTMLElement
   private codeWrapper: HTMLElement
+  private scrollBox: HTMLElement
   private langSelector: HTMLElement
   private langInput: HTMLInputElement
   private langDropdown: HTMLElement
@@ -77,10 +78,18 @@ export class HighlightCodeBlockNodeView implements NodeView {
     }
 
     // 创建一个内部包装器，用于精确对齐两个层
+    // 外层 .code-scroll-box 是限高滚动容器（超高代码块内部滚动）：
+    // 语言选择器留在 pre 层（滚动容器之外），其 bottom:-36px 的装饰性溢出
+    // 不会让矮代码块也出现滚动条；editable(absolute inset-0) 的定位上下文仍是
+    // code-layers，滚动时两层整体平移，天然保持对齐。
+    this.scrollBox = document.createElement('div')
+    this.scrollBox.classList.add('code-scroll-box')
+    this.dom.appendChild(this.scrollBox)
+
     this.codeWrapper = document.createElement('div')
     this.codeWrapper.classList.add('code-layers')
     this.codeWrapper.style.position = 'relative'
-    this.dom.appendChild(this.codeWrapper)
+    this.scrollBox.appendChild(this.codeWrapper)
 
     // 创建语言选择器（设置 contentEditable=false 阻止 ProseMirror 处理）
     this.langSelector = document.createElement('div')
@@ -161,7 +170,9 @@ export class HighlightCodeBlockNodeView implements NodeView {
     })
   }
 
-  // 根据当前选区决定是否显示语言选择器
+  // 根据当前选区/悬停状态决定是否显示语言选择器
+  private hovered = false
+
   private updateLangSelectorVisibility() {
     const doc = this.view.dom.ownerDocument
     const activeEl = doc.activeElement
@@ -173,7 +184,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
     }
 
     // 编辑器整体失焦且焦点也不在语言选择器内时，直接隐藏
-    if (!this.view.hasFocus()) {
+    if (!this.view.hasFocus() && !this.hovered) {
       this.langSelector.style.visibility = 'hidden'
       return
     }
@@ -185,10 +196,13 @@ export class HighlightCodeBlockNodeView implements NodeView {
       return
     }
 
-    const { from } = this.view.state.selection
-    const nodeStart = pos
-    const nodeEnd = pos + this.node.nodeSize
-    const inThisNode = from >= nodeStart && from <= nodeEnd
+    // 用实时 DOM selection 判断，而不是 view.state.selection —— 后者比浏览器
+    // 实际光标滞后一拍（selectionchange 触发时 PM 尚未同步），会导致"点击块内
+    // 不显示、点击块外反而显示"的错位表现。DOM selection 在 highlight/editable
+    // 任意一层都算块内（都是本块 DOM 的子树）。
+    const sel = doc.getSelection()
+    const anchor = sel?.anchorNode
+    const inThisNode = !!(anchor && this.dom.contains(anchor)) || this.hovered
 
     this.langSelector.style.visibility = inThisNode ? 'visible' : 'hidden'
   }
@@ -203,6 +217,16 @@ export class HighlightCodeBlockNodeView implements NodeView {
 
     doc.addEventListener('selectionchange', handler)
     this.selectionListener = handler
+
+    // 悬停代码块时也显示（hover 离开后若光标不在块内则隐藏）
+    this.dom.addEventListener('mouseenter', () => {
+      this.hovered = true
+      this.updateLangSelectorVisibility()
+    })
+    this.dom.addEventListener('mouseleave', () => {
+      this.hovered = false
+      this.updateLangSelectorVisibility()
+    })
 
     // 初始化一次，保证首次渲染时状态正确
     this.updateLangSelectorVisibility()

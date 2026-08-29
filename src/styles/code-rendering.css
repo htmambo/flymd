@@ -148,15 +148,16 @@
   overflow: auto;
   box-shadow: none !important;
 }
-/* 超高代码块默认限高内部滚动；按钮组“缩放”按钮切换 .code-expanded 全高显示。
-   限高挂在 pre 上（code-layers 的父级），双层（编辑层+高亮层）同属 code-layers
-   会整体滚动，两层天然保持对齐，无需同步逻辑。 */
-.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
+/* 超高代码块限高滚动：挂在 .code-scroll-box（代码内容层的滚动容器）上，
+   而不是 pre —— 语言选择器（bottom:-36px 装饰性溢出）在 pre 层，
+   若 pre 自身限高滚动，矮代码块也会因这 36px 溢出出现滚动条。 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box {
   max-height: min(480px, 60vh);
-  /* !important:pre 的 overflow 在多处主题/基础样式中被反复声明，这里必须是滚动容器 */
-  overflow-y: auto !important;
+  overflow-y: auto;
+  /* 顶部让位给语言选择器（块内左上角，钉在滚动区之外） */
+  padding-top: 36px;
 }
-.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper.code-expanded {
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper.code-expanded .code-scroll-box {
   max-height: none;
 }
 /* 代码块内的高亮层和编辑层不需要单独背景 */
@@ -289,14 +290,16 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
 /* 代码块语言选择器 */
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
   position: relative;
-  /* pre 自身是限高滚动容器（overflow-y:auto 见上方规则）；
+  /* pre 自身不限高不滚动（滚动在 .code-scroll-box 上）；
      语言下拉已改为 position:fixed 定位，不依赖父容器 overflow 溢出 */
-  margin-bottom: 40px; /* 为语言选择器留出空间 */
+  margin-bottom: 0.5em;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-selector {
   position: absolute;
-  bottom: -36px;
-  right: 0;
+  /* 块内左上角：与预览模式的语言角标位置一致；选择器在 pre 层（.code-scroll-box 之外），
+     限高滚动时钉在块左上角不随内容滚动。代码内容区由 .code-scroll-box 的 padding-top 让位。 */
+  top: 6px;
+  left: 8px;
   z-index: 10;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input {

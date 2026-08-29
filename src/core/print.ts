@@ -92,7 +92,8 @@ function appendPrintCss(doc: Document, extraCss?: string): void {
 
     /* 代码块取消限高，打印完整输出；隐藏缩放按钮 */
     .flymd-print-preview .codebox pre,
-    .flymd-print-preview pre.code-block-wrapper {
+    .flymd-print-preview pre.code-block-wrapper,
+    .flymd-print-preview pre.code-block-wrapper .code-scroll-box {
       max-height: none !important;
       overflow: visible !important;
     }

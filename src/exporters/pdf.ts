@@ -694,7 +694,8 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
 
     /* 代码块取消限高，PDF 完整输出；隐藏缩放按钮 */
     .flymd-export-preview .codebox pre,
-    .flymd-export-preview pre.code-block-wrapper { max-height: none !important; overflow: visible !important; }
+    .flymd-export-preview pre.code-block-wrapper,
+    .flymd-export-preview pre.code-block-wrapper .code-scroll-box { max-height: none !important; overflow: visible !important; }
     .flymd-export-preview .code-expand { display: none !important; }
 
     /* 导出 PDF：给列表 marker 留稳定槽位，避免 html2canvas 把符号压到正文上 */
