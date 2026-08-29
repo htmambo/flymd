@@ -107,6 +107,11 @@ let _watchRefreshPending = false
 let _renderJobId = 0
 let _renderLoadingTimer: number | null = null
 
+// 树容器可见性/尺寸监听：树在 display:none（默认大纲 tab、嵌入式大纲布局）期间，
+// offsetTop/offsetHeight 全为 0，竖线高度量算会把 rail 压成 0；容器获得尺寸（首次显示/
+// 切换 tab/大纲布局切换）时需重新量算。ResizeObserver 的回调发生在布局之后，量算可靠。
+let _treeLineResizeObserver: ResizeObserver | null = null
+
 function resetWatchRefreshScheduler() {
   try {
     if (_watchRefreshTimer != null) {
@@ -1428,6 +1433,14 @@ async function refresh() {
 async function init(container: HTMLElement, opts: FileTreeOptions) {
   state.container = container; state.opts = opts
   loadFolderOrder()
+  // 树容器从 display:none 变为可见（大纲 tab → 目录 tab、大纲布局切换等）时，
+  // 隐藏期间量算的竖线高度全是 0，必须重新量算，否则 rail 竖线全部消失
+  try {
+    if (typeof ResizeObserver !== 'undefined' && !_treeLineResizeObserver) {
+      _treeLineResizeObserver = new ResizeObserver(() => { updateAllTreeLines() })
+      _treeLineResizeObserver.observe(container)
+    }
+  } catch {}
   // 视觉上“别闪”：我们会保留旧树直到新树准备好，这里再补一个轻量淡化过渡
   try {
     if (!container.style.transition) container.style.transition = 'opacity 0.12s ease'
