@@ -52,6 +52,32 @@ body[data-scrollbar-visible="true"] .library {
   transition: scrollbar-color 0.15s ease-in;
 }
 
+/* 内嵌容器（代码块 / 表格 / 代码块滚动盒）:不受全局自动隐藏影响，
+   避免滚动时看不到滑块导致无法判断进度。 */
+body[data-scrollbar-visible="false"] .preview pre,
+body[data-scrollbar-visible="false"] .preview .table-wrapper,
+body[data-scrollbar-visible="false"] .preview .code-scroll-box,
+body[data-scrollbar-visible="false"] .container.wysiwyg .preview pre code,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box,
+body[data-scrollbar-visible="false"] .container.wysiwyg .ProseMirror pre {
+  scrollbar-color: rgba(127,127,127,0.45) transparent;
+}
+body[data-scrollbar-visible="false"] .preview pre::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] .preview pre::-webkit-scrollbar-track,
+body[data-scrollbar-visible="false"] .preview .table-wrapper::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] .preview .table-wrapper::-webkit-scrollbar-track,
+body[data-scrollbar-visible="false"] .preview .code-scroll-box::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] .preview .code-scroll-box::-webkit-scrollbar-track,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper::-webkit-scrollbar-track,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box::-webkit-scrollbar-thumb,
+body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box::-webkit-scrollbar-track {
+  opacity: 1 !important;
+  background: rgba(127,127,127,0.45);
+  transition: background 0.15s ease-in;
+}
+
 /* 暗色模式适配 */
 @media (prefers-color-scheme: dark) {
   body[data-scrollbar-visible="true"] .preview,
