@@ -44,11 +44,15 @@ function ensureSafeSource() {
     return sourceRaw;
   }
 
-  const args = [safeMaker, '--in', sourceRaw, '--out', sourceSafe, '--size', '1024', '--scale', '0.88'];
-  console.log(`[ensure-icons] 生成 safe-area 源图：python ${args.map((x) => JSON.stringify(x)).join(' ')}`);
+  const args = [safeMaker, '--in', sourceRaw, '--out', sourceSafe, '--size', '1024', '--scale', '0.80'];
+  console.log(`[ensure-icons] 生成 safe-area 源图：python3 ${args.map((x) => JSON.stringify(x)).join(' ')}`);
 
   try {
-    const r = cp.spawnSync('python', args, { stdio: 'inherit', cwd: projectRoot, env: process.env });
+    // 优先 python3（macOS 常见），不存在再回退 python
+    let r = cp.spawnSync('python3', args, { stdio: 'inherit', cwd: projectRoot, env: process.env });
+    if (r.error && r.error.code === 'ENOENT') {
+      r = cp.spawnSync('python', args, { stdio: 'inherit', cwd: projectRoot, env: process.env });
+    }
     if (r.status !== 0) throw new Error(`exit ${r.status}`);
   } catch (e) {
     console.warn(`[ensure-icons] 警告：safe-area 源图生成失败，将回退到原始源图：${e.message}`);
