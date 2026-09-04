@@ -2,6 +2,7 @@
 // 设计目标：不破坏旧行为，默认仍是文件名搜索
 // - 默认：文件名/路径过滤（输入即时刷新，回车打开）
 // - `:`/`：` 前缀：全文检索（走 Rust 命令 flymd_search_files_content 整库扫描；
+//   空格分隔多个关键词=AND（文件级），引号包裹=短语；
 //   回车先取前 20 条命中，可点“继续深度搜索”提高到 80 条）
 // - `::`/`：：` 前缀：语义检索（接入 flymd-RAG）
 
@@ -166,7 +167,7 @@ export function createQuickSearch(deps: QuickSearchDeps) {
         resultsEl.innerHTML = '<div class="quick-search-loading">输入关键词，按 Enter 开始检索…</div>'
         showStatus(
           parsed.mode === 'fulltext'
-            ? '全文检索：输入 :关键词，回车开始扫描'
+            ? '全文检索：输入 :关键词（空格分隔=同时包含，引号=短语），回车开始扫描'
             : '知识库搜索：输入 ::关键词，回车开始搜索',
           { showDeep: false, showCancel: false },
         )
@@ -490,7 +491,7 @@ export function createQuickSearch(deps: QuickSearchDeps) {
       panel.innerHTML = `
         <div class="quick-search-dialog">
           <div class="quick-search-bar">
-            <input type="text" class="quick-search-input" placeholder="搜索文件名…（:全文  ::知识库搜索）" />
+            <input type="text" class="quick-search-input" placeholder="搜索文件名…（:全文，空格分隔多词  ::知识库搜索）" />
             <button type="button" class="quick-search-cloud-btn">知识库</button>
           </div>
           <div class="quick-search-status hidden">

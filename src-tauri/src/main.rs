@@ -1759,6 +1759,45 @@ struct FlymdSearchHitRaw {
   hit: FlymdSearchHit,
 }
 
+// 把查询串拆成多个关键词：空格分隔（AND 语义），引号（支持 "" 和 “”）包裹为短语
+fn parse_search_terms(query: &str) -> Vec<String> {
+  fn is_quote(c: char) -> bool {
+    c == '"' || c == '\u{201C}' || c == '\u{201D}'
+  }
+  let mut terms = Vec::<String>::new();
+  let mut cur = String::new();
+  let mut in_quote = false;
+  for c in query.chars() {
+    if is_quote(c) {
+      // 引号只作定界，不进入关键词；连续引号/未闭合引号都安全
+      in_quote = !in_quote;
+      continue;
+    }
+    if !in_quote && c.is_whitespace() {
+      if !cur.is_empty() {
+        terms.push(std::mem::take(&mut cur));
+      }
+      continue;
+    }
+    cur.push(c);
+  }
+  if !cur.is_empty() {
+    terms.push(cur);
+  }
+  // 去重 + 过滤纯空白短语（如 `" "`），避免冗余比较和空 snippet 命中
+  let mut out = Vec::<String>::new();
+  for t in terms {
+    let t = t.to_lowercase();
+    if t.trim().is_empty() {
+      continue;
+    }
+    if !out.contains(&t) {
+      out.push(t);
+    }
+  }
+  out
+}
+
 #[tauri::command]
 async fn flymd_search_files_content(
   root: String,
@@ -1776,8 +1815,9 @@ async fn flymd_search_files_content(
   if !root_path.is_dir() {
     return Err(format!("root 不是有效目录: {}", root));
   }
-  let query_lower = query.to_lowercase();
-  if query_lower.is_empty() {
+  // 多关键词：空格分隔为 AND；引号包裹为短语
+  let terms = parse_search_terms(&query);
+  if terms.is_empty() {
     return Ok(Vec::new());
   }
   let max_hits = max_hits.unwrap_or(80).max(1);
@@ -1827,7 +1867,7 @@ async fn flymd_search_files_content(
         let hits = Arc::clone(&hits);
         let hit_count = Arc::clone(&hit_count);
         let done = Arc::clone(&done);
-        let query_lower = query_lower.clone();
+        let terms = terms.clone();
         let skip = &skip;
         s.spawn(move || loop {
           if done.load(Ordering::Relaxed) {
@@ -1865,22 +1905,44 @@ async fn flymd_search_files_content(
             },
             Err(_) => continue,
           };
+          // 文件级 AND：所有关键词都在文件中出现才算命中；
+          // snippet 取第一个包含任一关键词的行
           let text = String::from_utf8_lossy(&buf);
+          let mut seen = vec![false; terms.len()];
+          let mut seen_count = 0usize;
+          let mut snippet_line = 0usize;
+          let mut snippet = String::new();
           for (i, line) in text.lines().enumerate() {
-            if line.to_lowercase().contains(&query_lower) {
-              let snippet: String = line.trim().chars().take(180).collect();
-              hits.lock().unwrap_or_else(|e| e.into_inner()).push(FlymdSearchHitRaw {
-                idx,
-                hit: FlymdSearchHit {
-                  path: path.to_string_lossy().to_string(),
-                  line: i + 1,
-                  snippet,
-                },
-              });
-              if hit_count.fetch_add(1, Ordering::Relaxed) + 1 >= max_hits {
-                done.store(true, Ordering::Relaxed);
+            let ll = line.to_lowercase();
+            let mut line_matched = false;
+            for (ti, t) in terms.iter().enumerate() {
+              if ll.contains(t.as_str()) {
+                line_matched = true;
+                if !seen[ti] {
+                  seen[ti] = true;
+                  seen_count += 1;
+                }
               }
+            }
+            if line_matched && snippet_line == 0 {
+              snippet_line = i + 1;
+              snippet = line.trim().chars().take(180).collect();
+            }
+            if seen_count == terms.len() {
               break;
+            }
+          }
+          if seen_count == terms.len() {
+            hits.lock().unwrap_or_else(|e| e.into_inner()).push(FlymdSearchHitRaw {
+              idx,
+              hit: FlymdSearchHit {
+                path: path.to_string_lossy().to_string(),
+                line: snippet_line,
+                snippet,
+              },
+            });
+            if hit_count.fetch_add(1, Ordering::Relaxed) + 1 >= max_hits {
+              done.store(true, Ordering::Relaxed);
             }
           }
         });
