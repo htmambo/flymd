@@ -1,10 +1,11 @@
 // 快速搜索（库侧栏搜索）：支持
 // 设计目标：不破坏旧行为，默认仍是文件名搜索
 // - 默认：文件名/路径过滤（输入即时刷新，回车打开）
-// - `:`/`：` 前缀：全文检索（两段式：快速扫描 + 深度搜索）
+// - `:`/`：` 前缀：全文检索（走 Rust 命令 flymd_search_files_content 整库扫描；
+//   回车先取前 20 条命中，可点“继续深度搜索”提高到 80 条）
 // - `::`/`：：` 前缀：语义检索（接入 flymd-RAG）
 
-import { readTextFileLines } from '@tauri-apps/plugin-fs'
+import { invoke } from '@tauri-apps/api/core'
 import { listAllFiles, type LibEntry } from '../core/libraryFs'
 
 export type QuickSearchMode = 'file' | 'fulltext' | 'semantic'
@@ -65,9 +66,11 @@ function parseQuickSearchInput(raw: string): ParsedInput {
   return { mode: 'file', query: s.trim() }
 }
 
-function yieldToUi(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
-}
+// Rust 全文搜索命令的返回项
+type RustSearchHit = { path: string; line: number; snippet: string }
+
+// 文件清单缓存：同一库 30 秒内复用，避免每次打开面板都重新递归目录
+let filesCache: { root: string; at: number; files: LibEntry[] } | null = null
 
 export function createQuickSearch(deps: QuickSearchDeps) {
   // DOM 与状态
@@ -91,7 +94,6 @@ export function createQuickSearch(deps: QuickSearchDeps) {
   let lastQuery = ''
 
   // 全文检索：两段式状态
-  let fulltextScannedLines = new Map<string, number>() // absPath -> linesRead
   let fulltextHitPaths = new Set<string>() // absPath
   let fulltextFastStopped = false
 
@@ -164,7 +166,7 @@ export function createQuickSearch(deps: QuickSearchDeps) {
         resultsEl.innerHTML = '<div class="quick-search-loading">输入关键词，按 Enter 开始检索…</div>'
         showStatus(
           parsed.mode === 'fulltext'
-            ? '全文检索：输入 :关键词，回车开始快速扫描'
+            ? '全文检索：输入 :关键词，回车开始扫描'
             : '知识库搜索：输入 ::关键词，回车开始搜索',
           { showDeep: false, showCancel: false },
         )
@@ -175,7 +177,7 @@ export function createQuickSearch(deps: QuickSearchDeps) {
         resultsEl.innerHTML = `<div class="quick-search-loading">按 Enter 开始${parsed.mode === 'fulltext' ? '全文' : '语义'}检索…</div>`
         showStatus(
           parsed.mode === 'fulltext'
-            ? '全文检索：回车=快速扫描；可点“继续深度搜索”扫全文'
+            ? '全文检索：回车=扫描全文（前 20 条）；可点“继续深度搜索”找更多'
             : '知识库搜索：回车开始（需要 flymd-RAG 索引）',
           { showDeep: false, showCancel: false },
         )
@@ -215,70 +217,16 @@ export function createQuickSearch(deps: QuickSearchDeps) {
     })
   }
 
-  async function scanFilePrefixForHit(
-    absPath: string,
-    queryLower: string,
-    opt: { curToken: number; maxChars: number },
-  ): Promise<{ hit: boolean; snippet: string; line: number; linesRead: number }> {
-    let linesRead = 0
-    let chars = 0
-    let hit = false
-    let hitLine = 0
-    let snippet = ''
-    try {
-      const iter = await readTextFileLines(absPath as any)
-      for await (const line of iter as any) {
-        if (opt.curToken !== token) break
-        linesRead++
-        const ln = String(line || '')
-        chars += ln.length + 1
-        if (!hit && ln.toLowerCase().includes(queryLower)) {
-          hit = true
-          hitLine = linesRead
-          snippet = ln.trim().slice(0, 180)
-        }
-        if (chars >= opt.maxChars) break
-      }
-    } catch {}
-    return { hit, snippet, line: hitLine, linesRead }
-  }
-
-  async function scanFileFromLineForHit(
-    absPath: string,
-    queryLower: string,
-    opt: { curToken: number; skipLines: number; maxLines: number },
-  ): Promise<{ hit: boolean; snippet: string; line: number }> {
-    let lineNo = 0
-    let hit = false
-    let hitLine = 0
-    let snippet = ''
-    try {
-      const iter = await readTextFileLines(absPath as any)
-      let skipped = 0
-      let prev = ''
-      for await (const line of iter as any) {
-        if (opt.curToken !== token) break
-        lineNo++
-        const ln = String(line || '')
-        if (skipped < opt.skipLines) {
-          skipped++
-          prev = ln
-          continue
-        }
-        if (ln.toLowerCase().includes(queryLower)) {
-          hit = true
-          hitLine = lineNo
-          const prevText = prev.trim()
-          const curText = ln.trim()
-          snippet = (prevText ? prevText + '\n' : '') + curText
-          snippet = snippet.slice(0, 220)
-          break
-        }
-        prev = ln
-        if (opt.maxLines > 0 && lineNo >= opt.maxLines) break
-      }
-    } catch {}
-    return { hit, snippet, line: hitLine }
+  function hitToItem(h: RustSearchHit): QuickSearchItem {
+    const name = String(h.path || '').split(/[\\/]+/).pop() || String(h.path || '')
+    return {
+      kind: 'fulltext',
+      name,
+      path: h.path,
+      relPath: relPathFromRoot(h.path, rootAbs),
+      snippet: h.snippet,
+      line: h.line,
+    }
   }
 
   async function runFulltextFast(q: string) {
@@ -288,69 +236,44 @@ export function createQuickSearch(deps: QuickSearchDeps) {
     if (!query) return
 
     cancelSearch()
-    const curToken = ++token
+    const curToken = token
     searching = true
     lastMode = 'fulltext'
     lastQuery = query
     items = []
     selected = 0
-    fulltextScannedLines = new Map()
     fulltextHitPaths = new Set()
     fulltextFastStopped = false
 
-    const mdFiles = (files || []).filter((f) => /\.(md|markdown|txt)$/i.test(f.name || ''))
-    const total = mdFiles.length
-    const queryLower = query.toLowerCase()
-    const t0 = Date.now()
-    let scanned = 0
-    let hits = 0
-
-    showStatus('全文检索：快速扫描中…', { showDeep: false, showCancel: true })
-    if (resultsEl) resultsEl.innerHTML = '<div class="quick-search-loading">快速扫描中…</div>'
+    showStatus('全文检索：扫描中…', { showDeep: false, showCancel: true })
+    if (resultsEl) resultsEl.innerHTML = '<div class="quick-search-loading">全文扫描中…</div>'
 
     const hitLimit = 20
-    const timeBudgetMs = 800
-    const scanBudgetFiles = 400
-    const maxCharsPerFile = 12000
-
-    for (const f of mdFiles) {
-      if (curToken !== token) break
-      scanned++
-      const r = await scanFilePrefixForHit(f.path, queryLower, { curToken, maxChars: maxCharsPerFile })
-      fulltextScannedLines.set(f.path, r.linesRead)
-      if (r.hit) {
-        hits++
-        fulltextHitPaths.add(f.path)
-        items.push({
-          kind: 'fulltext',
-          name: f.name,
-          path: f.path,
-          relPath: relPathFromRoot(f.path, rootAbs),
-          snippet: r.snippet,
-          line: r.line,
-        })
-      }
-      if (scanned % 20 === 0 || hits >= hitLimit) {
-        showStatus(`全文检索：已扫 ${scanned}/${total}，命中 ${hits}（回车打开；可深度搜索）`, {
-          showDeep: true,
-          showCancel: true,
-        })
-        render()
-        await yieldToUi()
-      }
-      if (hits >= hitLimit) break
-      if (scanned >= scanBudgetFiles) break
-      if (Date.now() - t0 >= timeBudgetMs) break
+    const t0 = Date.now()
+    try {
+      const hits = await invoke<RustSearchHit[]>('flymd_search_files_content', {
+        root: rootAbs,
+        query,
+        maxHits: hitLimit,
+      })
+      if (curToken !== token) return
+      for (const h of hits || []) fulltextHitPaths.add(h.path)
+      items = (hits || []).map(hitToItem)
+      fulltextFastStopped = (hits || []).length >= hitLimit
+      const ms = Date.now() - t0
+      const tail = fulltextFastStopped ? '（可继续深度搜索找更多）' : ''
+      showStatus(`全文检索：命中 ${items.length}（${ms}ms）${tail}`, {
+        showDeep: true,
+        showCancel: false,
+      })
+      render()
+    } catch (e) {
+      if (curToken !== token) return
+      deps.showError('全文检索失败', e)
+      showStatus('全文检索失败', { showDeep: false, showCancel: false })
+    } finally {
+      if (curToken === token) searching = false
     }
-
-    fulltextFastStopped = scanned < total
-    searching = false
-    const tail = fulltextFastStopped ? '（可继续深度搜索找更多）' : '（可深度搜索扫全文）'
-    showStatus(`全文检索：快速扫描完成，已扫 ${scanned}/${total}，命中 ${hits}${tail}`, {
-      showDeep: true,
-      showCancel: false,
-    })
-    render()
   }
 
   async function runFulltextDeep(q: string) {
@@ -364,48 +287,40 @@ export function createQuickSearch(deps: QuickSearchDeps) {
     }
 
     cancelSearch()
-    const curToken = ++token
+    const curToken = token
     searching = true
 
-    const mdFiles = (files || []).filter((f) => /\.(md|markdown|txt)$/i.test(f.name || ''))
-    const total = mdFiles.length
-    const queryLower = query.toLowerCase()
-    let scanned = 0
-    let hits = items.length
     const maxHits = 80
+    const remaining = Math.max(1, maxHits - items.length)
 
     showStatus('全文检索：深度搜索中…', { showDeep: false, showCancel: true })
 
-    for (const f of mdFiles) {
-      if (curToken !== token) break
-      scanned++
-      if (fulltextHitPaths.has(f.path)) continue
-      const skip = fulltextScannedLines.get(f.path) || 0
-      const r = await scanFileFromLineForHit(f.path, queryLower, { curToken, skipLines: skip, maxLines: 0 })
-      if (r.hit) {
-        hits++
-        fulltextHitPaths.add(f.path)
-        items.push({
-          kind: 'fulltext',
-          name: f.name,
-          path: f.path,
-          relPath: relPathFromRoot(f.path, rootAbs),
-          snippet: r.snippet,
-          line: r.line,
-        })
+    try {
+      const hits = await invoke<RustSearchHit[]>('flymd_search_files_content', {
+        root: rootAbs,
+        query,
+        maxHits: remaining,
+        skipPaths: [...fulltextHitPaths],
+      })
+      if (curToken !== token) return
+      for (const h of hits || []) {
+        if (fulltextHitPaths.has(h.path)) continue
+        fulltextHitPaths.add(h.path)
+        items.push(hitToItem(h))
       }
-      if (scanned % 20 === 0) {
-        showStatus(`全文检索：深度搜索 ${scanned}/${total}，命中 ${hits}`, { showDeep: false, showCancel: true })
-        render()
-        await yieldToUi()
-      }
-      if (hits >= maxHits) break
+      const stopHint = items.length >= maxHits ? `（已达上限 ${maxHits}）` : ''
+      showStatus(`全文检索：深度搜索完成，命中 ${items.length}${stopHint}`, {
+        showDeep: false,
+        showCancel: false,
+      })
+      render()
+    } catch (e) {
+      if (curToken !== token) return
+      deps.showError('深度搜索失败', e)
+      showStatus('深度搜索失败', { showDeep: false, showCancel: false })
+    } finally {
+      if (curToken === token) searching = false
     }
-
-    searching = false
-    const stopHint = hits >= maxHits ? `（已达上限 ${maxHits}）` : ''
-    showStatus(`全文检索：深度搜索完成，命中 ${hits}${stopHint}`, { showDeep: false, showCancel: false })
-    render()
   }
 
   async function runSemantic(q: string) {
@@ -447,7 +362,7 @@ export function createQuickSearch(deps: QuickSearchDeps) {
     } catch {}
 
     cancelSearch()
-    const curToken = ++token
+    const curToken = token
     searching = true
     lastMode = 'semantic'
     lastQuery = query
@@ -604,7 +519,6 @@ export function createQuickSearch(deps: QuickSearchDeps) {
     selected = 0
     lastMode = 'file'
     lastQuery = ''
-    fulltextScannedLines = new Map()
     fulltextHitPaths = new Set()
     fulltextFastStopped = false
 
@@ -621,7 +535,12 @@ export function createQuickSearch(deps: QuickSearchDeps) {
       return
     }
     rootAbs = root
-    files = await listAllFiles(root)
+    if (filesCache && filesCache.root === root && Date.now() - filesCache.at < 30_000) {
+      files = filesCache.files
+    } else {
+      files = await listAllFiles(root)
+      filesCache = { root, at: Date.now(), files }
+    }
     render()
   }
 

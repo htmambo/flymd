@@ -1746,6 +1746,158 @@ async fn flymd_list_markdown_files(root: String) -> Result<Vec<String>, String> 
   Ok(result)
 }
 
+// 库内全文搜索：递归扫描 root 下的 md/markdown/txt 文件，返回每个文件的首个命中行
+#[derive(serde::Serialize)]
+struct FlymdSearchHit {
+  path: String,
+  line: usize, // 1-based
+  snippet: String,
+}
+
+struct FlymdSearchHitRaw {
+  idx: usize,
+  hit: FlymdSearchHit,
+}
+
+#[tauri::command]
+async fn flymd_search_files_content(
+  root: String,
+  query: String,
+  max_hits: Option<usize>,
+  skip_paths: Option<Vec<String>>,
+) -> Result<Vec<FlymdSearchHit>, String> {
+  use std::collections::HashSet;
+  use std::fs;
+  use std::path::{Path, PathBuf};
+  use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+  use std::sync::{Arc, Mutex};
+
+  let root_path = PathBuf::from(root.clone());
+  if !root_path.is_dir() {
+    return Err(format!("root 不是有效目录: {}", root));
+  }
+  let query_lower = query.to_lowercase();
+  if query_lower.is_empty() {
+    return Ok(Vec::new());
+  }
+  let max_hits = max_hits.unwrap_or(80).max(1);
+  let skip: HashSet<PathBuf> = skip_paths
+    .unwrap_or_default()
+    .into_iter()
+    .map(PathBuf::from)
+    .collect();
+
+  let result = tauri::async_runtime::spawn_blocking(move || {
+    // 1) 递归枚举候选文件（深度上限 10，与前端 listAllFiles 一致）
+    fn walk_dir(dir: &Path, depth: usize, acc: &mut Vec<PathBuf>) {
+      if depth > 10 {
+        return;
+      }
+      let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+      };
+      for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+          walk_dir(&path, depth + 1, acc);
+        } else if crate::is_markdown_like_path(&path) {
+          acc.push(path);
+        }
+      }
+    }
+    let mut candidates = Vec::<PathBuf>::new();
+    walk_dir(&root_path, 0, &mut candidates);
+    let indexed: Vec<(usize, PathBuf)> = candidates.into_iter().enumerate().collect();
+
+    // 2) 多线程扫描：共享队列 + 命中上限短路
+    let queue = Arc::new(Mutex::new(indexed));
+    let hits = Arc::new(Mutex::new(Vec::<FlymdSearchHitRaw>::new()));
+    let hit_count = Arc::new(AtomicUsize::new(0));
+    let done = Arc::new(AtomicBool::new(false));
+    let workers = std::thread::available_parallelism()
+      .map(|n| n.get())
+      .unwrap_or(4)
+      .clamp(2, 8);
+    const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+    std::thread::scope(|s| {
+      for _ in 0..workers {
+        let queue = Arc::clone(&queue);
+        let hits = Arc::clone(&hits);
+        let hit_count = Arc::clone(&hit_count);
+        let done = Arc::clone(&done);
+        let query_lower = query_lower.clone();
+        let skip = &skip;
+        s.spawn(move || loop {
+          if done.load(Ordering::Relaxed) {
+            break;
+          }
+          let item = {
+            let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+            q.pop()
+          };
+          let (idx, path) = match item {
+            Some(v) => v,
+            None => break,
+          };
+          if skip.contains(&path) {
+            continue;
+          }
+          // 读文件；超大文件只读前 4MB，避免极端大 txt 卡死
+          let buf = match fs::metadata(&path) {
+            Ok(m) if m.len() > MAX_FILE_BYTES => {
+              use std::io::Read;
+              match fs::File::open(&path) {
+                Ok(f) => {
+                  let mut b = Vec::new();
+                  match f.take(MAX_FILE_BYTES).read_to_end(&mut b) {
+                    Ok(_) => b,
+                    Err(_) => continue,
+                  }
+                }
+                Err(_) => continue,
+              }
+            }
+            Ok(_) => match fs::read(&path) {
+              Ok(b) => b,
+              Err(_) => continue,
+            },
+            Err(_) => continue,
+          };
+          let text = String::from_utf8_lossy(&buf);
+          for (i, line) in text.lines().enumerate() {
+            if line.to_lowercase().contains(&query_lower) {
+              let snippet: String = line.trim().chars().take(180).collect();
+              hits.lock().unwrap_or_else(|e| e.into_inner()).push(FlymdSearchHitRaw {
+                idx,
+                hit: FlymdSearchHit {
+                  path: path.to_string_lossy().to_string(),
+                  line: i + 1,
+                  snippet,
+                },
+              });
+              if hit_count.fetch_add(1, Ordering::Relaxed) + 1 >= max_hits {
+                done.store(true, Ordering::Relaxed);
+              }
+              break;
+            }
+          }
+        });
+      }
+    });
+
+    let mut raw = std::mem::take(&mut *hits.lock().unwrap_or_else(|e| e.into_inner()));
+    raw.sort_by_key(|r| r.idx); // 保持目录遍历顺序
+    raw.truncate(max_hits);
+    Ok::<Vec<FlymdSearchHit>, String>(raw.into_iter().map(|r| r.hit).collect())
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))??;
+
+  Ok(result)
+}
+
 // 为插件提供的“任意目录列表”命令：用于兼容缺失 latest.json 时从快照目录推断最新备份
 #[derive(serde::Serialize)]
 struct FlymdDirEntryLite {
@@ -1954,6 +2106,7 @@ fn main() {
       ai_novel_api,
       flymd_piclist_upload,
       flymd_list_markdown_files,
+      flymd_search_files_content,
       check_update,
       download_file,
       git_status_summary,
