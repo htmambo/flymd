@@ -1295,6 +1295,7 @@ import {
   type OutlineMode,
 } from './ui/outlineHeadsCache'
 import { confirmDialog } from './ui/confirmDialog'
+import { initCodeWrap } from './core/codeWrap'
 
 // 统一确认弹框：使用应用内弹窗，居中于窗口并跟随主题；
 // 原生 ask 的位置由窗口管理器决定（部分 Linux WM 会落在左上角），不再使用。
@@ -5504,6 +5505,18 @@ window.addEventListener('flymd:darkmode:changed', async () => {
     // 清除 mermaid SVG 缓存，避免使用旧主题的缓存
     try { invalidateMermaidSvgCache() } catch {}
     // 根据当前模式刷新预览
+    if (mode === 'preview') {
+      await renderPreview()
+    } else if (wysiwyg) {
+      scheduleWysiwygRender()
+    }
+  } catch {}
+})
+
+// 代码块自动换行开关：恢复 body class；切换时按当前模式重渲染（阅读模式需重算行号高度）
+try { initCodeWrap() } catch {}
+window.addEventListener('flymd:codeWrap:changed', async () => {
+  try {
     if (mode === 'preview') {
       await renderPreview()
     } else if (wysiwyg) {

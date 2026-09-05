@@ -208,3 +208,21 @@ body.dark-mode .codebox .code-lnums {
 .container.wysiwyg .preview { background: var(--wysiwyg-bg); padding-top: 14px; }
 .container.wysiwyg .editor { padding-top: 14px; }
 
+/* ===== 代码块自动换行（全局开关 body.code-wrap，设置弹窗控制） ===== */
+/* 阅读模式：code 换行，隐藏横向滚动条；行号列高度由 decorate.ts 逐行测量同步 */
+body.code-wrap .preview pre { overflow-x: hidden; }
+body.code-wrap .preview pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+body.code-wrap .codebox .code-lnums { overflow: hidden; }
+/* 可见模式（WYSIWYG v2）：高亮层与编辑层是镜像双层，必须同时换行；
+   内联样式 whiteSpace='pre' 需 !important 覆盖（highlight.ts 写死） */
+body.code-wrap .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere;
+}
+body.code-wrap .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box {
+  overflow-x: hidden;
+}
+

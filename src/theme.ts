@@ -20,6 +20,7 @@ import { getContentFontSize, setContentFontSize } from './core/uiZoom'
 import { NETWORK_PROXY_DEFAULT_NO_PROXY, normalizeNetworkNoProxy } from './core/networkProxy'
 import { getUpdateCheckDisabled, setUpdateCheckDisabled } from './core/updateCheckPrefs'
 import { getDefaultOutlineTabEnabled, setDefaultOutlineTabEnabled } from './core/defaultOutlineTab'
+import { isCodeWrapEnabled, setCodeWrapEnabled } from './core/codeWrap'
 export type MdStyleId = 'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs' | 'typora' | 'obsidian' | 'bear' | 'minimalist'
 
 export interface ThemePrefs {
@@ -691,6 +692,13 @@ function createPanel(): HTMLDivElement {
           <span class="theme-toggle-text">${t('theme.sourceLineNumbers')}</span>
           <div class="theme-toggle-switch">
             <input type="checkbox" id="source-line-numbers-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="code-wrap-toggle" title="${t('theme.codeWrap.tip')}">
+          <span class="theme-toggle-text">${t('theme.codeWrap')}</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="code-wrap-toggle" class="theme-toggle-input" />
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
@@ -1737,6 +1745,14 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       sourceLineNumbersToggle.checked = getSourceLineNumbersEnabled()
       sourceLineNumbersToggle.addEventListener('change', () => {
         setSourceLineNumbersEnabled(sourceLineNumbersToggle.checked)
+      })
+    }
+
+    const codeWrapToggle = panel.querySelector('#code-wrap-toggle') as HTMLInputElement | null
+    if (codeWrapToggle) {
+      codeWrapToggle.checked = isCodeWrapEnabled()
+      codeWrapToggle.addEventListener('change', () => {
+        setCodeWrapEnabled(codeWrapToggle.checked)
       })
     }
 

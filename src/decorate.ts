@@ -1,5 +1,47 @@
 // 代码块装饰：语言角标、行号与复制按钮（仅阅读模式生成行号；不改动 hljs 结构，避免 HTML 等语言错位）
 import { isCodeContentClipped } from './ui/codeExpandClip'
+import { isCodeWrapEnabled } from './core/codeWrap'
+
+// 换行模式下逐行测量实际渲染高度：把逻辑行放进与 code 等宽、同字体的屏外探针，
+// 一次回流批量读取每行换行后的高度，用于把行号列的每个 .ln 撑到同样高度，实现
+// 行号与换行后代码的精确对齐（逻辑行完整保留，不隔行）。
+function measureWrappedLineHeights(code: HTMLElement, lines: string[]): number[] | null {
+  try {
+    const width = code.clientWidth
+    if (!width || width <= 0) return null
+    const cs = getComputedStyle(code)
+    const probe = document.createElement('div')
+    probe.style.position = 'absolute'
+    probe.style.visibility = 'hidden'
+    probe.style.pointerEvents = 'none'
+    probe.style.left = '-99999px'
+    probe.style.top = '0'
+    probe.style.whiteSpace = 'pre-wrap'
+    probe.style.overflowWrap = 'anywhere'
+    probe.style.boxSizing = 'border-box'
+    probe.style.width = width + 'px'
+    probe.style.fontFamily = cs.fontFamily
+    probe.style.fontSize = cs.fontSize
+    probe.style.fontWeight = cs.fontWeight
+    probe.style.lineHeight = cs.lineHeight
+    probe.style.letterSpacing = cs.letterSpacing
+    try { (probe.style as any).tabSize = cs.tabSize } catch {}
+    const rowEls: HTMLElement[] = []
+    for (const line of lines) {
+      const d = document.createElement('div')
+      // 空行用 nbsp 占位，保证占满一行行高
+      d.textContent = line.length ? line : ' '
+      rowEls.push(d)
+      probe.appendChild(d)
+    }
+    document.body.appendChild(probe)
+    const heights = rowEls.map((el) => el.offsetHeight)
+    probe.remove()
+    return heights
+  } catch {
+    return null
+  }
+}
 
 export function decorateCodeBlocks(preview: HTMLElement) {
   try {
@@ -77,6 +119,30 @@ export function decorateCodeBlocks(preview: HTMLElement) {
               lnWrap.style.paddingTop = (current + delta) + 'px'
             }
             probe.remove()
+          } catch {}
+          // 换行模式：逐行测量换行后的实际高度并同步到行号列；
+          // 监听 pre 尺寸变化（窗口缩放/自适应宽度/展开收起）与字体加载完成后重测
+          try {
+            if (isCodeWrapEnabled()) {
+              const lnSpans = Array.from(lnWrap.querySelectorAll('.ln')) as HTMLElement[]
+              const applyHeights = () => {
+                if (!pre.isConnected) return
+                const heights = measureWrappedLineHeights(code, lines)
+                if (!heights) return
+                for (let i = 0; i < lnSpans.length && i < heights.length; i++) {
+                  lnSpans[i].style.height = heights[i] + 'px'
+                }
+              }
+              applyHeights()
+              let resizeTimer: ReturnType<typeof setTimeout> | null = null
+              const ro = new ResizeObserver(() => {
+                if (!pre.isConnected) { try { ro.disconnect() } catch {} ; return }
+                if (resizeTimer) clearTimeout(resizeTimer)
+                resizeTimer = setTimeout(applyHeights, 80)
+              })
+              try { ro.observe(pre) } catch {}
+              try { (document as any).fonts?.ready?.then(() => { if (pre.isConnected) applyHeights() }) } catch {}
+            }
           } catch {}
         } catch {}
       }
