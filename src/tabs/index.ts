@@ -5,4 +5,4 @@
 export * from './types'
 export { TabManager, tabManager } from './TabManager'
 export { TabBar } from './TabBar'
-export { initTabSystem, shouldOpenInNewTab, openFileInNewTab } from './integration'
+export { initTabSystem, shouldOpenInNewTab, openFileInNewTab, activateTabByPathIfOpen, flushActiveFileMarkerToLibrary, restoreDirtyDraftsFromSession, resetToBlankTabForLibrarySwitch } from './integration'

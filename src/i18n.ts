@@ -282,6 +282,9 @@ const dict = {
     'dlg.exit.unsavedMulti': '检测到 {count} 个文档有未保存的更改，是否全部保存？',
     'dlg.exit.save': '保存并退出',
     'dlg.exit.discard': '直接退出',
+    // 切换库
+    'dlg.switchLib.title': '切换库',
+    'dlg.switchLib.unsaved': '切换库将关闭当前文档。当前文件存在未保存的更改，是否保存？',
     // 库删除
     'dlg.libDelete.title.file': '删除文档',
     'dlg.libDelete.title.dir': '删除文件夹',
@@ -853,6 +856,9 @@ const dict = {
     'dlg.exit.unsavedMulti': 'Unsaved changes detected in {count} documents. Save all?',
     'dlg.exit.save': 'Save and exit',
     'dlg.exit.discard': 'Exit without saving',
+    // Switch library
+    'dlg.switchLib.title': 'Switch Library',
+    'dlg.switchLib.unsaved': 'Switching the library will close the current document. Save changes before switching?',
     // Library delete
     'dlg.libDelete.title.file': 'Delete document',
     'dlg.libDelete.title.dir': 'Delete folder',

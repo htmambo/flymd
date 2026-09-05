@@ -5,7 +5,8 @@
 //     排序、粘贴默认目录、扩展启用状态等，随库目录走（可被 WebDAV 同步携带）。
 //   通道B（系统层按库命名空间）：Store/localStorage key 追加 `:<libId>` —— 标签
 //     会话、光标位置、图床配置（含凭据）等设备私有或敏感数据，不进库目录。
-// 临时库（打开库外文件时的父目录）与无库状态一律回落全局行为，不写库目录。
+// 通道A 生效条件=当前有库根（持久化库或临时库均可），无库才回落全局；
+// 通道B 仅持久化库使用，临时库/无库一律回落全局行为。
 //
 // 作用域解析：main.ts 在库激活/切换/临时库变化时调用 setLibraryScopeCache 保持
 // 同步缓存温暖，各模块通过 getLibraryScope() 同步读取；变化时派发
@@ -19,7 +20,7 @@ export interface LibraryScope {
   id: string | null
   /** 库根目录（临时库也有 root）；无库为 null */
   root: string | null
-  /** true=持久化库（可写库内配置）；false=临时库或无库（回落全局） */
+  /** true=持久化库；false=临时库或无库（通道B 按库 key 回落全局） */
   persisted: boolean
 }
 
@@ -45,7 +46,7 @@ export function setLibraryScopeCache(scope: LibraryScope): void {
     invalidateLibraryConfigCache()
     // 库切换后旧库的 mtime 基线作废；新库首次读取/写入时重建
     _lastKnownMtime = null
-    try { if (next.persisted) ensureConfigWatcher() } catch {}
+    try { if (next.root) ensureConfigWatcher() } catch {}
     try {
       window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED_EVENT, { detail: { ...next } }))
     } catch {}
@@ -60,6 +61,8 @@ const CONFIG_FILE = 'config.json'
 export type LibrarySharedConfig = {
   /** 最近文件（按库） */
   recent?: string[]
+  /** 最后激活标签对应的文件（"当前文件"标识，库内相对路径；启动无会话时优先激活它） */
+  currentFile?: string
   /** 库树排序偏好 */
   librarySort?: string
   /** 文件夹手动排序：父目录 -> 子目录 -> 顺序 */
@@ -92,7 +95,7 @@ async function refreshMtimeBaseline(path: string): Promise<void> {
 
 async function pollExternalChange(): Promise<void> {
   const scope = getLibraryScope()
-  if (!scope.persisted || !scope.root) return
+  if (!scope.root) return
   // 缓存尚未加载时不做检测（首次读取会建立基线）
   if (!_cache || _cache.root !== scope.root) return
   try {
@@ -122,10 +125,10 @@ function configFilePath(root: string): string {
   return root.replace(/[\\/]+$/, '') + '/' + CONFIG_DIR + '/' + CONFIG_FILE
 }
 
-/** 读取当前库内共享配置；非持久化库/读取失败返回 null（调用方回落全局） */
+/** 读取当前库内共享配置；无库根（无库状态）/读取失败返回 null（调用方回落全局） */
 export async function readLibraryConfig(): Promise<LibrarySharedConfig | null> {
   const scope = getLibraryScope()
-  if (!scope.persisted || !scope.root) return null
+  if (!scope.root) return null
   if (_cache && _cache.root === scope.root) return _cache.data
   if (_loading) return await _loading
   const root = scope.root
@@ -158,11 +161,11 @@ export async function readLibraryConfig(): Promise<LibrarySharedConfig | null> {
  * 故不使用。历史遗留的 config.json.tmp 在每次写入时尽力清理。
  * 写时合并：先读磁盘最新值作为合并基座（多窗口/同步工具可能已改动），再叠加
  * 本次 patch，避免用过期的内存缓存覆盖外部变更。
- * 非持久化库返回 false，调用方应回落全局存储。
+ * 无库根返回 false，调用方应回落全局存储。
  */
 export async function writeLibraryConfig(patch: Partial<LibrarySharedConfig>): Promise<boolean> {
   const scope = getLibraryScope()
-  if (!scope.persisted || !scope.root) return false
+  if (!scope.root) return false
   const root = scope.root
   const task = _writeQueue.then(async () => {
     const path = configFilePath(root)

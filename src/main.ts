@@ -613,6 +613,11 @@ let wysiwyg = false
 let wysiwygV2Active = false
 // 打开文档后自动切所见：用于取消过期的后台任务（避免快速连点导致“晚到的切换”覆盖新文档）
 let _autoWysiwygAfterOpenSeq = 0
+// 程序化批量打开（启动/切库全量打开记录的 recent）期间置位，跳过 openFile2 的
+// "当前文档已修改，是否保存后再切换？"询问；详见 openFile2 内使用处。
+let _suppressOpenSwitchConfirm = false
+// 批量打开期间置位，跳过 recent 推入（打开顺序不应反转库配置记录的最近使用顺序）。
+let _suppressRecentPush = false
 // 模式切换时的滚动位置缓存（百分比 0-1）
 let lastScrollPercent = 0
 let _wysiwygRaf = 0
@@ -1286,7 +1291,7 @@ import {
   type ContextMenuDeps,
   type ContextMenuMode,
 } from './ui/contextMenuContext'
-import { getRecentFiles as getRecent, pushRecentFile as pushRecent } from './core/recentFiles'
+import { getRecentFiles as getRecent, pushRecentFile as pushRecent, getLibraryCurrentFile } from './core/recentFiles'
 import {
   clearOutlineHeadsCache,
   cssEscapeCompat,
@@ -3959,8 +3964,10 @@ async function openFile2(preset?: unknown) {
     } catch {}
     const shouldEnableWysiwyg = wysiwygDefault || wasWysiwyg
 
-    // 若当前有未保存更改，且目标文件不同，则先询问是否保存
-    if (dirty && selectedPath && selectedPath !== currentFilePath) {
+    // 若当前有未保存更改，且目标文件不同，则先询问是否保存。
+    // 启动/切库"全量打开记录的 recent"等程序化批量打开时置 _suppressOpenSwitchConfirm，
+    // 跳过询问（等价用户选"否"）：被跳过的脏标签内容已由标签系统保存在其标签内，不会丢。
+    if (dirty && !_suppressOpenSwitchConfirm && selectedPath && selectedPath !== currentFilePath) {
       const doSave = await confirmNative('当前文档已修改，是否保存后再切换？', '切换文档')
       if (doSave) {
         await saveFile()
@@ -4081,7 +4088,11 @@ async function openFile2(preset?: unknown) {
       }, 0)
     }
 
-    await pushRecent(store, currentFilePath)
+    // 批量还原打开（启动/切库全量打开记录文件）期间不推入 recent：
+    // 保持库配置里记录的"最近使用顺序"不被打开顺序反转
+    if (!_suppressRecentPush) {
+      await pushRecent(store, currentFilePath)
+    }
     await renderRecentPanel(false)
     logInfo('文件打开成功', { path: selectedPath, size: content.length })
   } catch (error) {
@@ -4542,17 +4553,161 @@ function isTemporaryLibraryActive(): boolean {
   return !!temporaryLibraryRoot
 }
 
+// 关闭当前文档回到"无打开文件"的空白状态（初始启动态：空编辑器 + 隐藏预览 + 无 PDF）。
+// 纯清理，不写入最近列表——"最近"只由打开/保存动作维护；幂等，可重复调用。
+async function closeToBlank(): Promise<void> {
+  try {
+    try { if (wysiwyg) await setWysiwygEnabled(false) } catch {}
+    try { if (currentFilePath) extWatcherIntegration?.unregisterFor(currentFilePath) } catch {}
+    // PDF 视图态清理（缓存的 iframe 留在 pdfHost 内不销毁，仅切回 md 宿主）
+    _currentPdfSrcUrl = null
+    _currentPdfIframe = null
+    try { setPreviewKind('md') } catch {}
+    try { editor.value = '' } catch {}
+    currentFilePath = null as any
+    dirty = false
+    mode = 'edit'
+    try { preview.classList.add('hidden') } catch {}
+    const toggleBtn = document.getElementById('btn-toggle') as HTMLButtonElement | null
+    if (toggleBtn) toggleBtn.textContent = '阅读'
+    try { titlebarStatusApi?.refreshTitle() } catch {}
+    try { titlebarStatusApi?.refreshStatus() } catch {}
+    try { titlebarStatusApi?.syncToggleButton() } catch {}
+    // 大纲面板可见时重建，避免残留旧文档大纲
+    try {
+      const outline = document.getElementById('lib-outline') as HTMLDivElement | null
+      if (outline && shouldUpdateOutlinePanel(outlineLayout, outline)) {
+        _outlineLastSignature = ''
+        setTimeout(() => { try { outlineApi.renderOutlinePanel() } catch {} }, 0)
+      }
+    } catch {}
+  } catch (e) {
+    console.warn('关闭到空白状态失败:', e)
+  }
+}
+
+// 校验单路径当前是否可打开（字符串、存在、不是目录）
+async function isOpenableFilePath(p: unknown): Promise<boolean> {
+  try {
+    if (!p || typeof p !== 'string') return false
+    if (await isDirectoryPath(p)) return false
+    return !!(await statFileAnySafe(p))
+  } catch {
+    return false
+  }
+}
+
+// 从最近列表（库优先，无库回落全局）+ 库内"当前文件"标识，挑出启动/切库要全量
+// 打开的文件集合：paths=全部仍可打开的 recent（保持 recent 顺序，逐个校验存在性，
+// 跳过目录与失效项）；库内记录的 currentFile（最后激活标签）若因 recent 截断
+// （RECENT_MAX=5）不在列表中，也补入一并打开；
+// active=应激活的标签（currentFile 优先，校验失败回落 paths[0]）。
+async function pickRecentSetToOpen(): Promise<{ paths: string[]; active: string | null }> {
+  const paths: string[] = []
+  try {
+    const recents = await getRecent(store)
+    for (const p of recents) {
+      if (!p || typeof p !== 'string') continue
+      if (await isOpenableFilePath(p)) paths.push(p)
+    }
+  } catch {}
+  let active: string | null = null
+  try {
+    const cur = await getLibraryCurrentFile()
+    if (cur && await isOpenableFilePath(cur)) {
+      if (!paths.includes(cur)) paths.push(cur)
+      active = cur
+    }
+  } catch {}
+  if (!active) active = paths[0] || null
+  return { paths, active }
+}
+
+// 把文件集合全部打开为标签（首个文件复用当前空白标签，其余新建；已打开的由
+// flymdOpenFile 挂钩自动"切换到已有标签"去重），最后激活 active 对应的标签
+// （不改变标签顺序）。批量打开期间屏蔽脏文档切换询问，且不推入 recent
+// （避免打开顺序反转库配置记录的"最近使用顺序"）。
+async function openRecentSetAsTabs(paths: string[], active: string | null): Promise<void> {
+  _suppressOpenSwitchConfirm = true
+  _suppressRecentPush = true
+  try {
+    for (const p of paths) {
+      try { await openFile2(p) } catch (e) { console.warn('打开最近文件失败:', p, e) }
+    }
+  } finally {
+    _suppressOpenSwitchConfirm = false
+    _suppressRecentPush = false
+  }
+  if (active) {
+    try { const m = await import('./tabs/integration'); await m.activateTabByPathIfOpen(active) } catch {}
+  }
+}
+
+// 切库前关闭当前文档：脏文件弹三态（保存/不保存/取消切库），防止切库丢数据。
+// 返回 false 表示用户取消切库，调用方应中止；关闭动作不写入最近列表。
+async function closeCurrentDocForLibrarySwitch(): Promise<boolean> {
+  try {
+    if (dirty) {
+      const result = await showThreeButtonDialog(t('dlg.switchLib.unsaved'), t('dlg.switchLib.title'))
+      if (result === 'cancel') return false
+      if (result === 'save') {
+        // 保存失败或"另存为"被取消时 dirty 仍为 true → 中止切库
+        try {
+          if (!currentFilePath) await saveAs()
+          else await saveFile()
+        } catch { return false }
+        if (dirty) return false
+      }
+      // discard：不保存直接关闭
+    }
+    await closeToBlank()
+    return true
+  } catch (e) {
+    console.warn('切库关闭文档失败:', e)
+    return true
+  }
+}
+
 async function activatePersistedLibrary(id: string): Promise<void> {
-  // 切库前：当前库作用域仍在，先把标签会话存到旧库的 key
   const prevScope = getLibraryScope()
-  try { const m = await import('./tabs/integration'); m.saveSessionForLibrarySwitch() } catch {}
+  // 切库前：当前库作用域仍在，先把标签会话与"当前文件"标识落盘到旧库
+  // （标识写入有 500ms 防抖，这里 flush 避免尚未触发就切换作用域导致写错库/丢失）
+  try {
+    const m = await import('./tabs/integration')
+    m.saveSessionForLibrarySwitch()
+    await m.flushActiveFileMarkerToLibrary()
+  } catch {}
+  // 切库先关闭旧库打开的文件（用户取消则中止切库，不改变当前库）
+  const closed = await closeCurrentDocForLibrarySwitch()
+  if (!closed) return
   clearTemporaryLibraryRoot()
   await setActiveLibId(id)
   await refreshLibraryScopeCache()
-  // 切换到不同的持久化库：恢复该库的标签会话（无会话则重置为空白标签）
+  // 切换到不同的持久化库：以库自身配置文件为准——不做完整会话恢复（避免系统层
+  // 会话主导打开集合），只重置到单个空白标签供随后复用；未保存草稿随后按新库
+  // 会话抢救（restoreDirtyDraftsFromSession）。
   const nextScope = getLibraryScope()
   if (nextScope.persisted && nextScope.id && nextScope.id !== prevScope.id) {
-    try { const m = await import('./tabs/integration'); await m.restoreSessionForLibrarySwitch() } catch {}
+    try { const m = await import('./tabs/integration'); await m.resetToBlankTabForLibrarySwitch() } catch {}
+  }
+  // 把新库记录的文件全量打开为标签（recent + currentFile），激活 currentFile，
+  // 再抢救新库会话中的未保存草稿；无有效项则保持空白
+  try {
+    let tabsMod: any = null
+    try { tabsMod = await import('./tabs/integration') } catch {}
+    const { paths, active } = await pickRecentSetToOpen()
+    if (paths.length) {
+      await openRecentSetAsTabs(paths, active)
+      try { if (tabsMod) await tabsMod.restoreDirtyDraftsFromSession() } catch {}
+      if (active) {
+        try { if (tabsMod) await tabsMod.activateTabByPathIfOpen(active) } catch {}
+      }
+    } else {
+      await closeToBlank()
+      try { if (tabsMod) await tabsMod.restoreDirtyDraftsFromSession() } catch {}
+    }
+  } catch (e) {
+    console.warn('切库后打开最近文件失败:', e)
   }
 }
 
@@ -4605,11 +4760,13 @@ async function getLibraryRoot(): Promise<string | null> {
 }
 
 async function setLibraryRoot(p: string) {
-  // 兼容旧代码：设置库路径即插入/更新库并设为激活
+  // 兼容旧代码：设置库路径即插入/更新库并设为激活。
+  // upsertLibrary 会把库置为激活但不清已打开的文件，因此随后补完整切库流程：
+  // 关闭旧库文件（含未保存确认），按新库自身配置打开现场。
   try {
     clearTemporaryLibraryRoot()
-    await upsertLibrary({ root: p })
-    await refreshLibraryScopeCache()
+    const lib = await upsertLibrary({ root: p })
+    await activatePersistedLibrary(lib.id)
   } catch {}
 }
 
@@ -6037,6 +6194,8 @@ async function showLibraryMenu() {
             await refreshLibraryUiAndTree(!!opt?.rebuildTree)
             try { if (mode === 'preview') await renderPreview() } catch {}
           },
+          // 新增库后走完整切库流程：关闭旧库打开的文件，按新库自身配置打开现场
+          onActivateLibrary: async (id) => { await activatePersistedLibrary(id) },
         })
       } catch {}
     } })
@@ -8291,6 +8450,8 @@ function bindEvents() {
       // 保存标签会话（所有打开的文件）；discard 路径传 includeDirtyContent:false，
       // 避免把用户已选择丢弃的内容持久化到 storage、下次启动又被恢复。
       try { (window as any).flymdSaveTabSession?.(opts) } catch {}
+      // 落盘"当前文件"标识（防抖 500ms 可能未触发，退出前必须 flush 一次）
+      try { const m = await import('./tabs/integration'); await m.flushActiveFileMarkerToLibrary() } catch {}
       try { await restoreStickyIfNeeded() } catch {}
       try { await runPortableExportOnExit() } catch {}
       try { await runShutdownSyncIfEnabled() } catch {}
@@ -8931,11 +9092,42 @@ function bindEvents() {
                 if (low.startsWith('-psn_')) return false
                 return /\.(md|markdown|txt|pdf)$/.test(low)
               })
-              if (pick) { void openFile2(pick) }
+              if (pick) { handledStartupOpenPath = true; void openFile2(pick) }
             }
           } catch {}
         }
       } catch {}
+    }
+
+    // 启动自动打开记录的文件（以库自身配置文件为准）：
+    // 有库以库内 config.json 的 recent + currentFile 为准，无库回落全局最近列表；
+    // 无有效项则保持空白。仅主窗口执行，且必须让位于文件关联/命令行传入的
+    // 待打开路径（handledStartupOpenPath）。
+    // 顺序：先初始化标签系统（main 窗口 restoreSession=false，不做完整会话恢复——
+    // 系统层会话不得主导打开集合）→ 把记录的文件全部打开为标签 → 抢救会话中的
+    // 未保存草稿（系统层会话的唯一职责，见 restoreDirtyDraftsFromSession）→
+    // 激活"当前文件"（currentFile 校验失败回落首个 recent）。
+    // 这消除了旧版"启动打开 recent 与 setTimeout(500) 会话恢复相互竞争、
+    // 旧空白会话覆盖刚打开的 recent 文件"的时序 bug。
+    if (!handledStartupOpenPath) {
+      try {
+        const isPrimary = (() => { try { return getCurrentWindow().label === 'main' } catch { return true } })()
+        if (isPrimary) {
+          let tabsMod: any = null
+          try {
+            tabsMod = await import('./tabs/integration')
+            await tabsMod.initTabSystem({ restoreSession: false })
+          } catch {}
+          const { paths, active } = await pickRecentSetToOpen()
+          if (paths.length) await openRecentSetAsTabs(paths, active)
+          try { if (tabsMod) await tabsMod.restoreDirtyDraftsFromSession() } catch {}
+          if (active) {
+            try { if (tabsMod) await tabsMod.activateTabByPathIfOpen(active) } catch {}
+          }
+        }
+      } catch (e) {
+        console.warn('启动自动打开最近文件失败:', e)
+      }
     }
 
     // 尝试加载最近文件（可能失败）

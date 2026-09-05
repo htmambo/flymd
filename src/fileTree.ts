@@ -222,8 +222,8 @@ const hasDocCache = new Map<string, boolean>()
 const hasDocPending = new Map<string, Promise<boolean>>()
 
 // 文件夹自定义排序映射：父目录 -> 子目录路径 -> 顺序索引（仅作用于文件夹）
-// 按库隔离：持久化库激活时读写库内 .flymd/config.json 的 folderOrder 字段；
-// 临时库/无库回落全局 localStorage 的 flymd:folderOrder（保持旧行为）。
+// 按库隔离：有库根（持久化库或临时库）时读写库内 .flymd/config.json 的 folderOrder 字段；
+// 无库回落全局 localStorage 的 flymd:folderOrder（保持旧行为）。
 // 内存中的 folderOrder 保持同步读取（排序比较器是同步的），加载/切换时异步刷新。
 const folderOrder: Record<string, Record<string, number>> = {}
 const FOLDER_ORDER_KEY = 'flymd:folderOrder'
@@ -258,8 +258,8 @@ function readGlobalFolderOrder(): Record<string, Record<string, number>> {
 
 async function loadFolderOrder() {
   const scope = getLibraryScope()
-  _folderOrderMarker = scope.persisted && scope.root ? scope.root : ''
-  if (scope.persisted && scope.root) {
+  _folderOrderMarker = scope.root ? scope.root : ''
+  if (scope.root) {
     const root = scope.root
     try {
       const cfg = await readLibraryConfig()
@@ -317,14 +317,14 @@ async function loadFolderOrder() {
 // 库切换后异步重载排序映射（刷新树前调用，幂等）
 async function ensureFolderOrderLoaded() {
   const scope = getLibraryScope()
-  const marker = scope.persisted && scope.root ? scope.root : ''
+  const marker = scope.root ? scope.root : ''
   if (_folderOrderMarker === marker) return
   await loadFolderOrder()
 }
 
 function saveFolderOrder() {
   const scope = getLibraryScope()
-  if (scope.persisted && scope.root) {
+  if (scope.root) {
     const root = scope.root
     // 入库前转相对路径（跨机器兼容），库外条目丢弃
     const rel: Record<string, Record<string, number>> = {}

@@ -13,10 +13,12 @@ import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/p
 import { initTabTransferReceiver } from './tabTransferReceiver'
 import { readTextFileAnySafe } from '../core/fsSafe'
 import { getSessionStorageKey, getUnscopedSessionKey, getCurrentWindowLabel, migrateLegacySessionKey } from './sessionStorageKey'
+import { setLibraryCurrentFile, flushLibraryCurrentFile } from '../core/recentFiles'
 
 // 全局引用
 let tabBar: TabBar | null = null
 let initialized = false
+let initPromise: Promise<void> | null = null
 const undoManager = new TextareaUndoManager()
 
 // 标签切换时暂停轮询检测（避免冲突）
@@ -349,10 +351,47 @@ function saveTabSession(opts?: { includeDirtyContent?: boolean }): void {
   } catch (e) {
     console.warn('[Tabs] 保存会话失败:', e)
   }
+  // 会话保存点（切换/关闭/自动保存/退出）顺带同步"当前文件"标识
+  try { syncActiveFileMarkerToLibrary() } catch {}
   scheduleSessionAutoSave()
 }
 
-async function restoreTabSession(): Promise<void> {
+// 把当前激活标签的文件路径记录入库内 config.json 的 currentFile（防抖写，见 recentFiles）
+function syncActiveFileMarkerToLibrary(): void {
+  try {
+    const active = tabManager.getActiveTab()
+    setLibraryCurrentFile(active?.filePath || null)
+  } catch {}
+}
+
+/**
+ * 立即把"当前文件"标识落盘。供退出流程与切库前调用（此时库作用域仍是当前库），
+ * 避免防抖 500ms 未触发应用就销毁/切库导致最后一次激活位置丢失。
+ */
+export async function flushActiveFileMarkerToLibrary(): Promise<void> {
+  try { syncActiveFileMarkerToLibrary() } catch {}
+  try { await flushLibraryCurrentFile() } catch {}
+}
+
+/**
+ * 若指定路径已打开为标签，则激活它（不改变标签顺序）。供启动/切库全量打开 recent 后
+ * 激活"当前文件"使用；未打开返回 false。
+ */
+export async function activateTabByPathIfOpen(filePath: string): Promise<boolean> {
+  try {
+    const tab = tabManager.findTabByPath(filePath)
+    if (!tab) return false
+    if (tabManager.getActiveTab()?.id === tab.id) return true
+    await tabManager.switchToTab(tab.id)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// 读取当前窗口/库的会话 raw（含老 key 与无库段 key 的一次性迁移）。
+// 恢复完整会话与"仅抢救草稿"两个入口共用，保证迁移逻辑不遗漏。
+function readSessionRawWithMigration(): string | null {
   try {
     const key = getSessionStorageKey()
     let raw = localStorage.getItem(key)
@@ -388,12 +427,91 @@ async function restoreTabSession(): Promise<void> {
       }
     }
 
+    return raw
+  } catch {
+    return null
+  }
+}
+
+async function restoreTabSession(): Promise<void> {
+  try {
+    const raw = readSessionRawWithMigration()
     if (!raw) return
     const state = JSON.parse(raw)
     await tabManager.importState(state, async (path) => readTextFileAnySafe(path))
     console.log('[Tabs] 会话已恢复，标签数:', tabManager.getTabs().length)
   } catch (e) {
     console.warn('[Tabs] 恢复会话失败:', e)
+  }
+}
+
+/**
+ * 仅抢救会话中的未保存草稿（dirty 标签）——"以库配置文件为准"模式下系统层会话
+ * 的唯一职责：打开集合与激活标签由库配置（recent + currentFile）决定，
+ * 但用户没保存的内容绝不能丢。
+ * - 有路径且已按库配置打开：把草稿内容覆盖回该标签并标脏；
+ * - 有路径未打开：新建标签并载入草稿内容（标脏，不覆盖磁盘文件）；
+ * - 无路径（未命名草稿）：新建未命名标签恢复内容与脏标记。
+ * 不切换激活标签（激活权归 currentFile）。返回抢救成功的标签数。
+ */
+export async function restoreDirtyDraftsFromSession(): Promise<number> {
+  if (!initialized) return 0
+  let rescued = 0
+  try {
+    const raw = readSessionRawWithMigration()
+    if (!raw) return 0
+    const state = JSON.parse(raw)
+    const savedTabs = Array.isArray(state?.tabs) ? state.tabs : []
+    for (const saved of savedTabs) {
+      try {
+        if (!saved || !saved.dirty) continue
+        const content = typeof saved.content === 'string' ? saved.content : ''
+        if (!content.trim()) continue
+        const filePath = typeof saved.filePath === 'string' ? saved.filePath : ''
+        if (filePath) {
+          const existing = tabManager.findTabByPath(filePath)
+          if (existing) {
+            tabManager.updateTabContent(existing.id, content)
+            existing.dirty = true
+          } else {
+            const { tab } = tabManager.openFile(filePath, content)
+            tab.dirty = true
+          }
+        } else {
+          const tab = tabManager.createNewTab()
+          tabManager.updateTabContent(tab.id, content)
+          tab.dirty = true
+        }
+        rescued++
+      } catch (e) {
+        console.warn('[Tabs] 抢救未保存草稿失败:', e)
+      }
+    }
+    if (rescued > 0) {
+      console.log('[Tabs] 已抢救未保存草稿标签数:', rescued)
+      try { saveTabSession() } catch {}
+    }
+  } catch (e) {
+    console.warn('[Tabs] 抢救会话草稿失败:', e)
+  }
+  return rescued
+}
+
+/**
+ * 切库"以库配置文件为准"模式：不做完整会话恢复，只把标签重置到单个空白标签
+ * （供随后打开新库记录的文件时复用）。未保存草稿随后由
+ * restoreDirtyDraftsFromSession 按新库会话抢救。
+ */
+export async function resetToBlankTabForLibrarySwitch(): Promise<void> {
+  if (!initialized) return
+  try {
+    const fresh = {
+      tabs: [{ id: 'fresh', filePath: null, displayName: undefined, content: '', dirty: false, mode: 'edit', wysiwygEnabled: false }],
+      activeTabId: 'fresh',
+    }
+    await tabManager.importState(fresh as any, async (path) => readTextFileAnySafe(path))
+  } catch (e) {
+    console.warn('[Tabs] 切库重置空白标签失败:', e)
   }
 }
 
@@ -428,17 +546,35 @@ export async function restoreSessionForLibrarySwitch(): Promise<void> {
 /**
  * 初始化标签系统
  * 在 DOM 就绪后调用
+ *
+ * restoreSession（默认 true）：初始化时是否做完整会话恢复。
+ * main 窗口传 false——其启动现场"以库自身配置文件为准"（记录文件全打开 +
+ * currentFile 激活，由 main.ts 在初始化后驱动），系统层会话只负责抢救未保存
+ * 草稿（restoreDirtyDraftsFromSession），不得主导打开集合。
  */
-export async function initTabSystem(): Promise<void> {
+export async function initTabSystem(opts?: { restoreSession?: boolean }): Promise<void> {
   if (initialized) return
+  // 并发防护：模块自动初始化（setTimeout）与 main.ts 启动流程可能同时调用，
+  // 必须共享同一次初始化，避免重复建 TabBar/重复恢复会话
+  if (!initPromise) {
+    const restoreSession = opts?.restoreSession !== false
+    initPromise = doInitTabSystem(restoreSession).finally(() => { initPromise = null })
+  }
+  return initPromise
+}
 
-  // 确保 DOM 已就绪（兼容新 tabbar-row 和旧 titlebar 布局）
-  const tabbarRow = document.querySelector('.tabbar-row')
-  const titlebar = document.querySelector('.titlebar')
+async function doInitTabSystem(restoreSession: boolean): Promise<void> {
+  // 等待 DOM 就绪：调用方（main.ts 启动流程）会 await 本函数，
+  // 这里必须真正等待，而不是旧版的"定时重试后空返回"（那会让调用方误判已完成）
+  for (let i = 0; i < 50; i++) {
+    if ((document.querySelector('.tabbar-row') || document.querySelector('.titlebar')) && document.querySelector('.container')) break
+    await new Promise((r) => setTimeout(r, 100))
+  }
   const container = document.querySelector('.container')
-  if ((!tabbarRow && !titlebar) || !container) {
+  if (!container) {
+    // 极端情况：DOM 长时间未就绪，退回定时重试（与旧行为一致）
     console.warn('[Tabs] DOM not ready, retrying...')
-    setTimeout(() => initTabSystem(), 100)
+    setTimeout(() => { void initTabSystem() }, 100)
     return
   }
 
@@ -554,11 +690,15 @@ export async function initTabSystem(): Promise<void> {
   // 监听编辑器变化，同步 dirty 状态
   setupDirtySync()
 
-  // 自动恢复上次会话
-  try {
-    await restoreTabSession()
-  } catch (e) {
-    console.warn('[Tabs] 自动恢复会话失败:', e)
+  // 自动恢复上次会话。main 窗口（restoreSession=false）跳过：
+  // 其启动现场以库自身配置文件为准，由 main.ts 在初始化后驱动
+  // （记录文件全打开 + currentFile 激活），系统层会话只负责抢救未保存草稿。
+  if (restoreSession) {
+    try {
+      await restoreTabSession()
+    } catch (e) {
+      console.warn('[Tabs] 自动恢复会话失败:', e)
+    }
   }
 
   // 启动会话自动保存兜底：避免非正常退出（如 macOS Cmd+Q）导致现场丢失
@@ -862,6 +1002,8 @@ function hookOpenFile(): void {
 
     // 如果打开了新文件
     if (afterPath && afterPath !== beforePath) {
+      // 打开即激活，同步"当前文件"标识（复用空白标签的场景不会触发 tab-switched，需显式记录）
+      try { setLibraryCurrentFile(afterPath) } catch {}
       // 更新当前标签（可能是新创建的空白标签，或复用的空白标签）
       const activeTab = tabManager.getActiveTab()
       if (activeTab) {
@@ -1142,14 +1284,18 @@ export function openFileInNewTab(filePath: string, content: string): void {
   tabManager.openFile(filePath, content)
 }
 
-// 自动初始化
+// 自动初始化。
+// main 窗口：restoreSession=false——启动现场以库自身配置文件为准（记录文件全打开 +
+// currentFile 激活，由 main.ts 启动流程驱动），系统层会话不主导打开集合；
+// 其它窗口（如 main-*）：保持自动恢复会话。
+const autoInitRestoreSession = getCurrentWindowLabel() !== 'main'
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     // 延迟初始化，等待 main.ts 完成
-    setTimeout(initTabSystem, 500)
+    setTimeout(() => { void initTabSystem({ restoreSession: autoInitRestoreSession }) }, 500)
   })
 } else {
-  setTimeout(initTabSystem, 500)
+  setTimeout(() => { void initTabSystem({ restoreSession: autoInitRestoreSession }) }, 500)
 }
 
 // 导出供外部使用

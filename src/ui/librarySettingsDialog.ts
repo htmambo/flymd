@@ -13,6 +13,10 @@ import { normalizePath as normalizeFsPath } from '../core/fsSafe'
 type Opts = {
   // 通知外部刷新 UI（例如库侧栏的库列表）
   onRefreshUi?: (opt?: { rebuildTree?: boolean }) => void | Promise<void>
+  // 新增库后切换到该库（完整切库流程：关闭旧库文件、按新库自身配置打开现场）。
+  // upsertLibrary 会把新库置为激活，但不管已打开的文件；必须由外部走完整切库流程，
+  // 否则旧库的文件会一直挂在编辑器里（新库无 config.json 时也不会清场）。
+  onActivateLibrary?: (id: string) => void | Promise<void>
 }
 
 function formatRootForDisplay(root: string): string {
@@ -781,6 +785,10 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       selectedLibId = lib.id
       await ensureWebdavDraftLoaded(lib.id)
       ensureMetadataLabelsDraftLoaded(lib.id)
+
+      // upsertLibrary 已把新库置为激活；这里补完整切库流程（关闭旧库文件、
+      // 按新库自身配置打开现场），否则旧库文件会一直挂着
+      if (opts.onActivateLibrary) await opts.onActivateLibrary(lib.id)
 
       if (opts.onRefreshUi) await opts.onRefreshUi({ rebuildTree: true })
       syncSelectedUiFromDraft()

@@ -1,6 +1,6 @@
 // 文档库排序偏好（纯 Store 读写，不依赖 UI）
-// 按库隔离：持久化库激活时读写库内 .flymd/config.json 的 librarySort 字段；
-// 临时库/无库回落全局 Store 的 librarySort key（保持旧行为）。
+// 按库隔离：有库根（持久化库或临时库）时读写库内 .flymd/config.json 的 librarySort 字段；
+// 无库回落全局 Store 的 librarySort key（保持旧行为）。
 
 import type { Store } from '@tauri-apps/plugin-store'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from './libraryConfig'
@@ -18,7 +18,7 @@ function normalize(val: unknown): LibSortMode | null {
 export async function getLibrarySort(store: Store | null): Promise<LibSortMode> {
   try {
     const scope = getLibraryScope()
-    if (scope.persisted) {
+    if (scope.root) {
       const cfg = await readLibraryConfig()
       if (cfg) {
         const v = normalize(cfg.librarySort)
@@ -39,14 +39,14 @@ export async function getLibrarySort(store: Store | null): Promise<LibSortMode> 
   }
 }
 
-// 将库排序偏好写入库内配置（持久化库）或全局 Store（临时库/无库）
+// 将库排序偏好写入库内配置（有库根时）或全局 Store（无库）
 export async function setLibrarySort(
   store: Store | null,
   mode: LibSortMode,
 ): Promise<void> {
   try {
     const scope = getLibraryScope()
-    if (scope.persisted) {
+    if (scope.root) {
       if (await writeLibraryConfig({ librarySort: mode })) return
     }
     if (!store) return
