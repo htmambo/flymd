@@ -305,4 +305,14 @@
 .searchable-dropdown-item.active { background: var(--active-bg); }
 .searchable-dropdown-empty { padding: 8px 12px; color: var(--muted); font-size: 12px; }
 
+.confirm-overlay { position: fixed; inset: 0; z-index: 1000000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); }
+.confirm-dialog { min-width: 280px; max-width: min(480px, calc(100vw - 48px)); background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28); padding: 16px 18px 14px; box-sizing: border-box; }
+.confirm-header { font-size: 14px; font-weight: 600; color: var(--fg); margin-bottom: 10px; }
+.confirm-body { font-size: 13px; line-height: 1.6; color: var(--fg); white-space: pre-line; word-break: break-word; max-height: 40vh; overflow-y: auto; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.confirm-actions button { -webkit-app-region: no-drag; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; cursor: pointer; }
+.confirm-actions button:hover { background: var(--active-bg); }
+.confirm-btn-ok { background: var(--accent) !important; border-color: var(--accent) !important; color: #fff !important; }
+.confirm-btn-ok:hover { filter: brightness(1.08); }
+
 

@@ -1294,23 +1294,15 @@ import {
   ensureOutlineHeadsCacheFromCtx,
   type OutlineMode,
 } from './ui/outlineHeadsCache'
+import { confirmDialog } from './ui/confirmDialog'
 
-// 统一确认弹框：优先使用 Tauri 原生 ask；浏览器环境回退到 window.confirm
+// 统一确认弹框：使用应用内弹窗，居中于窗口并跟随主题；
+// 原生 ask 的位置由窗口管理器决定（部分 Linux WM 会落在左上角），不再使用。
 async function confirmNative(message: string, title = '确认') : Promise<boolean> {
   try {
-    if (isTauriRuntime() && typeof ask === 'function') {
-      try {
-        const ok = await ask(message, { title })
-        return !!ok
-      } catch {}
-    }
-    // 浏览器环境或 ask 不可用时的降级
-    try {
-      if (typeof confirm === 'function') return !!confirm(message)
-    } catch {}
-    // 最安全的默认：不执行破坏性操作
-    return false
+    return await confirmDialog(message, title)
   } catch {
+    // 最安全的默认：不执行破坏性操作
     return false
   }
 }
