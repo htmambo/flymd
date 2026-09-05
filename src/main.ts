@@ -1049,6 +1049,26 @@ async function buildBuiltinContextMenuItems(ctx: ContextMenuContext): Promise<Co
       } catch {}
     },
   })
+  // 编辑器内置:复制选中内容(纯文本到系统剪贴板)
+  // 无选区时置灰可见,不隐藏,符合桌面右键菜单惯例;
+  // selectedText 由 buildContextMenuContext 统一三种模式(edit/preview/wysiwyg)填充。
+  items.push({
+    label: t('ctx.copySelection') || '复制选中内容',
+    icon: '📑',
+    tooltip: '将当前选中的文本复制到系统剪贴板(纯文本)',
+    disabled: !ctx.selectedText,
+    onClick: async () => {
+      // 二次校验:即便渲染时 selectedText 非空,菜单点击瞬间也可能被清空
+      const text = ctx.selectedText
+      if (!text) return
+      const ok = await copyTextToClipboard(text)
+      pluginNotice(
+        ok ? `已复制 ${text.length} 个字符` : '复制失败:无法写入剪贴板',
+        ok ? 'ok' : 'err',
+        1800,
+      )
+    },
+  })
   items.push({
     label: '打印',
     icon: '🖨️',

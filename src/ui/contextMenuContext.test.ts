@@ -80,6 +80,157 @@ describe('buildContextMenuContext', () => {
     expect(ctx.cursorPosition).toBe(0)
     expect(ctx.targetElement).toBeNull()
   })
+
+  // preview 模式 DOM 选区 fallback(右键落在 .preview 元素内时,textarea 通常没有选区)
+  describe('preview mode DOM selection fallback', () => {
+    type FakeSelection = {
+      isCollapsed: boolean
+      rangeCount: number
+      getRangeAt: (i: number) => any
+      toString: () => string
+    }
+
+    function setFakeSelection(sel: FakeSelection | null) {
+      ; (window as any).getSelection = () => sel
+    }
+
+    function makePreviewWithText(): { root: HTMLElement; text: Text } {
+      const root = document.createElement('div')
+      root.className = 'preview'
+      const t = document.createTextNode('hello preview')
+      root.appendChild(t)
+      document.body.appendChild(root)
+      return { root, text: t }
+    }
+
+    it('reads DOM selection when mode is preview and textarea has no selection', () => {
+      const { root, text } = makePreviewWithText()
+      setFakeSelection({
+        isCollapsed: false,
+        rangeCount: 1,
+        getRangeAt: () => ({
+          commonAncestorContainer: text,
+        }),
+        toString: () => 'preview-selected',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('', 0, 0), mode: 'preview' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        expect(ctx.selectedText).toBe('preview-selected')
+        expect(ctx.mode).toBe('preview')
+      } finally {
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+
+    it('rejects DOM selection that falls outside .preview', () => {
+      const { root } = makePreviewWithText()
+      const outside = document.createTextNode('outside')
+      document.body.appendChild(outside)
+      setFakeSelection({
+        isCollapsed: false,
+        rangeCount: 1,
+        getRangeAt: () => ({ commonAncestorContainer: outside }),
+        toString: () => 'outside-text',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('', 0, 0), mode: 'preview' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        expect(ctx.selectedText).toBe('')
+      } finally {
+        outside.parentNode?.removeChild(outside)
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+
+    it('rejects multi-range selection when any range falls outside .preview', () => {
+      // Firefox 用户可以按住 Ctrl/Cmd 创建多个 Range;toString() 会拼接全部,
+      // 因此只要有一个 Range 在 .preview 之外就应整体拒绝,避免误复制外部内容。
+      const { root, text } = makePreviewWithText()
+      const outside = document.createTextNode('outside')
+      document.body.appendChild(outside)
+      setFakeSelection({
+        isCollapsed: false,
+        rangeCount: 2,
+        getRangeAt: (i: number) => ({
+          commonAncestorContainer: i === 0 ? text : outside,
+        }),
+        toString: () => 'inside+outside',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('', 0, 0), mode: 'preview' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        expect(ctx.selectedText).toBe('')
+      } finally {
+        outside.parentNode?.removeChild(outside)
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+
+    it('accepts multi-range selection when all ranges are inside .preview', () => {
+      const { root, text } = makePreviewWithText()
+      const other = document.createElement('span')
+      const otherText = document.createTextNode('sibling')
+      other.appendChild(otherText)
+      root.appendChild(other)
+      setFakeSelection({
+        isCollapsed: false,
+        rangeCount: 2,
+        getRangeAt: (i: number) => ({
+          commonAncestorContainer: i === 0 ? text : otherText,
+        }),
+        toString: () => 'range0+range1',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('', 0, 0), mode: 'preview' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        expect(ctx.selectedText).toBe('range0+range1')
+      } finally {
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+
+    it('ignores collapsed DOM selection', () => {
+      const { root, text } = makePreviewWithText()
+      setFakeSelection({
+        isCollapsed: true,
+        rangeCount: 0,
+        getRangeAt: () => null,
+        toString: () => '',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('', 0, 0), mode: 'preview' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        expect(ctx.selectedText).toBe('')
+      } finally {
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+
+    it('does not invoke DOM fallback in edit mode', () => {
+      const { root, text } = makePreviewWithText()
+      setFakeSelection({
+        isCollapsed: false,
+        rangeCount: 1,
+        getRangeAt: () => ({ commonAncestorContainer: text }),
+        toString: () => 'preview-text',
+      })
+      try {
+        const deps = makeDeps({ editor: makeEditor('hello', 0, 5), mode: 'edit' })
+        const ctx = buildContextMenuContext({ target: root } as any, deps)
+        // edit 模式仍然读 textarea 选区,不读 DOM
+        expect(ctx.selectedText).toBe('hello')
+      } finally {
+        root.remove()
+        setFakeSelection(null)
+      }
+    })
+  })
 })
 
 describe('buildContextMenuContextForPalette', () => {

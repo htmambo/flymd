@@ -34,6 +34,36 @@ export function buildContextMenuContext(e: MouseEvent, deps: ContextMenuDeps): C
         text = wysSel
       } catch {}
     }
+    // preview 模式下,textarea 内通常没有选区;若用户在 .preview 内用鼠标选中内容,
+    // 退回到 DOM 选区,以便「复制选中内容」等菜单项能感知到选区。
+    // 注意:Firefox 支持多 Range 选区(Ctrl/Cmd+click),selObj.toString() 会拼接全部 Range,
+    // 因此必须校验所有 Range 都在 previewRoot 内,否则会把外部内容一并复制。
+    if (!text && deps.mode === 'preview') {
+      try {
+        const selObj = typeof window !== 'undefined' ? window.getSelection() : null
+        if (selObj && !selObj.isCollapsed && selObj.rangeCount > 0) {
+          const targetEl = (e.target as HTMLElement | null) || null
+          const previewRoot =
+            (targetEl && typeof targetEl.closest === 'function'
+              ? (targetEl.closest('.preview') as HTMLElement | null)
+              : null) ||
+            (typeof document !== 'undefined'
+              ? (document.querySelector('.preview') as HTMLElement | null)
+              : null)
+          if (previewRoot) {
+            let allInside = true
+            for (let i = 0; i < selObj.rangeCount; i++) {
+              const r = selObj.getRangeAt(i)
+              if (!previewRoot.contains(r.commonAncestorContainer)) {
+                allInside = false
+                break
+              }
+            }
+            if (allInside) text = selObj.toString()
+          }
+        }
+      } catch {}
+    }
     return {
       selectedText: text,
       cursorPosition: sel,
