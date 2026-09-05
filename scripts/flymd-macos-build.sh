@@ -109,6 +109,21 @@ else
   warn "    建议安装: brew install sccache  （之后本脚本会自动启用）"
 fi
 
+# Pillow —— ensure-icons 生成安全区图标源图（make_icon_safearea.py）依赖它。
+# Xcode CLT 自带的系统 Python 默认未安装；缺失时自动装到用户目录（不影响系统 Python）。
+# 仍失败只警告不中断：ensure-icons 会回退到原始源图，但 macOS Dock 图标会偏大。
+if python3 -c "import PIL" &>/dev/null 2>&1; then
+  ok "Pillow $(python3 -c "from PIL import __version__ as v; print(v)" 2>/dev/null || echo 'OK') 已可用"
+else
+  warn "未检测到 Pillow，尝试自动安装到用户目录…"
+  if python3 -m pip install --user Pillow &>/dev/null && python3 -c "import PIL" &>/dev/null 2>&1; then
+    ok "Pillow 安装成功（python3 -m pip install --user Pillow）"
+  else
+    warn "Pillow 自动安装失败 —— 图标安全区生成将回退，macOS Dock 图标可能偏大。"
+    warn "    可手动安装: python3 -m pip install --user Pillow"
+  fi
+fi
+
 # FAST_BUILD —— 调试/迭代时用。release 配置下 lto=true (fat) 会让最终链接
 # 阶段把全部 crate 重新 codegen 一次，Intel Mac 上常拖 5–10 分钟。设置 FAST_BUILD=1
 # 可临时把 lto 降为 thin、关掉 strip，二进制稍大但总构建时间显著缩短。
