@@ -12,7 +12,7 @@ import {
   fetchTextSmart,
   getEffectivePluginEnableMap,
 } from './runtime'
-import { LIBRARY_CHANGED_EVENT } from '../core/libraryConfig'
+import { LIBRARY_CHANGED_EVENT, LIBRARY_CONFIG_CHANGED_EVENT, getLibraryScope } from '../core/libraryConfig'
 import {
   createPluginMarket,
   FALLBACK_INSTALLABLES,
@@ -492,6 +492,13 @@ export function initPluginRuntime(
       try {
         const d = (ev as CustomEvent).detail || {}
         if (d.persisted) void reconcilePluginsForLibraryChange()
+      } catch {}
+    })
+    // 库内配置被外部修改（WebDAV 同步/另一窗口）时，扩展启用覆盖可能已变化，重新对齐
+    window.addEventListener(LIBRARY_CONFIG_CHANGED_EVENT, () => {
+      try {
+        const s = getLibraryScope()
+        if (s.persisted) void reconcilePluginsForLibraryChange()
       } catch {}
     })
   } catch {}

@@ -1296,7 +1296,7 @@ import {
 } from './ui/outlineHeadsCache'
 import { confirmDialog } from './ui/confirmDialog'
 import { initCodeWrap } from './core/codeWrap'
-import { setLibraryScopeCache, getLibraryScope, readLibraryConfig } from './core/libraryConfig'
+import { setLibraryScopeCache, getLibraryScope, readLibraryConfig, resolveStoredLibraryPath } from './core/libraryConfig'
 
 // 统一确认弹框：使用应用内弹窗，居中于窗口并跟随主题；
 // 原生 ask 的位置由窗口管理器决定（部分 Linux WM 会落在左上角），不再使用。
@@ -4622,9 +4622,12 @@ async function setLibraryRoot(p: string) {
 async function getDefaultPasteDir(): Promise<string | null> {
   try {
     const scope = getLibraryScope()
-    if (scope.persisted) {
+    if (scope.persisted && scope.root) {
       const cfg = await readLibraryConfig()
-      if (cfg && typeof cfg.defaultPasteDir === 'string' && cfg.defaultPasteDir) return cfg.defaultPasteDir
+      if (cfg && typeof cfg.defaultPasteDir === 'string' && cfg.defaultPasteDir) {
+        // 库内存相对路径（跨机器兼容）；兼容旧版绝对路径
+        return resolveStoredLibraryPath(scope.root, cfg.defaultPasteDir)
+      }
     }
     if (!store) return null
     const val = await store.get('defaultPasteDir')

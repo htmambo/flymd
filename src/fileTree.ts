@@ -1,7 +1,20 @@
 import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
 import { t } from './i18n'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
-import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from './core/libraryConfig'
+import { getLibraryScope, readLibraryConfig, writeLibraryConfig, toLibraryRelativePath, resolveLibraryPath, resolveStoredLibraryPath, LIBRARY_CONFIG_CHANGED_EVENT } from './core/libraryConfig'
+
+// 库内配置被外部修改（WebDAV 同步/另一窗口）时：重载文件夹排序并刷新树
+try {
+  window.addEventListener(LIBRARY_CONFIG_CHANGED_EVENT, () => {
+    try {
+      _folderOrderMarker = null
+      void (async () => {
+        await loadFolderOrder()
+        if (state.currentRoot) await refresh()
+      })()
+    } catch {}
+  })
+} catch {}
 import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 
 export type FileTreeOptions = {
@@ -247,22 +260,52 @@ async function loadFolderOrder() {
   const scope = getLibraryScope()
   _folderOrderMarker = scope.persisted && scope.root ? scope.root : ''
   if (scope.persisted && scope.root) {
+    const root = scope.root
     try {
       const cfg = await readLibraryConfig()
       if (cfg) {
         if (cfg.folderOrder && typeof cfg.folderOrder === 'object') {
-          applyFolderOrderMap(cfg.folderOrder)
+          // 库内存相对路径，加载时解析回绝对（兼容旧版绝对路径数据）
+          const resolved: Record<string, Record<string, number>> = {}
+          for (const [parent, children] of Object.entries(cfg.folderOrder)) {
+            if (!children || typeof children !== 'object') continue
+            const absParent = resolveStoredLibraryPath(root, parent)
+            const m: Record<string, number> = {}
+            for (const [child, ord] of Object.entries(children as any)) {
+              const n = Number(ord)
+              if (Number.isFinite(n)) m[resolveStoredLibraryPath(root, child)] = n
+            }
+            resolved[absParent] = m
+          }
+          applyFolderOrderMap(resolved)
           return
         }
-        // 播种：全局 localStorage 中属于本库的条目
+        // 播种：全局 localStorage 中属于本库的条目（存相对）
         const globalMap = readGlobalFolderOrder()
         const seeded: Record<string, Record<string, number>> = {}
         for (const [parent, children] of Object.entries(globalMap)) {
-          if (isInside(scope.root, parent)) seeded[parent] = children as Record<string, number>
+          const relParent = toLibraryRelativePath(root, parent)
+          if (relParent == null) continue
+          const m: Record<string, number> = {}
+          for (const [child, ord] of Object.entries(children as any)) {
+            const relChild = toLibraryRelativePath(root, child)
+            const n = Number(ord)
+            if (relChild != null && Number.isFinite(n)) m[relChild] = n
+          }
+          seeded[relParent] = m
         }
-        applyFolderOrderMap(seeded)
+        // 内存中用绝对路径
+        const seededAbs: Record<string, Record<string, number>> = {}
+        for (const [parent, children] of Object.entries(seeded)) {
+          const m: Record<string, number> = {}
+          for (const [child, ord] of Object.entries(children)) {
+            m[resolveLibraryPath(root, child)] = ord
+          }
+          seededAbs[resolveLibraryPath(root, parent)] = m
+        }
+        applyFolderOrderMap(seededAbs)
         if (Object.keys(seeded).length > 0) {
-          try { await writeLibraryConfig({ folderOrder: JSON.parse(JSON.stringify(seeded)) }) } catch {}
+          try { await writeLibraryConfig({ folderOrder: seeded }) } catch {}
         }
         return
       }
@@ -282,7 +325,20 @@ async function ensureFolderOrderLoaded() {
 function saveFolderOrder() {
   const scope = getLibraryScope()
   if (scope.persisted && scope.root) {
-    try { void writeLibraryConfig({ folderOrder: JSON.parse(JSON.stringify(folderOrder)) }) } catch {}
+    const root = scope.root
+    // 入库前转相对路径（跨机器兼容），库外条目丢弃
+    const rel: Record<string, Record<string, number>> = {}
+    for (const [parent, children] of Object.entries(folderOrder)) {
+      const relParent = toLibraryRelativePath(root, parent)
+      if (relParent == null) continue
+      const m: Record<string, number> = {}
+      for (const [child, ord] of Object.entries(children)) {
+        const relChild = toLibraryRelativePath(root, child)
+        if (relChild != null) m[relChild] = ord
+      }
+      rel[relParent] = m
+    }
+    try { void writeLibraryConfig({ folderOrder: rel }) } catch {}
     return
   }
   try {

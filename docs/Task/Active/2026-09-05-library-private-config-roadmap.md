@@ -7,6 +7,8 @@
 - **通道A（库内共享）** `<库根>/.flymd/config.json`：
   最近文件 `recent`、库树排序 `librarySort`、文件夹排序 `folderOrder`、
   粘贴默认目录 `defaultPasteDir`、扩展启用覆盖 `pluginEnable`。
+  **涉及文件路径的字段一律存库内相对路径**（不同机器库根位置不同），
+  读取时按当前库根解析回绝对；兼容早期绝对路径数据，下次写回自动转相对。
 - **通道B（系统层按库命名空间）** Store/localStorage key 追加 `:<libId>`：
   标签会话 `tabSession`、光标位置 `docPos`、图床配置 `uploader`（含凭据）。
   WebDAV 维持原有 `sync.profiles[libId]`（系统层按库，不动）。
@@ -16,6 +18,12 @@
 切库行为：切换持久化库时保存旧库标签会话 → 恢复新库会话（无会话则重置为
 空白标签）；扩展激活集按新库覆盖 reconcile；docPos/folderOrder 等缓存随
 `flymd:library:changed` 事件失效重载。临时库/无库一律回落全局行为。
+
+并发与同步（v1.1）：config.json 为"内存缓存 + 写透"模型——写时先读磁盘最新值
+作为合并基座再叠加 patch（多窗口/同步工具的改动不被过期内存覆盖）；mtime
+轮询（3s）检测外部变更后失效缓存并派发 `flymd:libraryConfig:changed`，
+fileTree 重载排序刷新树、扩展运行时重新 reconcile。语义=后变的一方赢；
+极端同时写由同步工具的 conflict 文件兜底。
 
 ## 后续增强（用户已确认方向，待排期）
 
