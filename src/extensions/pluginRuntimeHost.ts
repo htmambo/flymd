@@ -10,7 +10,9 @@ import {
   saveInstalledPlugins,
   getPluginUpdateStates,
   fetchTextSmart,
+  getEffectivePluginEnableMap,
 } from './runtime'
+import { LIBRARY_CHANGED_EVENT } from '../core/libraryConfig'
 import {
   createPluginMarket,
   FALLBACK_INSTALLABLES,
@@ -422,7 +424,9 @@ export function initPluginRuntime(
   async function loadAndActivateEnabledPlugins(): Promise<void> {
     try {
       const map = await getInstalledPlugins()
-      const toEnable = Object.values(map).filter((p) => p.enabled)
+      // 按库隔离：有效启用 = 库覆盖 ?? 全局
+      const effMap = await getEffectivePluginEnableMap(map)
+      const toEnable = Object.values(map).filter((p) => effMap[p.id] ?? p.enabled)
 
       // 向后兼容：为旧插件设置默认 showInMenuBar = true
       let needSave = false
@@ -466,6 +470,31 @@ export function initPluginRuntime(
       } catch {}
     } catch {}
   }
+
+  // 切库后按库覆盖状态对齐激活集：新库中禁用的停用、启用的激活
+  // （activate/deactivate 均幂等）。仅持久化库触发；临时库维持现状。
+  async function reconcilePluginsForLibraryChange(): Promise<void> {
+    try {
+      const map = await getInstalledPlugins()
+      const effMap = await getEffectivePluginEnableMap(map)
+      for (const p of Object.values(map)) {
+        const enabled = effMap[p.id] ?? !!p.enabled
+        try {
+          if (enabled) await activatePlugin(p)
+          else await deactivatePlugin(p.id)
+        } catch {}
+      }
+    } catch {}
+  }
+
+  try {
+    window.addEventListener(LIBRARY_CHANGED_EVENT, (ev) => {
+      try {
+        const d = (ev as CustomEvent).detail || {}
+        if (d.persisted) void reconcilePluginsForLibraryChange()
+      } catch {}
+    })
+  } catch {}
 
   async function updateInstalledPlugin(
     p: InstalledPlugin,

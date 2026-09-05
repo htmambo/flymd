@@ -1,7 +1,33 @@
 // 从 store.get('uploader') 的原始对象解析出可用配置
 // 原则：默认 provider=s3，旧字段保持不变；仅在启用时做严格校验
 
+import type { Store } from '@tauri-apps/plugin-store'
 import type { AnyUploaderConfig, ImgLaUploaderConfig, S3UploaderConfig, UploaderProvider } from './types'
+import { libraryScopedKey } from '../core/libraryConfig'
+
+// 图床配置按库隔离：持久化库激活时读写 Store 的 `uploader:<libId>`（含凭据，
+// 留在系统层不进库目录）；库级 key 不存在时回落全局 'uploader'，写入则写库级 key。
+// 临时库/无库读写全局 key（保持旧行为）。
+export async function getUploaderRaw(store: Store | null): Promise<any> {
+  if (!store) return null
+  try {
+    const key = libraryScopedKey('uploader')
+    const v = await store.get(key)
+    if (v != null) return v
+    if (key !== 'uploader') return await store.get('uploader')
+    return v ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function setUploaderRaw(store: Store | null, raw: any): Promise<void> {
+  if (!store) return
+  try {
+    await store.set(libraryScopedKey('uploader'), raw)
+    await store.save()
+  } catch {}
+}
 
 const IMGLA_BASE_URL = 'https://www.imgla.net'
 

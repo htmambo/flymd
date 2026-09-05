@@ -7,6 +7,8 @@
 // 故使用本地 DocPosMode 类型避免污染主类型。
 
 import type { Store } from '@tauri-apps/plugin-store'
+import { libraryScopedKey, LIBRARY_CHANGED_EVENT, getLibraryScope } from './libraryConfig'
+import { isInside } from './fsSafe'
 
 export type DocPosMode = 'edit' | 'preview' | 'wysiwyg'
 
@@ -39,6 +41,16 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
   let mapCache: Record<string, DocPos> | null = null
   let mapLoading: Promise<Record<string, DocPos>> | null = null
 
+  // 按库隔离：Store key 追加 libId 后缀（临时库/无库回落全局 'docPos'）；
+  // 库切换时清空内存缓存，下次访问重新读新库的 map
+  const storeKey = () => libraryScopedKey('docPos')
+  try {
+    window.addEventListener(LIBRARY_CHANGED_EVENT, () => {
+      mapCache = null
+      mapLoading = null
+    })
+  } catch {}
+
   const getMap = async (): Promise<Record<string, DocPos>> => {
     try {
       const store = deps.getStore()
@@ -47,8 +59,29 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
       if (mapLoading) return await mapLoading
       mapLoading = (async () => {
         try {
-          const m = await store.get('docPos')
-          const map = (m && typeof m === 'object') ? (m as Record<string, DocPos>) : {}
+          const key = storeKey()
+          const m = await store.get(key)
+          let map = (m && typeof m === 'object') ? (m as Record<string, DocPos>) : {}
+          // 播种：按库 key 首次为空时，从全局 docPos 复制本库路径下的条目
+          if (key !== 'docPos' && Object.keys(map).length === 0) {
+            try {
+              const g = await store.get('docPos')
+              if (g && typeof g === 'object') {
+                const scope = getLibraryScope()
+                const seeded: Record<string, DocPos> = {}
+                if (scope.root) {
+                  for (const [p, v] of Object.entries(g as Record<string, DocPos>)) {
+                    if (isInside(scope.root, p)) seeded[p] = v
+                  }
+                }
+                if (Object.keys(seeded).length > 0) {
+                  map = seeded
+                  await store.set(key, map)
+                  await store.save()
+                }
+              }
+            } catch {}
+          }
           mapCache = map
           return map
         } catch {
@@ -79,7 +112,7 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
       }
       const store = deps.getStore()
       if (store) {
-        await store.set('docPos', map)
+        await store.set(storeKey(), map)
         await store.save()
       }
     } catch {}

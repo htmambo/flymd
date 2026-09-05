@@ -1,6 +1,7 @@
 import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
 import { t } from './i18n'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
+import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from './core/libraryConfig'
 import { renderTemplate, extractFilenameFromTemplate } from './core/templateEngine'
 
 export type FileTreeOptions = {
@@ -208,16 +209,18 @@ const hasDocCache = new Map<string, boolean>()
 const hasDocPending = new Map<string, Promise<boolean>>()
 
 // 文件夹自定义排序映射：父目录 -> 子目录路径 -> 顺序索引（仅作用于文件夹）
+// 按库隔离：持久化库激活时读写库内 .flymd/config.json 的 folderOrder 字段；
+// 临时库/无库回落全局 localStorage 的 flymd:folderOrder（保持旧行为）。
+// 内存中的 folderOrder 保持同步读取（排序比较器是同步的），加载/切换时异步刷新。
 const folderOrder: Record<string, Record<string, number>> = {}
 const FOLDER_ORDER_KEY = 'flymd:folderOrder'
+let _folderOrderMarker: string | null = null
 
-function loadFolderOrder() {
+function applyFolderOrderMap(obj: any) {
   try {
-    const raw = localStorage.getItem(FOLDER_ORDER_KEY)
-    if (!raw) return
-    const obj = JSON.parse(raw)
+    for (const k of Object.keys(folderOrder)) delete folderOrder[k]
     if (!obj || typeof obj !== 'object') return
-    for (const [parent, children] of Object.entries(obj as any)) {
+    for (const [parent, children] of Object.entries(obj)) {
       if (!children || typeof children !== 'object') continue
       const m: Record<string, number> = {}
       for (const [child, ord] of Object.entries(children as any)) {
@@ -229,7 +232,59 @@ function loadFolderOrder() {
   } catch {}
 }
 
+function readGlobalFolderOrder(): Record<string, Record<string, number>> {
+  try {
+    const raw = localStorage.getItem(FOLDER_ORDER_KEY)
+    if (!raw) return {}
+    const obj = JSON.parse(raw)
+    return (obj && typeof obj === 'object') ? obj : {}
+  } catch {
+    return {}
+  }
+}
+
+async function loadFolderOrder() {
+  const scope = getLibraryScope()
+  _folderOrderMarker = scope.persisted && scope.root ? scope.root : ''
+  if (scope.persisted && scope.root) {
+    try {
+      const cfg = await readLibraryConfig()
+      if (cfg) {
+        if (cfg.folderOrder && typeof cfg.folderOrder === 'object') {
+          applyFolderOrderMap(cfg.folderOrder)
+          return
+        }
+        // 播种：全局 localStorage 中属于本库的条目
+        const globalMap = readGlobalFolderOrder()
+        const seeded: Record<string, Record<string, number>> = {}
+        for (const [parent, children] of Object.entries(globalMap)) {
+          if (isInside(scope.root, parent)) seeded[parent] = children as Record<string, number>
+        }
+        applyFolderOrderMap(seeded)
+        if (Object.keys(seeded).length > 0) {
+          try { await writeLibraryConfig({ folderOrder: JSON.parse(JSON.stringify(seeded)) }) } catch {}
+        }
+        return
+      }
+    } catch {}
+  }
+  applyFolderOrderMap(readGlobalFolderOrder())
+}
+
+// 库切换后异步重载排序映射（刷新树前调用，幂等）
+async function ensureFolderOrderLoaded() {
+  const scope = getLibraryScope()
+  const marker = scope.persisted && scope.root ? scope.root : ''
+  if (_folderOrderMarker === marker) return
+  await loadFolderOrder()
+}
+
 function saveFolderOrder() {
+  const scope = getLibraryScope()
+  if (scope.persisted && scope.root) {
+    try { void writeLibraryConfig({ folderOrder: JSON.parse(JSON.stringify(folderOrder)) }) } catch {}
+    return
+  }
   try {
     localStorage.setItem(FOLDER_ORDER_KEY, JSON.stringify(folderOrder))
   } catch {}
@@ -1367,6 +1422,7 @@ async function refreshTree() {
     return
   }
   state.currentRoot = root
+  await ensureFolderOrderLoaded()
   restoreExpandedState(root)
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
@@ -1404,6 +1460,7 @@ async function refresh() {
   }
 
   state.currentRoot = root
+  await ensureFolderOrderLoaded()
   restoreExpandedState(root)
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
@@ -1432,7 +1489,7 @@ async function refresh() {
 
 async function init(container: HTMLElement, opts: FileTreeOptions) {
   state.container = container; state.opts = opts
-  loadFolderOrder()
+  await loadFolderOrder()
   // 树容器从 display:none 变为可见（大纲 tab → 目录 tab、大纲布局切换等）时，
   // 隐藏期间量算的竖线高度全是 0，必须重新量算，否则 rail 竖线全部消失
   try {

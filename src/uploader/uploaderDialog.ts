@@ -4,6 +4,7 @@
 import type { Store } from '@tauri-apps/plugin-store'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { getUploaderRaw, setUploaderRaw } from './storeConfig'
 
 const IMGLA_BASE_URL = 'https://www.imgla.net'
 
@@ -204,7 +205,7 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
   // 预填
   try {
     if (store) {
-      const up = (await store.get('uploader')) as any
+      const up = (await getUploaderRaw(store)) as any
       const provider = String(up?.provider || '').toLowerCase() === 'imgla' ? 'imgla' : 's3'
       if (inputProvider) inputProvider.value = provider
       inputEnabled.checked = !!up?.enabled
@@ -308,8 +309,7 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
           }
         }
         if (store) {
-          await store.set('uploader', cfg)
-          await store.save()
+          await setUploaderRaw(store, cfg)
           deps.setUploaderEnabledSnapshot(!!cfg.enabled)
         }
       } catch (e) {
@@ -396,8 +396,7 @@ export async function openUploaderDialog(deps: UploaderDialogDeps): Promise<void
         }
       }
       if (store) {
-        await store.set('uploader', cfg)
-        await store.save()
+        await setUploaderRaw(store, cfg)
         deps.setUploaderEnabledSnapshot(!!cfg.enabled)
       }
       showUploaderOverlay(false)

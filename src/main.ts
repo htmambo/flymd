@@ -53,7 +53,7 @@ import { appLocalDataDir } from '@tauri-apps/api/path'
 import fileTree from './fileTree'
 import type { AnyUploaderConfig } from './uploader/types'
 import { uploadImageToCloud } from './uploader/upload'
-import { parseUploaderConfigEnabledOnly, parseUploaderConfigForManagement } from './uploader/storeConfig'
+import { parseUploaderConfigEnabledOnly, parseUploaderConfigForManagement, getUploaderRaw } from './uploader/storeConfig'
 import { openUploaderDialog as openUploaderDialogInternal, testUploaderConnectivity } from './uploader/uploaderDialog'
 import { uploadImageFromContextMenu } from './uploader/manualImageUpload'
 import { transcodeToWebpIfNeeded } from './utils/image'
@@ -871,7 +871,7 @@ const builtinPlugins: InstalledPlugin[] = [
 async function readUploaderEnabledState(): Promise<boolean> {
   try {
     if (!store) return uploaderEnabledSnapshot
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     if (up && typeof up === 'object') {
       uploaderEnabledSnapshot = !!(up as any).enabled
     }
@@ -1296,6 +1296,7 @@ import {
 } from './ui/outlineHeadsCache'
 import { confirmDialog } from './ui/confirmDialog'
 import { initCodeWrap } from './core/codeWrap'
+import { setLibraryScopeCache, getLibraryScope, readLibraryConfig } from './core/libraryConfig'
 
 // 统一确认弹框：使用应用内弹窗，居中于窗口并跟随主题；
 // 原生 ask 的位置由窗口管理器决定（部分 Linux WM 会落在左上角），不再使用。
@@ -4529,6 +4530,7 @@ function setTemporaryLibraryRoot(root: string | null): boolean {
   const cur = temporaryLibraryRoot ? normalizePath(temporaryLibraryRoot).replace(/[\\/]+$/, '') : null
   if ((next || null) === (cur || null)) return false
   temporaryLibraryRoot = next || null
+  try { void refreshLibraryScopeCache() } catch {}
   return true
 }
 
@@ -4541,8 +4543,31 @@ function isTemporaryLibraryActive(): boolean {
 }
 
 async function activatePersistedLibrary(id: string): Promise<void> {
+  // 切库前：当前库作用域仍在，先把标签会话存到旧库的 key
+  const prevScope = getLibraryScope()
+  try { const m = await import('./tabs/integration'); m.saveSessionForLibrarySwitch() } catch {}
   clearTemporaryLibraryRoot()
   await setActiveLibId(id)
+  await refreshLibraryScopeCache()
+  // 切换到不同的持久化库：恢复该库的标签会话（无会话则重置为空白标签）
+  const nextScope = getLibraryScope()
+  if (nextScope.persisted && nextScope.id && nextScope.id !== prevScope.id) {
+    try { const m = await import('./tabs/integration'); await m.restoreSessionForLibrarySwitch() } catch {}
+  }
+}
+
+// 同步"当前库作用域"缓存到 libraryConfig 模块（库内私有配置的读写都以此为依据）。
+// 库激活/切换/临时库变化/库删除后都必须调用；变化时会派发 flymd:library:changed。
+async function refreshLibraryScopeCache(): Promise<void> {
+  try {
+    if (temporaryLibraryRoot) {
+      setLibraryScopeCache({ id: null, root: temporaryLibraryRoot, persisted: false })
+      return
+    }
+    const lib = await getActiveLibrary()
+    if (lib) setLibraryScopeCache({ id: lib.id, root: lib.root, persisted: true })
+    else setLibraryScopeCache({ id: null, root: null, persisted: false })
+  } catch {}
 }
 
 async function syncTemporaryLibraryRootForOpenedPath(path: string): Promise<void> {
@@ -4584,6 +4609,7 @@ async function setLibraryRoot(p: string) {
   try {
     clearTemporaryLibraryRoot()
     await upsertLibrary({ root: p })
+    await refreshLibraryScopeCache()
   } catch {}
 }
 
@@ -4592,8 +4618,14 @@ async function setLibraryRoot(p: string) {
 // 大纲子系统已抽离到 src/modes/outline.ts(outlineApi)。模块级状态 + 函数全部闭包到工厂内。
 
 // 粘贴图片默认保存目录（无打开文件时使用）
+// 按库隔离：持久化库激活时读库内 .flymd/config.json 的 defaultPasteDir；否则回落全局 Store
 async function getDefaultPasteDir(): Promise<string | null> {
   try {
+    const scope = getLibraryScope()
+    if (scope.persisted) {
+      const cfg = await readLibraryConfig()
+      if (cfg && typeof cfg.defaultPasteDir === 'string' && cfg.defaultPasteDir) return cfg.defaultPasteDir
+    }
     if (!store) return null
     const val = await store.get('defaultPasteDir')
     return (typeof val === 'string' && val) ? val : null
@@ -4604,7 +4636,7 @@ async function getDefaultPasteDir(): Promise<string | null> {
 async function getUploaderConfig(): Promise<AnyUploaderConfig | null> {
   try {
     if (!store) return null
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     return parseUploaderConfigEnabledOnly(up as any)
   } catch { return null }
 }
@@ -4613,7 +4645,7 @@ async function getUploaderConfig(): Promise<AnyUploaderConfig | null> {
 async function getUploaderRawConfig(): Promise<AnyUploaderConfig | null> {
   try {
     if (!store) return null
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     return parseUploaderConfigForManagement(up as any, { enabledOnly: false })
   } catch { return null }
 }
@@ -4626,7 +4658,7 @@ try {
     ;(window as any).flymdGetUploaderStoreRaw = async () => {
       try {
         if (!store) return null
-        return await store.get('uploader')
+        return await getUploaderRaw(store)
       } catch { return null }
     }
     ;(window as any).flymdGetCurrentFilePath = () => currentFilePath
@@ -4983,7 +5015,7 @@ try {
 async function getAlwaysSaveLocalImages(): Promise<boolean> {
   try {
     if (!store) return false
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     if (!up || typeof up !== 'object') return false
     return !!(up as any).alwaysLocal
   } catch { return false }
@@ -4993,7 +5025,7 @@ async function getAlwaysSaveLocalImages(): Promise<boolean> {
 async function getPreferRelativeLocalImages(): Promise<boolean> {
   try {
     if (!store) return false
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     if (!up || typeof up !== 'object') return false
     return !!(up as any).localPreferRelative
   } catch { return false }
@@ -5003,7 +5035,7 @@ async function getPreferRelativeLocalImages(): Promise<boolean> {
 async function getTranscodePrefs(): Promise<{ convertToWebp: boolean; webpQuality: number; saveLocalAsWebp: boolean }> {
   try {
     if (!store) return { convertToWebp: false, webpQuality: 0.85, saveLocalAsWebp: false }
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     const o = (up && typeof up === 'object') ? (up as any) : null
     return {
       convertToWebp: !!o?.convertToWebp,
@@ -5897,6 +5929,8 @@ function setLibSwitcherDomState(pos: 'sidebar' | 'ribbon') {
 
 // 刷新文件树并更新库名称显示
 async function refreshLibraryUiAndTree(refreshTree = true) {
+  // 库删除/切换等入口都可能改变当前库，先同步作用域缓存（兜底，幂等）
+  try { await refreshLibraryScopeCache() } catch {}
   // 更新库名称显示
   try {
     const id = await getActiveLibraryId()
@@ -8559,6 +8593,8 @@ function bindEvents() {
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
+    // 库私有配置作用域缓存：必须在任何按库读写之前就绪
+    try { await refreshLibraryScopeCache() } catch {}
     // 初始化扩展管理面板宿主（依赖 store 等全局状态）
     try {
       // 动态加载核心扩展常量/函数，避免在启动包中静态引入 runtime 依赖。

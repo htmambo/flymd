@@ -8,7 +8,9 @@ import {
   SESSION_KEY_PREFIX,
   getCurrentWindowLabel,
   getSessionStorageKey,
+  getUnscopedSessionKey,
   migrateLegacySessionKey,
+  setSessionLibraryScope,
 } from './sessionStorageKey'
 
 const mockedGetCurrentWindow = vi.mocked(getCurrentWindow)
@@ -19,6 +21,7 @@ function setLabel(label: string | undefined): void {
 
 beforeEach(() => {
   mockedGetCurrentWindow.mockReset()
+  setSessionLibraryScope(null)
 })
 
 describe('getCurrentWindowLabel', () => {
@@ -41,11 +44,25 @@ describe('getCurrentWindowLabel', () => {
 })
 
 describe('getSessionStorageKey', () => {
-  it('按窗口 label 隔离 storage key', () => {
+  it('无库时按 全局段 + 窗口 label 隔离 storage key', () => {
     setLabel('main')
-    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'main')
+    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'global:main')
     setLabel('main-9')
-    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'main-9')
+    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'global:main-9')
+  })
+
+  it('设置库作用域后 key 带库 id 段', () => {
+    setLabel('main')
+    setSessionLibraryScope('lib-123')
+    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'lib-123:main')
+    // 清除后回落 global 段
+    setSessionLibraryScope(null)
+    expect(getSessionStorageKey()).toBe(SESSION_KEY_PREFIX + 'global:main')
+  })
+
+  it('无库段旧 key 保持原格式（用于一次性迁移）', () => {
+    setLabel('main')
+    expect(getUnscopedSessionKey()).toBe(SESSION_KEY_PREFIX + 'main')
   })
 })
 

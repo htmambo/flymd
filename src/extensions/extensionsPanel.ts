@@ -10,12 +10,15 @@ import {
   saveInstalledPlugins,
   getPluginUpdateStates,
   fetchTextSmart,
+  getEffectivePluginEnableMap,
+  setPluginEnabledScoped,
   type InstalledPlugin,
   type PluginUpdateState,
 } from './runtime'
 import { t } from '../i18n'
 import { appendLog } from '../core/logger'
 import { isLikelyLocalPath } from '../core/pathUtils'
+import { getUploaderRaw } from '../uploader/storeConfig'
 
 // 宿主依赖：通过注入避免与 main.ts 形成循环引用
 export interface ExtensionsPanelHost {
@@ -456,8 +459,10 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
 	    _extLastInstalledMap = installedMap
 
 	    const updateMap: Record<string, PluginUpdateState> = _extLastUpdateMap || {}
+    let effEnableMap: Record<string, boolean> = {}
+    try { effEnableMap = await getEffectivePluginEnableMap(installedMap) } catch {}
 
-    renderInstalledExtensions(unifiedList, installedMap, updateMap)
+    renderInstalledExtensions(unifiedList, installedMap, updateMap, effEnableMap)
 
     // 内置扩展的状态标签（图床 / WebDAV 同步）也需要跟随配置刷新
     if (host) {
@@ -469,7 +474,7 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
             const store = host.getStore()
             let upCfg: any = null
             try {
-              if (store) upCfg = (await store.get('uploader')) as any
+              if (store) upCfg = (await getUploaderRaw(store)) as any
             } catch {
               upCfg = null
             }
@@ -498,7 +503,8 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
 function renderInstalledExtensions(
   unifiedList: HTMLDivElement,
   installedMap: Record<string, InstalledPlugin>,
-  updateMap: Record<string, PluginUpdateState>
+  updateMap: Record<string, PluginUpdateState>,
+  effEnableMap?: Record<string, boolean>
 ): void {
   try {
     const installedRows = unifiedList.querySelectorAll('[data-type="installed"]')
@@ -557,6 +563,8 @@ function renderInstalledExtensions(
   })
 
   for (const p of arr) {
+    // 有效启用状态：库覆盖 ?? 全局（按库隔离）
+    const enabledEff = effEnableMap && typeof effEnableMap[p.id] === 'boolean' ? effEnableMap[p.id] : !!p.enabled
     const row = document.createElement('div')
     row.className = 'ext-item'
     row.setAttribute('data-type', 'installed')
@@ -593,7 +601,7 @@ function renderInstalledExtensions(
     meta.appendChild(name); meta.appendChild(desc)
     const actions = document.createElement('div'); actions.className = 'ext-actions'
 
-    if (p.enabled && host) {
+    if (enabledEff && host) {
       const btnSet = document.createElement('button'); btnSet.className = 'btn'; btnSet.textContent = t('ext.settings')
       btnSet.addEventListener('click', async () => {
         try {
@@ -604,13 +612,13 @@ function renderInstalledExtensions(
     }
 
     if (host) {
-      const btnToggle = document.createElement('button'); btnToggle.className = 'btn'; btnToggle.textContent = p.enabled ? t('ext.toggle.disable') : t('ext.toggle.enable')
+      const btnToggle = document.createElement('button'); btnToggle.className = 'btn'; btnToggle.textContent = enabledEff ? t('ext.toggle.disable') : t('ext.toggle.enable')
       btnToggle.addEventListener('click', async () => {
         try {
-          p.enabled = !p.enabled
-          installedMap[p.id] = p
-          await setInstalledPluginsToStore(installedMap)
-          if (p.enabled) await host!.activatePlugin(p)
+          const next = !enabledEff
+          // 按库语义写入：持久化库 → 库内覆盖；临时库/无库 → 全局
+          await setPluginEnabledScoped(host!.getStore(), installedMap, p.id, next)
+          if (next) await host!.activatePlugin(p)
           else await host!.deactivatePlugin(p.id)
           await refreshInstalledExtensionsUI()
         } catch (err) { host!.showError(t('ext.toggle.fail'), err) }
@@ -870,7 +878,7 @@ export async function refreshExtensionsUI(): Promise<void> {
         if (b.id === 'uploader-s3') {
           try {
             const store = host.getStore()
-            const upCfg = await (async () => { try { if (store) return (await store.get('uploader')) as any } catch { return null } })()
+            const upCfg = await (async () => { try { if (store) return (await getUploaderRaw(store)) as any } catch { return null } })()
             const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.setAttribute('data-role', 'status'); tag.textContent = upCfg?.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
             tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = upCfg?.enabled ? '#22c55e' : '#94a3b8'
             actions.appendChild(tag)
@@ -1162,7 +1170,10 @@ export async function refreshExtensionsUI(): Promise<void> {
   _extLastInstalledMap = installedMap
   _extLastUpdateMap = updateMap
 
-  renderInstalledExtensions(unifiedList, installedMap, updateMap)
+  let effEnableMap: Record<string, boolean> = {}
+  try { effEnableMap = await getEffectivePluginEnableMap(installedMap) } catch {}
+
+  renderInstalledExtensions(unifiedList, installedMap, updateMap, effEnableMap)
 
   await applyMarketFilter()
 

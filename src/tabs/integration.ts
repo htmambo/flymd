@@ -12,7 +12,7 @@ import { TextareaUndoManager } from './TextareaUndoManager'
 import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 import { initTabTransferReceiver } from './tabTransferReceiver'
 import { readTextFileAnySafe } from '../core/fsSafe'
-import { getSessionStorageKey, getCurrentWindowLabel, migrateLegacySessionKey } from './sessionStorageKey'
+import { getSessionStorageKey, getUnscopedSessionKey, getCurrentWindowLabel, migrateLegacySessionKey } from './sessionStorageKey'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -370,12 +370,58 @@ async function restoreTabSession(): Promise<void> {
       }
     }
 
+    // v2 无库段旧 key 一次性迁移：按库隔离前的会话归入当前库
+    if (!raw) {
+      try {
+        const unscoped = getUnscopedSessionKey()
+        if (unscoped !== key) {
+          const legacy = localStorage.getItem(unscoped)
+          if (legacy) {
+            localStorage.setItem(key, legacy)
+            localStorage.removeItem(unscoped)
+            raw = legacy
+            console.log('[Tabs] 已迁移无库段会话 key →', key)
+          }
+        }
+      } catch (e) {
+        console.warn('[Tabs] 迁移无库段会话 key 失败:', e)
+      }
+    }
+
     if (!raw) return
     const state = JSON.parse(raw)
     await tabManager.importState(state, async (path) => readTextFileAnySafe(path))
     console.log('[Tabs] 会话已恢复，标签数:', tabManager.getTabs().length)
   } catch (e) {
     console.warn('[Tabs] 恢复会话失败:', e)
+  }
+}
+
+// ---- 切库会话切换 ----
+// 切库前调用：把当前标签会话存到旧库的 key（此时库作用域尚未切换）。
+export function saveSessionForLibrarySwitch(): void {
+  if (!initialized) return
+  try { saveTabSession() } catch {}
+}
+
+// 切库后调用：恢复新库的标签会话；新库无会话时重置为单个空白标签。
+// 旧库未保存的脏内容已随 saveSessionForLibrarySwitch 持久化，切回时原样恢复。
+export async function restoreSessionForLibrarySwitch(): Promise<void> {
+  if (!initialized) return
+  try {
+    const key = getSessionStorageKey()
+    const raw = localStorage.getItem(key)
+    if (!raw) {
+      const fresh = {
+        tabs: [{ id: 'fresh', filePath: null, displayName: undefined, content: '', dirty: false, mode: 'edit', wysiwygEnabled: false }],
+        activeTabId: 'fresh',
+      }
+      await tabManager.importState(fresh as any, async (path) => readTextFileAnySafe(path))
+      return
+    }
+    await restoreTabSession()
+  } catch (e) {
+    console.warn('[Tabs] 切库恢复会话失败:', e)
   }
 }
 

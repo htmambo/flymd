@@ -3,7 +3,7 @@
 
 import { transcodeToWebpIfNeeded } from '../utils/image'
 import type { AnyUploaderConfig } from '../uploader/types'
-import { getUploaderProviderFromRaw } from '../uploader/storeConfig'
+import { getUploaderProviderFromRaw, getUploaderRaw, setUploaderRaw } from '../uploader/storeConfig'
 
 export type ImagePasteDeps = {
   // 文本编辑与预览
@@ -214,7 +214,7 @@ export async function toggleUploaderEnabledFromMenuCore(
       deps.pluginNotice('设置尚未初始化，暂无法切换图床开关', 'err', 2200)
       return uploaderEnabledSnapshot
     }
-    const raw = ((await store.get('uploader')) as any) || {}
+    const raw = ((await getUploaderRaw(store)) as any) || {}
     const current = !!raw.enabled
     if (!current) {
       const provider = getUploaderProviderFromRaw(raw)
@@ -232,8 +232,7 @@ export async function toggleUploaderEnabledFromMenuCore(
       }
     }
     raw.enabled = !current
-    await store.set('uploader', raw)
-    await store.save()
+    await setUploaderRaw(store, raw)
     const next = !!raw.enabled
     deps.pluginNotice(
       next ? '图床上传已开启' : '图床上传已关闭',

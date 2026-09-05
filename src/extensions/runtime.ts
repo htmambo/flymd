@@ -10,6 +10,7 @@ import {
 import type { Store } from '@tauri-apps/plugin-store'
 import type { InstallableItem } from './market'
 import { PLUGINS_DIR } from '../core/configBackup'
+import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from '../core/libraryConfig'
 
 // 插件运行时基础：类型 + 目录保证 + 仓库输入解析 + 版本比较 + HTTP 工具 + 更新检测
 // 尽量保持无副作用，方便 main.ts 以及其他扩展模块复用
@@ -96,6 +97,65 @@ export async function saveInstalledPlugins(
   } catch {
     // 持久化失败时静默忽略，由上层决定是否提示
   }
+}
+
+// ===== 扩展启用状态按库隔离 =====
+// 持久化库激活时，启用状态覆盖存库内 .flymd/config.json 的 pluginEnable 字段；
+// 有效启用 = 库覆盖值 ?? 全局 installed[id].enabled。临时库/无库读写全局（旧行为）。
+
+// 计算每个已安装插件的有效启用状态（库覆盖优先，回落全局）
+export async function getEffectivePluginEnableMap(
+  map: Record<string, InstalledPlugin>,
+): Promise<Record<string, boolean>> {
+  const eff: Record<string, boolean> = {}
+  let overrides: Record<string, boolean> | null = null
+  try {
+    const scope = getLibraryScope()
+    if (scope.persisted) {
+      const cfg = await readLibraryConfig()
+      if (cfg?.pluginEnable && typeof cfg.pluginEnable === 'object') {
+        overrides = cfg.pluginEnable
+      }
+    }
+  } catch {}
+  for (const [id, p] of Object.entries(map || {})) {
+    eff[id] = overrides && typeof overrides[id] === 'boolean' ? overrides[id] : !!p?.enabled
+  }
+  return eff
+}
+
+/**
+ * 切换插件启用状态（按库语义）：
+ * 持久化库 → 写库内 pluginEnable 覆盖（首次以当前全局状态播种全量快照，保证可预期）；
+ * 临时库/无库 → 写全局 Store（旧行为）。返回 true 表示已处理。
+ */
+export async function setPluginEnabledScoped(
+  store: Store | null,
+  installedMap: Record<string, InstalledPlugin>,
+  id: string,
+  enabled: boolean,
+): Promise<void> {
+  try {
+    const scope = getLibraryScope()
+    if (scope.persisted) {
+      const cfg = (await readLibraryConfig()) || {}
+      let map = cfg.pluginEnable
+      if (!map || typeof map !== 'object') {
+        map = {}
+        for (const [pid, p] of Object.entries(installedMap || {})) map[pid] = !!p?.enabled
+      }
+      map = { ...map, [id]: enabled }
+      if (await writeLibraryConfig({ pluginEnable: map })) return
+    }
+  } catch {}
+  // 全局回落
+  try {
+    const p = installedMap[id]
+    if (p) {
+      p.enabled = enabled
+      await saveInstalledPlugins(store, installedMap)
+    }
+  } catch {}
 }
 
 // 支持两种输入：

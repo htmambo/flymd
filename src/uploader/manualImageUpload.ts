@@ -11,7 +11,7 @@ import type { AnyUploaderConfig } from './types'
 import { uploadImageToCloud } from './upload'
 import { transcodeToWebpIfNeeded } from '../utils/image'
 import { NotificationManager } from '../core/uiNotifications'
-import { parseUploaderConfigForManagement } from './storeConfig'
+import { parseUploaderConfigForManagement, getUploaderRaw } from './storeConfig'
 import { getSharedStore } from '../utils/sharedStore'
 
 async function getStore(): Promise<Store | null> {
@@ -26,7 +26,7 @@ async function getManualUploaderConfig(): Promise<AnyUploaderConfig | null> {
   try {
     const store = await getStore()
     if (!store) return null
-    const up = await store.get('uploader')
+    const up = await getUploaderRaw(store)
     const cfg = parseUploaderConfigForManagement(up as any, { enabledOnly: false })
     if (!cfg) return null
     // 手动上传不受 enabled 开关限制，这里强制视为启用

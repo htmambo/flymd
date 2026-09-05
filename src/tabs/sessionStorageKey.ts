@@ -1,9 +1,29 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getLibraryScope } from '../core/libraryConfig'
 
 // 老 key（v1）：所有窗口共享一份快照，多窗口会互相覆盖。仅保留用于一次性迁移。
 export const SESSION_KEY_LEGACY = 'flymd:tabSession:v1'
-// 新 key 前缀（v2）：按窗口 label 隔离（main / main-xxxx）。
+// 新 key 前缀（v2）：按 库id + 窗口 label 隔离（main / main-xxxx）。
 export const SESSION_KEY_PREFIX = 'flymd:tabSession:v2:'
+
+// 最近一次处于持久化库时的 libId：临时库（打开库外文件）不改变会话归属，
+// 避免把当前库的标签快照写进 global 命名空间造成污染。
+let _lastPersistedLibId: string | null = null
+
+export function setSessionLibraryScope(libId: string | null): void {
+  _lastPersistedLibId = libId || null
+}
+
+function currentLibPart(): string {
+  try {
+    const s = getLibraryScope()
+    if (s.persisted && s.id) {
+      _lastPersistedLibId = s.id
+      return s.id
+    }
+  } catch {}
+  return _lastPersistedLibId || 'global'
+}
 
 /**
  * 取当前窗口 label。非 Tauri 环境或异常时退回 'browser'，避免污染 'main' 命名空间。
@@ -18,6 +38,11 @@ export function getCurrentWindowLabel(): string {
 }
 
 export function getSessionStorageKey(): string {
+  return SESSION_KEY_PREFIX + currentLibPart() + ':' + getCurrentWindowLabel()
+}
+
+// 迁移前的旧 v2 key（无库段）：仅用于一次性迁移
+export function getUnscopedSessionKey(): string {
   return SESSION_KEY_PREFIX + getCurrentWindowLabel()
 }
 
