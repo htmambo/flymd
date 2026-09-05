@@ -142,10 +142,10 @@
 .container.md-terminal.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
   background: var(--code-bg) !important;
   border: none !important;
-  padding: 12px 16px;
+  padding: 32px 4px 8px 8px;
   margin: 0.5em 0;
   border-radius: var(--radius-sm);
-  overflow: auto;
+  overflow: visible;
   box-shadow: none !important;
 }
 /* 超高代码块限高滚动：挂在 .code-scroll-box（代码内容层的滚动容器）上，
@@ -155,7 +155,7 @@
   max-height: min(480px, 60vh);
   overflow-y: auto;
   /* 顶部让位给语言选择器（块内左上角，钉在滚动区之外） */
-  padding-top: 36px;
+  padding-top: 4px;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper.code-expanded .code-scroll-box {
   max-height: none;
@@ -298,8 +298,8 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
   position: absolute;
   /* 块内左上角：与预览模式的语言角标位置一致；选择器在 pre 层（.code-scroll-box 之外），
      限高滚动时钉在块左上角不随内容滚动。代码内容区由 .code-scroll-box 的 padding-top 让位。 */
-  top: 6px;
-  left: 8px;
+  top: 4px;
+  left: 4px;
   z-index: 10;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-input {
@@ -388,8 +388,6 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
   background: var(--active-bg);
   border: 1px solid rgba(0, 0, 0, 0.12);
   color: var(--fg);
-  /* 调整位置：向左5px，向上1px */
-  transform: translate(-5px, -1px);
   /* 缩小按钮尺寸 */
   padding: 3px 4px;
   font-size: 0;
@@ -412,7 +410,7 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
   background: rgba(127, 127, 127, 0.20);
   border-color: rgba(0, 0, 0, 0.22);
   color: var(--fg);
-  transform: translate(-5px, -2px);
+  transform: translateY(-1px);
   opacity: 1;
 }
 
@@ -485,27 +483,27 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-l
   opacity: 1;
 }
 
-/* 所见模式复制/删除按钮：深色模式下使用浅色样式 */
+/* 所见模式复制/删除按钮：深色模式下使用浅色样式（body:not(.light-mode) 排除系统深色+应用强制浅色的场景） */
 @media (prefers-color-scheme: dark) {
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete,
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy,
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete,
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand {
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #e5e7eb;
   }
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover,
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-copy:hover,
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-expand:hover {
     background: rgba(255, 255, 255, 0.2);
     border-color: rgba(255, 255, 255, 0.4);
     color: #fff;
   }
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete:hover {
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete:hover {
     background: rgba(239, 68, 68, 0.2);
     border-color: rgba(239, 68, 68, 0.5);
     color: #f87171;
   }
-  .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete.armed {
+  body:not(.light-mode) .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy .code-delete.armed {
     background: rgba(239, 68, 68, 0.25);
     border-color: rgba(239, 68, 68, 0.6);
     color: #f87171;

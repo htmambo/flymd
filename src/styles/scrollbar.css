@@ -1,21 +1,37 @@
-/* 自定义滚动条样式 */
+/* ===== 全局统一滚动条规格 =====
+   所有滚动条（窗口、预览、所见、侧栏、代码块、表格、对话框、菜单）共用同一套：
+   尺寸 4px（横向为高度 4px），亮色滑块 rgba(0,0,0,0.28) / 轨道 rgba(0,0,0,0.05)，
+   暗色滑块 rgba(255,255,255,0.22) / 轨道 rgba(255,255,255,0.06)。
+   个别容器如需隐藏滚动条（如 tabbar）自行 display:none，不要改尺寸/颜色。 */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(127,127,127,0.25);
+  background: rgba(0,0,0,0.05);
   border-radius: var(--radius-sm);
 }
 
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.28);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.4);
+}
+
+/* 系统深色且应用未强制亮色时的滚动条配色 */
 @media (prefers-color-scheme: dark) {
-  ::-webkit-scrollbar-thumb {
-    background: rgba(255,255,255,0.2);
+  body:not(.light-mode) ::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.06);
+  }
+  body:not(.light-mode) ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.22);
+  }
+  body:not(.light-mode) ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.32);
   }
 }
 
@@ -48,7 +64,7 @@ body[data-scrollbar-visible="true"] .preview,
 body[data-scrollbar-visible="true"] #md-wysiwyg-root,
 body[data-scrollbar-visible="true"] #md-wysiwyg-root .scrollView,
 body[data-scrollbar-visible="true"] .library {
-  scrollbar-color: rgba(127,127,127,0.4) transparent;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
   transition: scrollbar-color 0.15s ease-in;
 }
 
@@ -61,7 +77,7 @@ body[data-scrollbar-visible="false"] .container.wysiwyg .preview pre code,
 body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
 body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box,
 body[data-scrollbar-visible="false"] .container.wysiwyg .ProseMirror pre {
-  scrollbar-color: rgba(127,127,127,0.45) transparent;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
 }
 body[data-scrollbar-visible="false"] .preview pre::-webkit-scrollbar-thumb,
 body[data-scrollbar-visible="false"] .preview pre::-webkit-scrollbar-track,
@@ -74,47 +90,19 @@ body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code
 body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box::-webkit-scrollbar-thumb,
 body[data-scrollbar-visible="false"] .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box::-webkit-scrollbar-track {
   opacity: 1 !important;
-  background: rgba(127,127,127,0.45);
   transition: background 0.15s ease-in;
 }
 
-/* 暗色模式适配 */
+/* 系统深色时的 Firefox 滚动条配色（body:not(.light-mode)：排除系统深色+应用强制亮色） */
 @media (prefers-color-scheme: dark) {
-  body[data-scrollbar-visible="true"] .preview,
-  body[data-scrollbar-visible="true"] #md-wysiwyg-root,
-  body[data-scrollbar-visible="true"] #md-wysiwyg-root .scrollView,
-  body[data-scrollbar-visible="true"] .library {
-    scrollbar-color: rgba(255,255,255,0.3) transparent;
+  body:not(.light-mode)[data-scrollbar-visible="true"] .preview,
+  body:not(.light-mode)[data-scrollbar-visible="true"] #md-wysiwyg-root,
+  body:not(.light-mode)[data-scrollbar-visible="true"] #md-wysiwyg-root .scrollView,
+  body:not(.light-mode)[data-scrollbar-visible="true"] .library {
+    scrollbar-color: rgba(255,255,255,0.22) rgba(255,255,255,0.06);
   }
 }
 
-.preview .table-wrapper::-webkit-scrollbar {
-  height: 8px;
-  background: transparent;
-}
-.preview .table-wrapper::-webkit-scrollbar-track {
-  background: rgba(0,0,0,0.03);
-  border-radius: var(--radius-sm);
-}
-.preview .table-wrapper::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.15);
-  border-radius: var(--radius-sm);
-  transition: background var(--transition-normal);
-}
-.preview .table-wrapper::-webkit-scrollbar-thumb:hover {
-  background: rgba(0,0,0,0.25);
-}
-
-/* 暗色主题滚动条 */
-.dark .preview .table-wrapper::-webkit-scrollbar-track {
-  background: rgba(255,255,255,0.05);
-}
-.dark .preview .table-wrapper::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.2);
-}
-.dark .preview .table-wrapper::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.3);
-}
 /* === 全局滚动控制：去掉窗口级滚动，仅内部滚动 === */
 html, body { overflow: hidden; }
 html::-webkit-scrollbar:horizontal,
@@ -125,48 +113,11 @@ body::-webkit-scrollbar:horizontal,
 #md-wysiwyg-root::-webkit-scrollbar:horizontal,
 .library::-webkit-scrollbar:horizontal { height: 0 !important; }
 
-/* 为主要滚动容器显式展示竖向滚动条（跨浏览器） */
-/* Firefox */
+/* Firefox：主要滚动容器显式启用细滚动条（颜色继承上面的统一规则） */
 .preview,
 #md-wysiwyg-root,
 #md-wysiwyg-root .scrollView,
 .library {
   scrollbar-width: thin;
-  scrollbar-color: rgba(127,127,127,0.4) transparent;
-}
-/* WebKit/Chromium - 美化滚动条 */
-.preview::-webkit-scrollbar:vertical,
-#md-wysiwyg-root .scrollView::-webkit-scrollbar:vertical,
-#md-wysiwyg-root::-webkit-scrollbar:vertical {
-  width: 16px;
-}
-/* 侧栏滚动条更细 */
-.library::-webkit-scrollbar:vertical {
-  width: 4px;
-}
-.preview::-webkit-scrollbar-thumb,
-#md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb,
-#md-wysiwyg-root::-webkit-scrollbar-thumb {
-  background: rgba(127,127,127,0.3);
-  border-radius: var(--radius-lg);
-  transition: background var(--transition-normal);
-}
-.library::-webkit-scrollbar-thumb {
-  background: rgba(127,127,127,0.2);
-  border-radius: 2px;
-}
-.preview::-webkit-scrollbar-thumb:hover,
-#md-wysiwyg-root .scrollView::-webkit-scrollbar-thumb:hover,
-#md-wysiwyg-root::-webkit-scrollbar-thumb:hover {
-  background: rgba(127,127,127,0.5);
-}
-.library::-webkit-scrollbar-thumb:hover {
-  background: rgba(127,127,127,0.35);
-}
-.preview::-webkit-scrollbar-track,
-#md-wysiwyg-root .scrollView::-webkit-scrollbar-track,
-#md-wysiwyg-root::-webkit-scrollbar-track,
-.library::-webkit-scrollbar-track {
-  background: transparent;
-  margin: 4px 0;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
 }

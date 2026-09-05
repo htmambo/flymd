@@ -95,13 +95,8 @@
   max-height: 65vh;
   overflow: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(127,127,127,0.3) transparent;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
 }
-.upl-body::-webkit-scrollbar { width: 8px; }
-.upl-body::-webkit-scrollbar-track { background: transparent; }
-.upl-body::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.3); border-radius: var(--radius-sm); }
-.upl-body::-webkit-scrollbar-thumb:hover { background: rgba(127,127,127,0.5); }
-
 .upl-grid {
   display: grid;
   grid-template-columns: 130px 1fr;

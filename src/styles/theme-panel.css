@@ -16,7 +16,7 @@
   z-index: 40;
   padding: 0;
   scrollbar-width: thin;
-  scrollbar-color: rgba(127,127,127,0.3) transparent;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
 }
 
 @keyframes theme-panel-slidein {
@@ -29,11 +29,6 @@
     transform: translate(-50%, -50%) scale(1);
   }
 }
-
-.theme-panel::-webkit-scrollbar { width: 8px; }
-.theme-panel::-webkit-scrollbar-track { background: transparent; }
-.theme-panel::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.3); border-radius: var(--radius-sm); }
-.theme-panel::-webkit-scrollbar-thumb:hover { background: rgba(127,127,127,0.5); }
 
 .theme-panel.hidden { display: none; }
 

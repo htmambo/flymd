@@ -144,21 +144,6 @@
   overflow-x: hidden;
 }
 
-/* 右键子菜单滚动条样式 */
-.context-menu-submenu::-webkit-scrollbar {
-  width: 6px;
-}
-.context-menu-submenu::-webkit-scrollbar-track {
-  background: transparent;
-}
-.context-menu-submenu::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-.context-menu-submenu::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-muted, #64748b);
-}
-
 /* 向左展开的子菜单 */
 .context-menu-submenu.expand-left {
   left: auto;

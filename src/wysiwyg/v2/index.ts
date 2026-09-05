@@ -1851,8 +1851,8 @@ function positionCodeCopyWrap(pre: HTMLElement, wrap: HTMLDivElement, rootRc: DO
     // 使用整个容器的宽度（包含 Delete + Copy 按钮）
     const wrapW = wrap.offsetWidth || 60
     // 所见模式下滚动发生在内部 scrollView，pre 与 root 的相对位置已经包含滚动偏移
-    const left = Math.max(0, (preRc.left - rootRc.left) + Math.max(0, preRc.width - wrapW - 16))
-    const top = Math.max(0, (preRc.top - rootRc.top) + 14)
+    const left = Math.max(0, (preRc.left - rootRc.left) + Math.max(0, preRc.width - wrapW - 6))
+    const top = Math.max(0, (preRc.top - rootRc.top) + 4)
     wrap.style.left = left + 'px'
     wrap.style.top = top + 'px'
   } catch {}

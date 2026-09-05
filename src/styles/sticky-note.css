@@ -179,21 +179,6 @@ body.sticky-note-mode .container::after {
   z-index: 11;
 }
 
-/* 便签模式：滚动条优化 */
-body.sticky-note-mode .preview::-webkit-scrollbar {
-  width: 4px;
-}
-body.sticky-note-mode .preview::-webkit-scrollbar-track {
-  background: transparent;
-}
-body.sticky-note-mode .preview::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 2px;
-}
-body.sticky-note-mode .preview::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
 /* 透明度滑块容器 */
 .sticky-opacity-slider-container {
   position: fixed;
@@ -515,12 +500,6 @@ body.dark-mode.sticky-note-mode .task-tooltip {
 body.dark-mode.sticky-note-mode .container,
 body.dark-mode.sticky-note-mode .preview {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-body.dark-mode.sticky-note-mode .preview::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-}
-body.dark-mode.sticky-note-mode .preview::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
 }
 body.dark-mode.sticky-note-mode .preview-body code {
   background: rgba(255, 255, 255, 0.1);

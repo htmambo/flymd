@@ -61,8 +61,6 @@ export class HighlightCodeBlockNodeView implements NodeView {
   private lastLang: string | null = null
   private highlightSeq = 0
   private highlightTimer: number | null = null
-  // 监听 selectionchange，用于控制语言选择器显隐
-  private selectionListener: ((event: Event) => void) | null = null
 
   constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
     this.node = node
@@ -112,8 +110,6 @@ export class HighlightCodeBlockNodeView implements NodeView {
 
     // 绑定语言选择器事件
     this.setupLangSelector()
-    // 绑定选区变化事件：光标离开当前代码块时隐藏语言选择器
-    this.setupLangVisibilityWatcher()
 
     // 创建高亮显示层（只读，显示高亮后的代码）
     // 放在底层，contentDOM 透明覆盖在上面
@@ -170,68 +166,7 @@ export class HighlightCodeBlockNodeView implements NodeView {
     })
   }
 
-  // 根据当前选区/悬停状态决定是否显示语言选择器
-  private hovered = false
-
-  private updateLangSelectorVisibility() {
-    const doc = this.view.dom.ownerDocument
-    const activeEl = doc.activeElement
-
-    // 如果当前焦点在语言选择器内部（输入框或下拉菜单），保持可见
-    if (activeEl && (activeEl === this.langInput || this.langSelector.contains(activeEl))) {
-      this.langSelector.style.visibility = 'visible'
-      return
-    }
-
-    // 编辑器整体失焦且焦点也不在语言选择器内时，直接隐藏
-    if (!this.view.hasFocus() && !this.hovered) {
-      this.langSelector.style.visibility = 'hidden'
-      return
-    }
-
-    const pos = this.getPos()
-    if (typeof pos !== 'number') {
-      // 异常情况（装饰节点等），直接隐藏，避免报错
-      this.langSelector.style.visibility = 'hidden'
-      return
-    }
-
-    // 用实时 DOM selection 判断，而不是 view.state.selection —— 后者比浏览器
-    // 实际光标滞后一拍（selectionchange 触发时 PM 尚未同步），会导致"点击块内
-    // 不显示、点击块外反而显示"的错位表现。DOM selection 在 highlight/editable
-    // 任意一层都算块内（都是本块 DOM 的子树）。
-    const sel = doc.getSelection()
-    const anchor = sel?.anchorNode
-    const inThisNode = !!(anchor && this.dom.contains(anchor)) || this.hovered
-
-    this.langSelector.style.visibility = inThisNode ? 'visible' : 'hidden'
-  }
-
-  // 注册 selectionchange 监听，在光标离开代码块后隐藏语言选择器
-  private setupLangVisibilityWatcher() {
-    const doc = this.view.dom.ownerDocument
-    const handler = (event: Event) => {
-      // 只要选区变化就重新判断一次所在节点
-      this.updateLangSelectorVisibility()
-    }
-
-    doc.addEventListener('selectionchange', handler)
-    this.selectionListener = handler
-
-    // 悬停代码块时也显示（hover 离开后若光标不在块内则隐藏）
-    this.dom.addEventListener('mouseenter', () => {
-      this.hovered = true
-      this.updateLangSelectorVisibility()
-    })
-    this.dom.addEventListener('mouseleave', () => {
-      this.hovered = false
-      this.updateLangSelectorVisibility()
-    })
-
-    // 初始化一次，保证首次渲染时状态正确
-    this.updateLangSelectorVisibility()
-  }
-
+  // 语言选择器常驻显示（visibility 默认 visible，不做显隐切换）
   private setupLangSelector() {
     // 渲染下拉列表
     const renderDropdown = (filter: string = '') => {
@@ -556,12 +491,6 @@ export class HighlightCodeBlockNodeView implements NodeView {
     if (this.highlightTimer !== null) {
       window.clearTimeout(this.highlightTimer)
       this.highlightTimer = null
-    }
-
-    // 移除 selectionchange 监听，避免内存泄露
-    if (this.selectionListener) {
-      this.view.dom.ownerDocument.removeEventListener('selectionchange', this.selectionListener)
-      this.selectionListener = null
     }
   }
 }

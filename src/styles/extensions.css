@@ -246,13 +246,8 @@
   max-height: 80vh;
   overflow: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(127,127,127,0.3) transparent;
+  scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
 }
-.ext-body::-webkit-scrollbar { width: 8px; }
-.ext-body::-webkit-scrollbar-track { background: transparent; }
-.ext-body::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.3); border-radius: var(--radius-sm); }
-.ext-body::-webkit-scrollbar-thumb:hover { background: rgba(127,127,127,0.5); }
-
 .ext-section {
   margin: 0 0 24px 0;
   padding: 18px;

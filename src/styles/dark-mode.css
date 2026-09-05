@@ -483,17 +483,17 @@ body.dark-mode a:hover {
   color: #93c5fd !important;
 }
 
-/* 夜间模式 - 滚动条 */
+/* 夜间模式 - 滚动条（与 scrollbar.css 统一规格一致） */
 body.dark-mode ::-webkit-scrollbar-track {
-  background: transparent !important;
+  background: rgba(255,255,255,0.06) !important;
 }
 
 body.dark-mode ::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.12) !important;
+  background: rgba(255,255,255,0.22) !important;
 }
 
 body.dark-mode ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255,255,255,0.2) !important;
+  background: rgba(255,255,255,0.32) !important;
 }
 
 /* 夜间模式 - AI助手窗口 */

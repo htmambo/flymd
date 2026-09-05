@@ -696,8 +696,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node {
   display: flex;
   align-items: center;
-  gap: 1px;
-  padding: 3px 0 3px 12px;
+  gap: 5px;
+  padding: 2px 8px;
   margin: 1px 4px;
   border-radius: var(--radius-sm);
   cursor: default;
