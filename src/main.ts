@@ -618,6 +618,12 @@ let _autoWysiwygAfterOpenSeq = 0
 let _suppressOpenSwitchConfirm = false
 // 批量打开期间置位，跳过 recent 推入（打开顺序不应反转库配置记录的最近使用顺序）。
 let _suppressRecentPush = false
+// 启动早期（插件运行时/ASP 规则尚未注册）被跳过的 Office 文档路径，
+// 待 Word 预览扩展注册完成后由 ric 初始化块补打开。防止二进制 docx 被当纯文本渲染。
+let _pendingOfficeOpenRetry: string | null = null
+// Office 预览打开临时副本（temp_dir 下）期间置位：抑制 syncTemporaryLibraryRootForOpenedPath，
+// 避免把库根切到预览缓存目录（用户会看到"临时库"、缓存目录被写入 .flymd/config.json）。
+let _suppressTempLibrarySync = false
 // 模式切换时的滚动位置缓存（百分比 0-1）
 let lastScrollPercent = 0
 let _wysiwygRaf = 0
@@ -1273,6 +1279,8 @@ async function restoreDocPosIfAny(path?: string) { await _docPos.restore(path) }
 
 // 日志系统（已拆分到 core/logger.ts）
 import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
+// Office 预览缓存路径判定（纯函数）：锁定阅读模式/只读保存的守卫依据
+import { isOfficePreviewCachePath } from './core/officePreviewPath'
 // 视觉列号工具(calcVisualColumn/offsetForVisualColumn/advanceVisualColumn)
 // 已抽离到 src/utils/visualColumn.ts,仅 src/modes/wysiwygCaret.ts 复用,main.ts 无引用。
 import { splitYamlFrontMatter, parseFrontMatterMeta } from './core/frontMatter'
@@ -2028,6 +2036,14 @@ type SetWysiwygOptions = {
 
 async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
   try {
+    // Office 转换预览标签锁定阅读模式：禁止进入所见（编辑态）。
+    // 覆盖 Ctrl+W / 模式菜单"所见"项 / btn-wysiwyg / 打开后自动开所见 / TabManager 恢复所见。
+    // 退出所见（enable=false）始终允许。
+    if (enable && isOfficePreviewTabActive()) {
+      await ensureOfficePreviewReadonly()
+      notifyOfficeReadonlyBlocked()
+      return
+    }
     if (wysiwyg === enable) return
     titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
     const container = document.querySelector('.container') as HTMLDivElement | null
@@ -3665,8 +3681,55 @@ function checkUpdateSilentOnceAfterStartup() {
   } catch {}
 }
 
+// —— Office 转换预览标签：锁定阅读模式 ——
+// doc/docx 的临时转换副本（temp_dir()/flymd-office-preview/...）只允许阅读（preview）：
+// 禁止源码/所见/分屏切换与保存（编辑缓存副本无任何意义：不触及原 Word 文件，
+// 源文件一变转换缓存重建，修改即静默丢失）。守卫只作用于"当前活动 tab"并强制
+// preview，绝不修改其他 tab 的 tab.mode（各 tab 状态由 TabManager 独立保存/恢复）。
+
+function isOfficePreviewTabActive(): boolean {
+  try { return !!currentFilePath && isOfficePreviewCachePath(currentFilePath) } catch { return false }
+}
+
+// 只读拦截提示：3 秒节流，避免连按快捷键时提示刷屏
+let _officeReadonlyNoticeAt = 0
+function notifyOfficeReadonlyBlocked(): void {
+  try {
+    const now = Date.now()
+    if (now - _officeReadonlyNoticeAt < 3000) return
+    _officeReadonlyNoticeAt = now
+    pluginNotice(t('officePreview.readonlyNotice'), 'ok', 2600)
+  } catch {}
+}
+
+// 若当前是 Office 预览标签：强制回到阅读模式（先退所见叠加态再置 preview），返回 true。
+// 非 Office 标签返回 false，调用方继续走原逻辑。
+async function ensureOfficePreviewReadonly(): Promise<boolean> {
+  if (!isOfficePreviewTabActive()) return false
+  logInfo('Office 预览副本锁定阅读模式：拦截切模式/所见/分屏', { path: currentFilePath })
+  try {
+    if (wysiwyg) {
+      // 先落 preview 再退所见，避免退出所见时按旧 mode 隐藏预览（与 Ctrl+R 处理一致）
+      mode = 'preview'
+      try { preview.classList.remove('hidden') } catch {}
+      try { await setWysiwygEnabled(false) } catch {}
+    }
+    if (mode !== 'preview') mode = 'preview'
+    try { preview.classList.remove('hidden') } catch {}
+    try { await renderPreview() } catch {}
+    try { titlebarStatusApi?.syncToggleButton() } catch {}
+    // 分屏是全局叠加态：源码栏会露出临时副本内容，锁定时一并关闭
+    try { (window as any).flymdSetSplitPreviewEnabled?.(false) } catch {}
+    try { notifyModeChange() } catch {}
+  } catch {}
+  return true
+}
+
 // 切换模式
 async function toggleMode() {
+  // Office 转换预览标签锁定阅读模式：拦截源码/阅读切换
+  // （覆盖 btn-toggle、Ctrl+E、模式菜单"编辑"项、flymdToggleModeShortcut 钩子）
+  if (await ensureOfficePreviewReadonly()) { notifyOfficeReadonlyBlocked(); return }
   titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
   mode = mode === 'edit' ? 'preview' : 'edit'
   if (mode === 'preview') {
@@ -3906,9 +3969,11 @@ async function openFile2(preset?: unknown) {
     // 兼容 macOS 场景：部分环境下 multiple:false 仍可能返回数组；若为数组取首个
     const aspFilters = (() => {
       try {
-        const fn = (pluginHost as any)?.getAdditionalSuffixDialogFilters
+        // 懒解析：模块顶层解构的 pluginHost 是未初始化桩，必须经 proxy 现取
+        const host: any = pluginRuntimeProxy.pluginHost
+        const fn = host?.getAdditionalSuffixDialogFilters
         if (typeof fn !== 'function') return []
-        const list = fn.call(pluginHost)
+        const list = fn.call(host)
         if (!Array.isArray(list)) return []
         return list
           .filter((x: any) => x && typeof x === 'object')
@@ -3963,6 +4028,9 @@ async function openFile2(preset?: unknown) {
       wysiwygDefault = localStorage.getItem(WYSIWYG_DEFAULT_KEY) === 'true'
     } catch {}
     const shouldEnableWysiwyg = wysiwygDefault || wasWysiwyg
+    // Office 转换预览副本（doc/docx 的临时 md）：强制阅读模式，
+    // 两个 bypass 在此收敛——"默认源码模式"打开后落编辑、默认所见/打开前所见自动开所见
+    const officePreviewTab = isOfficePreviewCachePath(selectedPath)
 
     // 若当前有未保存更改，且目标文件不同，则先询问是否保存。
     // 启动/切库"全量打开记录的 recent"等程序化批量打开时置 _suppressOpenSwitchConfirm，
@@ -3985,7 +4053,7 @@ async function openFile2(preset?: unknown) {
       }
       const rule = (() => {
         try {
-          return (pluginHost as any)?.getAdditionalSuffixRule?.(ext) || null
+          return (pluginRuntimeProxy.pluginHost as any)?.getAdditionalSuffixRule?.(ext) || null
         } catch {
           return null
         }
@@ -3995,14 +4063,14 @@ async function openFile2(preset?: unknown) {
         const method = String(rule.openWith.method || 'open').trim() || 'open'
         const api = (() => {
           try {
-            return (pluginHost as any)?.getPluginAPI?.(target) || null
+            return (pluginRuntimeProxy.pluginHost as any)?.getPluginAPI?.(target) || null
           } catch {
             return null
           }
         })()
         const mod = (() => {
           try {
-            return (pluginHost as any)?.getActivePluginModule?.(target) || null
+            return (pluginRuntimeProxy.pluginHost as any)?.getActivePluginModule?.(target) || null
           } catch {
             return null
           }
@@ -4023,6 +4091,25 @@ async function openFile2(preset?: unknown) {
         return
       }
     } catch {}
+
+    // Office 二进制文档防护门：没有 ASP 规则命中时（Word 预览扩展未启用，或启动早期
+    // 插件运行时尚未完成注册——如文件关联传入的 docx 走启动待打开路径），绝不能按纯文本
+    // 读入并渲染：MB 级二进制会把 markdown 渲染管线拖成近似死循环（WebView 主线程卡死）。
+    // 记录路径，待 ric 初始化块注册完成后补打开。
+    const officeExt = (selectedPath.split(/\./).pop() || '').toLowerCase()
+    const officeRule = (() => {
+      try {
+        return (pluginRuntimeProxy.pluginHost as any)?.getAdditionalSuffixRule?.(officeExt) || null
+      } catch {
+        return null
+      }
+    })()
+    if (!officeRule && (officeExt === 'doc' || officeExt === 'docx')) {
+      _pendingOfficeOpenRetry = selectedPath
+      logWarn('Office 文档直开被跳过（ASP 规则未就绪）', { path: selectedPath })
+      try { pluginNotice(t('officePreview.ruleNotReady'), 'ok', 3200) } catch {}
+      return
+    }
 
     // 读取文件内容：优先使用 fs 插件；若因路径权限受限（forbidden path / not allowed）回退到后端命令
     _currentPdfSrcUrl = null
@@ -4059,21 +4146,25 @@ async function openFile2(preset?: unknown) {
     }
 
     // 打开后视图策略：若最终会进入所见，则中间态强制用预览（更接近所见，且不会露出 textarea）
-    if (shouldEnableWysiwyg) {
+    if (shouldEnableWysiwyg && !officePreviewTab) {
       mode = 'preview'
       try { preview.classList.remove('hidden') } catch {}
       try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
       try { titlebarStatusApi?.syncToggleButton() } catch {}
     } else {
-      // 打开后默认进入预览/源码（尊重“默认源码模式”设置）
-      await switchToPreviewAfterOpen()
+      // 打开后默认进入预览/源码（尊重“默认源码模式”设置；Office 预览副本强制阅读模式）
+      await switchToPreviewAfterOpen(officePreviewTab)
+    }
+    // Office 预览副本锁定阅读模式：若全局分屏处于开启态，关闭（源码栏会露出临时副本）
+    if (officePreviewTab) {
+      try { (window as any).flymdSetSplitPreviewEnabled?.(false) } catch {}
     }
 
     // 恢复上次阅读/编辑位置（编辑器光标/滚动与预览滚动）
     await restoreDocPosIfAny(selectedPath)
 
     // 默认所见/上次所见：后台无感切入（准备好再一次性切换）
-    if (shouldEnableWysiwyg && !wysiwyg) {
+    if (shouldEnableWysiwyg && !officePreviewTab && !wysiwyg) {
       setTimeout(() => {
         void (async () => {
           try {
@@ -4109,6 +4200,14 @@ async function saveFile() {
   try {
     if (!currentFilePath) {
       await saveAs()
+      return
+    }
+
+    // Office 转换预览副本只读：绝不把内容写回缓存目录——改动不触及原 Word 文件，
+    // 源文件一变转换缓存即重建，写入只会静默丢失并污染缓存/最近列表
+    if (isOfficePreviewCachePath(currentFilePath)) {
+      logInfo('Office 预览副本为只读，跳过保存', { path: currentFilePath })
+      notifyOfficeReadonlyBlocked()
       return
     }
 
@@ -4446,23 +4545,27 @@ async function renderRecentPanel(toggle = true) {
 // 同步预览/编辑按钮文案，避免编码问题
 
 // 打开文件后强制切换为预览模式
-async function switchToPreviewAfterOpen() {
+// forcePreview：Office 转换预览副本等只读标签——绕过"默认源码模式"设置，强制阅读模式
+async function switchToPreviewAfterOpen(forcePreview = false) {
   try {
     // 所见模式会在外部显式关闭/重新开启，这里只负责普通预览
     if (wysiwyg) return
 
     // 如果开启了“默认源码模式”，则保持源码编辑视图，不自动切到预览
-    try {
-      const SOURCEMODE_DEFAULT_KEY = 'flymd:sourcemode:default'
-      const sourcemodeDefault = localStorage.getItem(SOURCEMODE_DEFAULT_KEY) === 'true'
-      if (sourcemodeDefault) {
-        mode = 'edit'
-        try { preview.classList.add('hidden') } catch {}
-        try { titlebarStatusApi?.syncToggleButton() } catch {}
-        try { notifyModeChange() } catch {}
-        return
-      }
-    } catch {}
+    // （forcePreview 时跳过：只读副本不允许落编辑态）
+    if (!forcePreview) {
+      try {
+        const SOURCEMODE_DEFAULT_KEY = 'flymd:sourcemode:default'
+        const sourcemodeDefault = localStorage.getItem(SOURCEMODE_DEFAULT_KEY) === 'true'
+        if (sourcemodeDefault) {
+          mode = 'edit'
+          try { preview.classList.add('hidden') } catch {}
+          try { titlebarStatusApi?.syncToggleButton() } catch {}
+          try { notifyModeChange() } catch {}
+          return
+        }
+      } catch {}
+    }
 
     mode = 'preview'
     try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
@@ -4608,13 +4711,25 @@ async function pickRecentSetToOpen(): Promise<{ paths: string[]; active: string 
     const recents = await getRecent(store)
     for (const p of recents) {
       if (!p || typeof p !== 'string') continue
+      // Office 预览缓存目录里的临时副本不参与恢复：重开无意义，且重开会经
+      // openFile2 触发库根同步，把当前库翻切成只含临时副本的"临时库"
+      try {
+        const m = await import('./extensions/officePreview')
+        if (m.isOfficePreviewCachePath(p)) continue
+      } catch {}
       if (await isOpenableFilePath(p)) paths.push(p)
     }
   } catch {}
   let active: string | null = null
   try {
     const cur = await getLibraryCurrentFile()
-    if (cur && await isOpenableFilePath(cur)) {
+    let curIsOfficeCache = false
+    try {
+      const m = await import('./extensions/officePreview')
+      curIsOfficeCache = m.isOfficePreviewCachePath(cur)
+    } catch {}
+    // 同 recent 过滤：缓存目录里的临时副本不作为"当前文件"恢复
+    if (cur && !curIsOfficeCache && await isOpenableFilePath(cur)) {
       if (!paths.includes(cur)) paths.push(cur)
       active = cur
     }
@@ -4726,8 +4841,19 @@ async function refreshLibraryScopeCache(): Promise<void> {
 }
 
 async function syncTemporaryLibraryRootForOpenedPath(path: string): Promise<void> {
+  if (_suppressTempLibrarySync) return
   const p = normalizePath(path)
   if (!p) return
+  // 硬白名单：Office 预览缓存目录（temp_dir()/flymd-office-preview/...）里的
+  // 临时 md/pdf 副本绝不允许翻切库根。本函数是临时库根的唯一翻切入口，在此拦截
+  // 即覆盖全部路径（比逐调用点置 _suppressTempLibrarySync 更能防未来新增路径）。
+  try {
+    const m = await import('./extensions/officePreview')
+    if (m.isOfficePreviewCachePath(p)) {
+      logInfo('Office 预览缓存路径，跳过临时库根同步', { path: p })
+      return
+    }
+  } catch {}
 
   const persisted = await findPersistedLibraryForPath(p)
   let nextRoot: string | null = null
@@ -5836,7 +5962,7 @@ const stickyTodoActionsApi = createStickyTodoActions({
   savePrefs: saveStickyNotePrefs,
   getOpacity: () => stickyNoteOpacity,
   getColor: () => stickyNoteColor,
-  getPluginAPI: (id) => pluginHost.getPluginAPI(id),
+  getPluginAPI: (id) => pluginRuntimeProxy.pluginHost.getPluginAPI(id),
   pluginNotice,
   alert: (msg) => { try { alert(msg) } catch {} },
 })
@@ -6039,6 +6165,7 @@ mainTopMenusApi = createMainTopMenus({
   getMode: () => mode,
   setMode: (m) => { mode = m },
   getWysiwyg: () => wysiwyg,
+  isOfficePreviewActive: () => isOfficePreviewTabActive(),
   flymdGetSplitPreviewEnabled: () => !!(window as any).flymdGetSplitPreviewEnabled?.(),
 })
 
@@ -6157,7 +6284,7 @@ async function ensureQuickSearch() {
     openFile: async (p: string) => { await openFile2(p) },
     showError: (msg: string, err?: any) => showError(msg, err),
     getPluginAPI: (ns: string) => {
-      try { return pluginHost.getPluginAPI(ns) } catch { return null }
+      try { return pluginRuntimeProxy.pluginHost.getPluginAPI(ns) } catch { return null }
     },
   })
   return _quickSearch
@@ -7488,6 +7615,19 @@ function bindEvents() {
         return
       }
     } catch {}
+    // Office 转换预览标签锁定阅读模式：吞掉切源码/所见/分屏快捷键
+    // （Ctrl+E、Ctrl+W、Ctrl+Shift+E；Ctrl+R 目标态即阅读，幂等，放行）
+    if (isOfficePreviewTabActive() && (e.ctrlKey || e.metaKey) && !e.altKey) {
+      const officeKey = (e.key || '').toLowerCase()
+      if (officeKey === 'e' || officeKey === 'w') {
+        e.preventDefault()
+        try { e.stopPropagation() } catch {}
+        try { (e as any).stopImmediatePropagation && (e as any).stopImmediatePropagation() } catch {}
+        await ensureOfficePreviewReadonly()
+        notifyOfficeReadonlyBlocked()
+        return
+      }
+    }
     // Ctrl+Shift+P：命令面板（聚合扩展菜单+右键菜单）
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'p') {
       e.preventDefault()
@@ -8771,6 +8911,18 @@ function bindEvents() {
         openUploaderDialog,
         openWebdavSyncDialog,
         getWebdavSyncConfig,
+        getOfficePreviewConfig: async () => {
+          try {
+            const m = await import('./extensions/officePreview')
+            return { enabled: m.isOfficePreviewEnabled() }
+          } catch { return { enabled: false } }
+        },
+        setOfficePreviewEnabled: async (enabled: boolean) => {
+          try {
+            const m = await import('./extensions/officePreview')
+            await m.setOfficePreviewEnabled(enabled)
+          } catch (e) { console.warn('切换 Word 预览状态失败', e) }
+        },
         openInBrowser,
         // 插件运行时延迟初始化：通过 Proxy 把实际调用转发到初始化后的 pluginRuntime。
         installPluginFromGit: (ref, opt) => pluginRuntimeProxy.installPluginFromGit(ref, opt),
@@ -8912,9 +9064,45 @@ function bindEvents() {
               openInBrowser: (url: string) => { try { void openInBrowser(url) } catch {} },
             })
           } catch {}
+          // 桌面端：Word 文档预览（内置扩展：doc/docx → 临时 Markdown/PDF 副本预览）
+          try {
+            const { initOfficePreviewFeature } = await import('./extensions/officePreview')
+            await initOfficePreviewFeature({
+              getStore: () => store,
+              pluginNotice: (msg: string, level?: 'ok' | 'err', ms?: number) => { try { pluginNotice(msg, level, ms) } catch {} },
+              // 懒解析：模块顶层 pluginRuntimeProxy 解构拿到的是未初始化桩，必须现取
+              getPluginHost: () => pluginRuntime?.pluginHost ?? null,
+              refreshFileTree: async () => { if (fileTreeReady) await fileTree.refresh() },
+              // 打开临时 md 副本：抑制 recent 推入（避免临时文件污染最近列表）
+              // 并抑制临时库根同步（临时副本在系统缓存目录，绝不能把库切过去）
+              openMarkdownPreviewTab: async (p: string) => {
+                _suppressRecentPush = true
+                _suppressTempLibrarySync = true
+                try { await openFile2(p) } finally { _suppressRecentPush = false; _suppressTempLibrarySync = false }
+              },
+              // 复用现有 PDF 预览；临时 PDF 同样不进 recent
+              showPdfPreview: async (p: string) => { await showPdfPreview(p, { updateRecent: false }) },
+            })
+          } catch (e) { console.warn('[Extensions] Word 预览初始化失败:', e) }
           await pluginRuntime.loadAndActivateEnabledPlugins()
           // 插件可能注册了额外后缀（ASP），刷新文件树以应用过滤与图标规则
           try { if (fileTreeReady) await fileTree.refresh() } catch {}
+          // 启动早期被防护门跳过的 Office 文档：此时 ASP 规则已就绪，补打开
+          // （扩展被停用时给出明确提示，不再重试，避免二进制落入文本渲染管线）
+          try {
+            if (_pendingOfficeOpenRetry) {
+              const p = _pendingOfficeOpenRetry
+              _pendingOfficeOpenRetry = null
+              const ext2 = String(p.split(/\./).pop() || '').toLowerCase()
+              const hasRule = !!(pluginRuntime?.pluginHost?.getAdditionalSuffixRule?.(ext2))
+              if (hasRule) {
+                await openFile2(p)
+              } else {
+                logWarn('Office 文档待打开被放弃（Word 预览扩展未启用）', { path: p })
+                try { pluginNotice(t('officePreview.needEnable'), 'err', 4200) } catch {}
+              }
+            }
+          } catch (e) { console.warn('Office 待打开补发失败:', e) }
           await coreExtensionsMod.ensureCoreExtensionsAfterStartup(store, APP_VERSION, (p) => pluginRuntime!.activatePlugin(p))
           // 启动后后台检查一次扩展更新（仅提示，不自动更新）
           await pluginRuntime.checkPluginUpdatesOnStartup()
@@ -9259,8 +9447,9 @@ function startAsyncUploadFromBlob(blob: Blob, fname: string, mime: string): Prom
 // 插件运行时宿主：延迟到 requestIdleCallback 中初始化，避免把 extensions/runtime.ts
 // 及其依赖（pluginHost、market 等）压入启动包。见 initApp() 中的延迟初始化块。
 
+// 注意：不要从 pluginRuntimeProxy 顶层解构具体句柄——模块求值时运行时未初始化，
+// 解构拿到的是永久桩函数。所有使用必须写成 pluginRuntimeProxy.xxx 调用时懒解析。
 const {
-  pluginHost,
   pluginContextMenuItems,
   updatePluginDockGaps,
   getInstalledPlugins,
@@ -9280,7 +9469,8 @@ const {
 try {
   ;(window as any).__flymdGetAdditionalSuffixMeta = () => {
     try {
-      return (pluginHost as any)?.getAdditionalSuffixFileTreeMeta?.() || {}
+      // 懒解析：模块顶层解构的 pluginHost 是未初始化桩，必须经 proxy 现取
+      return (pluginRuntimeProxy.pluginHost as any)?.getAdditionalSuffixFileTreeMeta?.() || {}
     } catch {
       return {}
     }

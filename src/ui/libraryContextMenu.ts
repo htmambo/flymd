@@ -165,6 +165,24 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
           }
         }))
       }
+
+      // Word 转换（仅 docx）：复用 Word/Excel 导入插件的导入管线（转 Markdown 追加到当前编辑器）
+      // 插件激活时会暴露 window.__officeImporterConvertPath；未启用插件时提示用户先启用
+      if (/\.docx$/i.test(path)) {
+        menu.appendChild(mkItem(t('ctx.convertOffice'), async () => {
+          try {
+            const win = window as any
+            const convertFn = win?.__officeImporterConvertPath as ((p: string) => Promise<void>) | undefined
+            if (typeof convertFn !== 'function') {
+              alert(t('ctx.convertOfficeNeedPlugin'))
+              return
+            }
+            await convertFn(path)
+          } catch (e) {
+            console.error('[库树] Word 转换失败:', e)
+          }
+        }))
+      }
     }
 
     if (isDir) {

@@ -76,7 +76,7 @@ export type AdditionalSuffixOpenWith =
 
 export type AdditionalSuffixFileTreeRule = {
   show?: boolean
-  icon?: 'file' | 'pdf'
+  icon?: 'file' | 'pdf' | 'word'
 }
 
 export type AdditionalSuffixRegisterSpec = {
@@ -94,8 +94,21 @@ export type AdditionalSuffixRuleRecord = {
   ownerPluginId: string
   ext: string
   displayName: string
-  fileTree: { show: boolean; icon: 'file' | 'pdf' }
+  fileTree: { show: boolean; icon: 'file' | 'pdf' | 'word' }
   openWith: AdditionalSuffixOpenWith
+}
+
+// ASP 后缀名归一化：仅保留常见扩展名字符集，避免奇怪输入影响文件路径逻辑
+function normalizeSuffixExt(raw: string): string {
+  let ext = String(raw || '').trim().toLowerCase()
+  if (ext.startsWith('.')) ext = ext.slice(1)
+  ext = ext.replace(/\s+/g, '')
+  ext = ext.replace(/[^a-z0-9+_-]/g, '')
+  return ext
+}
+
+function normalizeTreeIcon(raw: unknown): 'file' | 'pdf' | 'word' {
+  return raw === 'pdf' ? 'pdf' : raw === 'word' ? 'word' : 'file'
 }
 
 export type PluginHostState = {
@@ -151,6 +164,10 @@ export type PluginHost = {
   getAdditionalSuffixDialogFilters: () => Array<{ name: string; extensions: string[] }>
   getContextMenuItems: () => PluginContextMenuItem[]
   openPluginSettings: (p: InstalledPlugin) => Promise<void>
+  // 内置扩展（非插件安装）注册 ASP 后缀规则与 API 命名空间
+  registerBuiltinSuffixRules: (ownerId: string, spec: AdditionalSuffixRegisterSpec) => void
+  unregisterBuiltinSuffixRules: (ownerId: string) => void
+  registerBuiltinAPI: (namespace: string, ownerId: string, api: any) => void
 }
 
 let _appLocalDataDirCached: string | null | undefined
@@ -560,6 +577,100 @@ export function createPluginHost(
   deps: PluginHostDeps,
   state: PluginHostState,
 ): PluginHost {
+  // ASP 注册核心逻辑：插件 asp.register / 内置扩展 registerBuiltinSuffixRules 共用
+  function registerSuffixRulesForOwner(
+    ownerPluginId: string,
+    spec: AdditionalSuffixRegisterSpec,
+    opts?: { log?: boolean },
+  ): void {
+    const rawExts = (spec && Array.isArray(spec.extensions))
+      ? spec.extensions
+      : []
+    if (!rawExts.length) {
+      if (opts?.log) {
+        console.warn(
+          `[Plugin ${ownerPluginId}] asp.register: extensions 不能为空`,
+        )
+      }
+      return
+    }
+
+    const reserved = new Set(['md', 'markdown', 'txt', 'pdf'])
+
+    const displayNameRaw = String(spec.displayName || '').trim()
+    const treeShow =
+      typeof spec.fileTree?.show === 'boolean'
+        ? spec.fileTree.show
+        : true
+    const treeIcon = normalizeTreeIcon(spec.fileTree?.icon)
+
+    const openWith: AdditionalSuffixOpenWith = (() => {
+      const ow: any = spec.openWith
+      if (!ow || typeof ow !== 'object') return { mode: 'markdown' }
+      if (ow.mode === 'plugin') {
+        const pid = String(ow.pluginId || '').trim()
+        if (!pid) return { mode: 'markdown' }
+        const method = String(ow.method || '').trim() || undefined
+        return { mode: 'plugin', pluginId: pid, method }
+      }
+      return { mode: 'markdown' }
+    })()
+
+    for (const raw of rawExts) {
+      const ext = normalizeSuffixExt(raw)
+      if (!ext) continue
+      if (reserved.has(ext)) {
+        if (opts?.log) {
+          console.warn(
+            `[Plugin ${ownerPluginId}] asp.register: 忽略内置后缀 "${ext}"`,
+          )
+        }
+        continue
+      }
+
+      const displayName = displayNameRaw || `.${ext}`
+
+      const existing = state.additionalSuffixRegistry.get(ext)
+      if (existing && existing.ownerPluginId !== ownerPluginId) {
+        if (opts?.log) {
+          console.warn(
+            `[Plugin ${ownerPluginId}] asp.register: 后缀 "${ext}" 已被插件 "${existing.ownerPluginId}" 注册，跳过`,
+          )
+        }
+        continue
+      }
+
+      const record: AdditionalSuffixRuleRecord = {
+        ownerPluginId,
+        ext,
+        displayName,
+        fileTree: { show: treeShow, icon: treeIcon },
+        openWith,
+      }
+      state.additionalSuffixRegistry.set(ext, record)
+      if (opts?.log) {
+        console.log(
+          `[Plugin ${ownerPluginId}] asp.register: 已注册后缀 "${ext}"`,
+        )
+      }
+    }
+  }
+
+  function unregisterSuffixRulesByOwner(ownerPluginId: string): void {
+    const toRemove: string[] = []
+    for (const [ext, record] of state.additionalSuffixRegistry.entries()) {
+      if (record && record.ownerPluginId === ownerPluginId) toRemove.push(ext)
+    }
+    for (const ext of toRemove) {
+      state.additionalSuffixRegistry.delete(ext)
+    }
+    if (toRemove.length) {
+      console.log(
+        `[ASP] unregisterByOwner(${ownerPluginId}): 已移除 ${toRemove.length} 个后缀`,
+      )
+    }
+  }
+
   async function activatePlugin(p: InstalledPlugin): Promise<void> {
     if (state.activePlugins.has(p.id)) return
     const code = await readPluginMainCode(p)
@@ -1045,81 +1156,7 @@ export function createPluginHost(
       asp: {
         register: (spec: AdditionalSuffixRegisterSpec) => {
           try {
-            const rawExts = (spec && Array.isArray(spec.extensions))
-              ? spec.extensions
-              : []
-            if (!rawExts.length) {
-              console.warn(
-                `[Plugin ${p.id}] asp.register: extensions 不能为空`,
-              )
-              return
-            }
-
-            const normalizeExt = (raw: string): string => {
-              let ext = String(raw || '').trim().toLowerCase()
-              if (ext.startsWith('.')) ext = ext.slice(1)
-              ext = ext.replace(/\s+/g, '')
-              // 仅允许非常常见的扩展名字符集，避免奇怪输入影响文件路径逻辑
-              ext = ext.replace(/[^a-z0-9+_-]/g, '')
-              return ext
-            }
-
-            const reserved = new Set(['md', 'markdown', 'txt', 'pdf'])
-
-            const displayNameRaw = String(spec.displayName || '').trim()
-            const treeShow =
-              typeof spec.fileTree?.show === 'boolean'
-                ? spec.fileTree.show
-                : true
-            const treeIconRaw = spec.fileTree?.icon
-            const treeIcon: 'file' | 'pdf' =
-              treeIconRaw === 'pdf' ? 'pdf' : 'file'
-
-            const openWith: AdditionalSuffixOpenWith = (() => {
-              const ow: any = spec.openWith
-              if (!ow || typeof ow !== 'object') return { mode: 'markdown' }
-              if (ow.mode === 'plugin') {
-                const pid = String(ow.pluginId || '').trim()
-                if (!pid) return { mode: 'markdown' }
-                const method = String(ow.method || '').trim() || undefined
-                return { mode: 'plugin', pluginId: pid, method }
-              }
-              return { mode: 'markdown' }
-            })()
-
-            for (const raw of rawExts) {
-              const ext = normalizeExt(raw)
-              if (!ext) continue
-              if (reserved.has(ext)) {
-                console.warn(
-                  `[Plugin ${p.id}] asp.register: 忽略内置后缀 "${ext}"`,
-                )
-                continue
-              }
-
-              const displayName =
-                displayNameRaw || `.${ext}`
-
-              const existing = state.additionalSuffixRegistry.get(ext)
-              if (existing && existing.ownerPluginId !== p.id) {
-                console.warn(
-                  `[Plugin ${p.id}] asp.register: 后缀 "${ext}" 已被插件 "${existing.ownerPluginId}" 注册，跳过`,
-                )
-                continue
-              }
-
-              const record: AdditionalSuffixRuleRecord = {
-                ownerPluginId: p.id,
-                ext,
-                displayName,
-                fileTree: { show: treeShow, icon: treeIcon },
-                openWith,
-              }
-              state.additionalSuffixRegistry.set(ext, record)
-              console.log(
-                `[Plugin ${p.id}] asp.register: 已注册后缀 "${ext}"`,
-              )
-            }
+            registerSuffixRulesForOwner(p.id, spec, { log: true })
           } catch (e) {
             console.error(
               `[Plugin ${p.id}] asp.register 失败:`,
@@ -2445,64 +2482,7 @@ export function createPluginHost(
         asp: {
           register: (spec: AdditionalSuffixRegisterSpec) => {
             try {
-              const rawExts = (spec && Array.isArray(spec.extensions))
-                ? spec.extensions
-                : []
-              if (!rawExts.length) {
-                console.warn(
-                  `[Plugin ${p.id}] asp.register: extensions 不能为空`,
-                )
-                return
-              }
-
-              const normalizeExt = (raw: string): string => {
-                let ext = String(raw || '').trim().toLowerCase()
-                if (ext.startsWith('.')) ext = ext.slice(1)
-                ext = ext.replace(/\s+/g, '')
-                ext = ext.replace(/[^a-z0-9+_-]/g, '')
-                return ext
-              }
-
-              const reserved = new Set(['md', 'markdown', 'txt', 'pdf'])
-              const displayNameRaw = String(spec.displayName || '').trim()
-              const treeShow =
-                typeof spec.fileTree?.show === 'boolean'
-                  ? spec.fileTree.show
-                  : true
-              const treeIconRaw = spec.fileTree?.icon
-              const treeIcon: 'file' | 'pdf' =
-                treeIconRaw === 'pdf' ? 'pdf' : 'file'
-              const openWith: AdditionalSuffixOpenWith = (() => {
-                const ow: any = spec.openWith
-                if (!ow || typeof ow !== 'object') return { mode: 'markdown' }
-                if (ow.mode === 'plugin') {
-                  const pid = String(ow.pluginId || '').trim()
-                  if (!pid) return { mode: 'markdown' }
-                  const method = String(ow.method || '').trim() || undefined
-                  return { mode: 'plugin', pluginId: pid, method }
-                }
-                return { mode: 'markdown' }
-              })()
-
-              for (const raw of rawExts) {
-                const ext = normalizeExt(raw)
-                if (!ext) continue
-                if (reserved.has(ext)) continue
-
-                const displayName = displayNameRaw || `.${ext}`
-
-                const existing = state.additionalSuffixRegistry.get(ext)
-                if (existing && existing.ownerPluginId !== p.id) continue
-
-                const record: AdditionalSuffixRuleRecord = {
-                  ownerPluginId: p.id,
-                  ext,
-                  displayName,
-                  fileTree: { show: treeShow, icon: treeIcon },
-                  openWith,
-                }
-                state.additionalSuffixRegistry.set(ext, record)
-              }
+              registerSuffixRulesForOwner(p.id, spec, { log: false })
             } catch (e) {
               console.error(`[Plugin ${p.id}] asp.register 失败:`, e)
             }
@@ -2653,6 +2633,51 @@ export function createPluginHost(
     }
   }
 
+  function registerBuiltinSuffixRules(
+    ownerId: string,
+    spec: AdditionalSuffixRegisterSpec,
+  ): void {
+    try {
+      const id = String(ownerId || '').trim()
+      if (!id) return
+      registerSuffixRulesForOwner(id, spec, { log: true })
+    } catch (e) {
+      console.error('[ASP] registerBuiltinSuffixRules 失败:', e)
+    }
+  }
+
+  function unregisterBuiltinSuffixRules(ownerId: string): void {
+    try {
+      const id = String(ownerId || '').trim()
+      if (!id) return
+      unregisterSuffixRulesByOwner(id)
+    } catch (e) {
+      console.error('[ASP] unregisterBuiltinSuffixRules 失败:', e)
+    }
+  }
+
+  function registerBuiltinAPI(
+    namespace: string,
+    ownerId: string,
+    api: any,
+  ): void {
+    try {
+      const ns = String(namespace || '').trim()
+      const id = String(ownerId || '').trim()
+      if (!ns || !id || !api) return
+      const existing = state.pluginAPIRegistry.get(ns)
+      if (existing && existing.pluginId !== id) {
+        console.warn(
+          `[ASP] registerBuiltinAPI: 命名空间 "${ns}" 已被 "${existing.pluginId}" 占用，跳过`,
+        )
+        return
+      }
+      state.pluginAPIRegistry.set(ns, { pluginId: id, api })
+    } catch (e) {
+      console.error('[ASP] registerBuiltinAPI 失败:', e)
+    }
+  }
+
   return {
     activatePlugin,
     deactivatePlugin,
@@ -2663,5 +2688,8 @@ export function createPluginHost(
     getAdditionalSuffixDialogFilters,
     getContextMenuItems,
     openPluginSettings,
+    registerBuiltinSuffixRules,
+    unregisterBuiltinSuffixRules,
+    registerBuiltinAPI,
   }
 }

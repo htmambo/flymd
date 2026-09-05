@@ -29,6 +29,9 @@ export interface ExtensionsPanelHost {
   openUploaderDialog(): void | Promise<void>
   openWebdavSyncDialog(): void | Promise<void>
   getWebdavSyncConfig(): Promise<{ enabled: boolean }>
+  // Word 文档预览（内置扩展）启用状态：全局持久化 + ASP 规则注册/注销
+  getOfficePreviewConfig(): Promise<{ enabled: boolean }>
+  setOfficePreviewEnabled(enabled: boolean): Promise<void>
   openInBrowser(url: string): void | Promise<void>
   installPluginFromGit(ref: string, opt?: { enabled?: boolean; showInMenuBar?: boolean }): Promise<InstalledPlugin>
   installPluginFromLocal(path: string, opt?: { enabled?: boolean; showInMenuBar?: boolean }): Promise<InstalledPlugin>
@@ -248,7 +251,8 @@ function getCategoryLabel(raw: string): string {
 // 内置扩展：只在扩展面板中展示，不走远程安装流程
 const builtinPlugins: InstalledPlugin[] = [
   { id: 'uploader-s3', name: '', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '' },
-  { id: 'webdav-sync', name: '', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '' }
+  { id: 'webdav-sync', name: '', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '' },
+  { id: 'office-preview', name: '', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '' }
 ]
 
 // 扩展管理面板内部状态
@@ -489,6 +493,17 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
           const tag = webdavRow.querySelector('.ext-tag[data-role="status"]') as HTMLSpanElement | null
           if (tag) {
             const cfg = await host.getWebdavSyncConfig()
+            const enabled = !!cfg?.enabled
+            tag.textContent = enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.color = enabled ? '#22c55e' : '#94a3b8'
+          }
+        }
+
+        const officeRow = unifiedList.querySelector('[data-type="builtin"][data-ext-id="office-preview"]') as HTMLDivElement | null
+        if (officeRow) {
+          const tag = officeRow.querySelector('.ext-tag[data-role="status"]') as HTMLSpanElement | null
+          if (tag) {
+            const cfg = await host.getOfficePreviewConfig().catch(() => ({ enabled: false }))
             const enabled = !!cfg?.enabled
             tag.textContent = enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
             tag.style.color = enabled ? '#22c55e' : '#94a3b8'
@@ -854,7 +869,9 @@ export async function refreshExtensionsUI(): Promise<void> {
           ? `${t('ext.builtin.uploaderS3.name' as any)} (${b.version})`
           : b.id === 'webdav-sync'
             ? `${t('ext.builtin.webdav.name' as any)} (${b.version})`
-            : `${b.name || b.id} (${b.version})`
+            : b.id === 'office-preview'
+              ? `${t('ext.builtin.officePreview.name' as any)} (${b.version})`
+              : `${b.name || b.id} (${b.version})`
         nameText.textContent = fullName
         nameText.title = fullName
         name.appendChild(nameText)
@@ -870,6 +887,8 @@ export async function refreshExtensionsUI(): Promise<void> {
           desc.textContent = t('ext.builtin.uploaderS3.desc' as any)
         } else if (b.id === 'webdav-sync') {
           desc.textContent = t('ext.builtin.webdav.desc' as any)
+        } else if (b.id === 'office-preview') {
+          desc.textContent = t('ext.builtin.officePreview.desc' as any)
         } else {
           desc.textContent = b.description || ''
         }
@@ -896,6 +915,23 @@ export async function refreshExtensionsUI(): Promise<void> {
           const btn2 = document.createElement('button'); btn2.className = 'btn primary'; btn2.textContent = t('ext.settings')
           btn2.addEventListener('click', () => { try { void showExtensionsOverlay(false); void host!.openWebdavSyncDialog() } catch {} })
           actions.appendChild(btn2)
+        } else if (b.id === 'office-preview') {
+          try {
+            const cfg = await host.getOfficePreviewConfig()
+            const tag = document.createElement('span'); tag.className = 'ext-tag'; tag.setAttribute('data-role', 'status'); tag.textContent = cfg.enabled ? t('ext.enabled.tag.on') : t('ext.enabled.tag.off')
+            tag.style.opacity = '0.75'; tag.style.marginRight = '8px'; tag.style.color = cfg.enabled ? '#22c55e' : '#94a3b8'
+            actions.appendChild(tag)
+          } catch {}
+          const cfgNow = await (async () => { try { return await host!.getOfficePreviewConfig() } catch { return { enabled: false } } })()
+          const btnToggle = document.createElement('button'); btnToggle.className = 'btn primary'; btnToggle.textContent = cfgNow.enabled ? t('ext.toggle.disable') : t('ext.toggle.enable')
+          btnToggle.addEventListener('click', async () => {
+            try {
+              const next = !(await host!.getOfficePreviewConfig()).enabled
+              await host!.setOfficePreviewEnabled(next)
+              await refreshExtensionsUI()
+            } catch (err) { host!.showError(t('ext.toggle.fail'), err) }
+          })
+          actions.appendChild(btnToggle)
         }
         row.appendChild(meta); row.appendChild(actions)
         unifiedList.appendChild(row)

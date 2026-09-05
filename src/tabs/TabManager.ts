@@ -15,6 +15,7 @@ import {
   getTabDisplayName,
   EditorMode,
 } from './types'
+import { normalizeOfficePreviewTabState } from '../core/officePreviewPath'
 
 export interface TabManagerHooks {
   // 获取当前编辑器内容
@@ -191,6 +192,12 @@ export class TabManager {
    */
   private async restoreTabState(tab: TabDocument): Promise<void> {
     if (!this.hooks) return
+
+    // Office 转换预览标签锁定阅读模式：旧会话可能存过 edit/所见态，恢复时归一化；
+    // 分屏是全局叠加态，源码栏会露出临时副本内容，一并关闭
+    if (normalizeOfficePreviewTabState(tab.filePath, tab)) {
+      try { (window as any).flymdSetSplitPreviewEnabled?.(false) } catch {}
+    }
 
     // PDF 文件需要特殊处理：重新加载
     if (tab.isPdf && tab.filePath) {

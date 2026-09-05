@@ -4,6 +4,7 @@
 import type { Store } from '@tauri-apps/plugin-store'
 import { getSharedStore } from './sharedStore'
 import { normalizeMetadataLabelMap, type MetadataLabelMap } from '../core/metadataLabels'
+import { isOfficePreviewCachePath } from '../core/officePreviewPath'
 
 // 库实体类型
 export type Library = {
@@ -80,6 +81,8 @@ async function migrateFromLegacyIfNeeded(store: Store): Promise<void> {
     const lr = await store.get('libraryRoot')
     if (typeof lr === 'string' && lr) {
       const root = normalizePath(lr)
+      // 自愈：旧版本可能把 Office 预览缓存目录持久化成库根，绝不迁移为库条目
+      if (!root || isOfficePreviewCachePath(root)) return
       const now = Date.now()
       const name = (root.split(/[/]+/).filter(Boolean).pop() || `lib-${now}`)
       const lib: Library = { id: `lib-${now}`, name, root, createdAt: now, lastUsedAt: now }
@@ -142,7 +145,9 @@ export async function getActiveLibraryId(): Promise<string | null> {
 }
 
 export async function getActiveLibrary(): Promise<Library | null> {
-  const libs = await getLibraries()
+  // 自愈：旧版本可能把 Office 预览缓存目录写入 libraries（或 activeLibraryId 指向它），
+  // 读取侧一律排除；激活 id 失效时回落第一个有效库
+  const libs = (await getLibraries()).filter(l => !isOfficePreviewCachePath(l.root))
   if (libs.length === 0) return null
   const id = await getActiveLibraryId()
   const lib = libs.find(x => x.id === id) ?? libs[0]

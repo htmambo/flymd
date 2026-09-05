@@ -191,39 +191,10 @@ function workbookToMarkdown(workbook) {
   return parts.join('\n')
 }
 
-// 激活函数：注册菜单
-export function activate(context) {
-  // 添加一个主菜单项，下面挂子菜单，避免菜单拥挤
-  context.addMenuItem({
-    label: oiText('导入 Word/Excel', 'Import Word/Excel'),
-    title: oiText(
-      '从本地 docx/xlsx 文件转换为 Markdown 并导入',
-      'Convert local docx/xlsx files to Markdown and import',
-    ),
-    onClick: async () => {
-      let file
-      try {
-        file = await pickOfficeFile()
-      } catch (e) {
-        context.ui.notice(
-          e.message || oiText('选择文件失败', 'Failed to pick file'),
-          'err',
-          3000,
-        )
-        return
-      }
-
-      if (!file) {
-        context.ui.notice(
-          oiText('未选择任何文件', 'No file selected'),
-          'err',
-          3000,
-        )
-        return
-      }
-
-      const name = file.name || ''
-      const lower = name.toLowerCase()
+// 核心导入流程：给定文件名与字节内容，解析为 Markdown 并追加到当前编辑器
+// （菜单"导入"与文件树右键"转换"共用此流程，区别只在字节来源：文件选择器 / 按路径读取）
+async function importOfficeArrayBuffer(context, name, arrayBuffer) {
+      const lower = String(name || '').toLowerCase()
 
       let loadingId = null
       try {
@@ -241,8 +212,6 @@ export function activate(context) {
             2000,
           )
         }
-
-        const arrayBuffer = await file.arrayBuffer()
 
         let md = ''
 
@@ -316,12 +285,77 @@ export function activate(context) {
           }
         }
       }
+}
+
+// 按库内文件路径执行"转换"（与菜单"导入"同一管线）：供文件树右键菜单调用
+// 宿主在 docx 右键菜单中通过 window.__officeImporterConvertPath 找到本入口
+async function importOfficeFromPath(context, path) {
+  const p = String(path || '').trim()
+  if (!p) return
+  if (typeof context.readFileBinary !== 'function') {
+    context.ui.notice(
+      oiText('当前环境不支持按路径读取文件', 'Reading file by path is not supported in this environment'),
+      'err',
+      4000,
+    )
+    return
+  }
+  const name = p.split(/[\\/]/).pop() || p
+  const bytes = await context.readFileBinary(p)
+  const arrayBuffer = bytes instanceof ArrayBuffer
+    ? bytes
+    : bytes.buffer.slice(bytes.byteOffset || 0, (bytes.byteOffset || 0) + bytes.byteLength)
+  await importOfficeArrayBuffer(context, name, arrayBuffer)
+}
+
+// 激活函数：注册菜单
+export function activate(context) {
+  // 暴露按路径转换入口，供宿主文件树 docx 右键菜单（"转换"）调用
+  try {
+    window.__officeImporterConvertPath = (path) => importOfficeFromPath(context, path)
+  } catch {}
+
+  // 添加一个主菜单项，下面挂子菜单，避免菜单拥挤
+  context.addMenuItem({
+    label: oiText('导入 Word/Excel', 'Import Word/Excel'),
+    title: oiText(
+      '从本地 docx/xlsx 文件转换为 Markdown 并导入',
+      'Convert local docx/xlsx files to Markdown and import',
+    ),
+    onClick: async () => {
+      let file
+      try {
+        file = await pickOfficeFile()
+      } catch (e) {
+        context.ui.notice(
+          e.message || oiText('选择文件失败', 'Failed to pick file'),
+          'err',
+          3000,
+        )
+        return
+      }
+
+      if (!file) {
+        context.ui.notice(
+          oiText('未选择任何文件', 'No file selected'),
+          'err',
+          3000,
+        )
+        return
+      }
+
+      const name = file.name || ''
+      const arrayBuffer = await file.arrayBuffer()
+      await importOfficeArrayBuffer(context, name, arrayBuffer)
     }
   })
 }
 
 export function deactivate() {
-  // 当前无需特殊清理
+  // 清理按路径转换入口，避免插件禁用后右键"转换"仍指向已卸载的逻辑
+  try {
+    if (window.__officeImporterConvertPath) delete window.__officeImporterConvertPath
+  } catch {}
 }
 
 // 根据 MIME 类型推断图片扩展名

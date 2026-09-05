@@ -43,6 +43,8 @@ export interface MainTopMenusDeps {
   getMode: () => 'edit' | 'preview'
   setMode: (m: 'edit' | 'preview') => void
   getWysiwyg: () => boolean
+  // Office 转换预览标签锁定阅读模式：为 true 时禁用 编辑/所见/分屏 三项（阅读项保持可用）
+  isOfficePreviewActive?: () => boolean
   // 全局钩子
   flymdGetSplitPreviewEnabled?: () => boolean
 }
@@ -105,8 +107,9 @@ export function createMainTopMenus(deps: MainTopMenusDeps): MainTopMenus {
     const anchor = document.getElementById('btn-mode') as HTMLDivElement | null
     if (!anchor) return
     const splitEnabled = !!(deps.flymdGetSplitPreviewEnabled?.())
+    const officeLocked = !!(deps.isOfficePreviewActive?.())
     showTopMenu(anchor, [
-      { label: deps.t('mode.edit'), accel: 'Ctrl+E', action: async () => {
+      { label: deps.t('mode.edit'), accel: 'Ctrl+E', disabled: officeLocked, action: async () => {
         deps.saveScrollPosition()
         if (deps.getWysiwyg()) {
           try { await deps.setWysiwygEnabled(false) } catch {}
@@ -136,13 +139,14 @@ export function createMainTopMenus(deps: MainTopMenusDeps): MainTopMenus {
         deps.restoreScrollPosition()
         try { deps.notifyModeChange() } catch {}
       } },
-      { label: deps.t('mode.wysiwyg'), accel: 'Ctrl+W', action: async () => {
+      { label: deps.t('mode.wysiwyg'), accel: 'Ctrl+W', disabled: officeLocked, action: async () => {
         try { await deps.setWysiwygEnabled(true) } catch {}
         try { deps.notifyModeChange() } catch {}
       } },
       {
         label: `${splitEnabled ? '✓ ' : ''}源码 + 阅读分屏`,
         accel: 'Ctrl+Shift+E',
+        disabled: officeLocked,
         action: () => {
           try {
             const fm = (window as any)

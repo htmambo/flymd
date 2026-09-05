@@ -755,6 +755,11 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .lib-ico-svg.lib-ico-pdf { width: 20px; height: 16px; }
 .lib-ico-pdf .pdf-badge { fill: currentColor; }
 .lib-ico-pdf .pdf-text { fill: var(--bg); stroke: none; }
+.library .lib-file .lib-ico-word { color: #2b579a; }
+.library .lib-node.selected .lib-ico-word { color: #2b579a; }
+.lib-ico-svg.lib-ico-word { width: 20px; height: 16px; }
+.lib-ico-word .word-badge { fill: currentColor; }
+.lib-ico-word .word-text { fill: var(--bg); stroke: none; }
 .library .lib-ico { color: var(--muted); }
 .library .lib-node:hover .lib-ico { color: var(--fg); }
 .library .lib-node.selected .lib-ico { color: var(--fg); }

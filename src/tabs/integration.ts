@@ -12,8 +12,10 @@ import { TextareaUndoManager } from './TextareaUndoManager'
 import { FLYMD_PATH_DELETED_EVENT, type FlymdPathDeletedDetail } from '../core/pathEvents'
 import { initTabTransferReceiver } from './tabTransferReceiver'
 import { readTextFileAnySafe } from '../core/fsSafe'
+import { getOfficeExt, findExistingPreviewCachePath } from '../extensions/officePreview'
 import { getSessionStorageKey, getUnscopedSessionKey, getCurrentWindowLabel, migrateLegacySessionKey } from './sessionStorageKey'
 import { setLibraryCurrentFile, flushLibraryCurrentFile } from '../core/recentFiles'
+import { logInfo } from '../core/logger'
 
 // 全局引用
 let tabBar: TabBar | null = null
@@ -468,6 +470,9 @@ export async function restoreDirtyDraftsFromSession(): Promise<number> {
         const content = typeof saved.content === 'string' ? saved.content : ''
         if (!content.trim()) continue
         const filePath = typeof saved.filePath === 'string' ? saved.filePath : ''
+        // Office 二进制文档（doc/docx）：编辑器里的"草稿内容"只可能是误读的二进制
+        // （历史上 docx 曾被当纯文本读入），回填即乱码。跳过让正常打开管线走 Word 预览转换。
+        if (filePath && getOfficeExt(filePath)) continue
         if (filePath) {
           const existing = tabManager.findTabByPath(filePath)
           if (existing) {
@@ -945,6 +950,27 @@ function createHooks(): TabManagerHooks {
 }
 
 /**
+ * 折叠同一路径的重复标签（保留 keepTabId 指向的标签）。
+ * 防御历史遗留/身份异常（如旧版本残留的重复预览标签）导致的同路径多标签：
+ * Office 预览标签只读不可能 dirty；普通文件同路径双标签本就是异常态，
+ * 因此仅合并未修改的重复项。
+ */
+async function collapseDuplicateTabsForPath(keepTabId: string, filePath: string): Promise<void> {
+  try {
+    const normalized = filePath.replace(/\\/g, '/')
+    const duplicates = tabManager.getTabs().filter(t =>
+      t.id !== keepTabId &&
+      !t.dirty &&
+      !!t.filePath &&
+      t.filePath.replace(/\\/g, '/') === normalized
+    )
+    for (const dup of duplicates) {
+      try { await tabManager.closeTab(dup.id) } catch {}
+    }
+  } catch {}
+}
+
+/**
  * 挂钩文件打开操作
  */
 function hookOpenFile(): void {
@@ -962,6 +988,7 @@ function hookOpenFile(): void {
   flymd.flymdOpenFile = async (preset?: unknown) => {
     const currentTab = tabManager.getActiveTab()
     const beforePath = flymd.flymdGetCurrentFilePath?.()
+    const beforeTabId = tabManager.getActiveTabId?.() ?? currentTab?.id ?? null
 
     // 如果是路径字符串，检查是否已打开
     if (typeof preset === 'string') {
@@ -971,19 +998,31 @@ function hookOpenFile(): void {
         await tabManager.switchToTab(existingTab.id)
         return
       }
+      // Office 预览：已有预览标签的身份是转换产物路径（缓存 md/pdf），按 docx/doc
+      // 入参路径查不中；先解析产物路径再去重，命中则直接切换，避免
+      // "先新建空标签 → 打开后关闭 → 再激活旧预览标签"的闪烁
+      if (getOfficeExt(preset)) {
+        const cachePath = await findExistingPreviewCachePath(preset)
+        const previewTab = cachePath ? tabManager.findTabByPath(cachePath) : null
+        if (previewTab) {
+          await tabManager.switchToTab(previewTab.id)
+          return
+        }
+      }
     }
 
     // 如果当前标签是空白的（无路径、无内容、未修改），复用它
     const isCurrentTabEmpty = currentTab &&
       !currentTab.filePath &&
       !currentTab.dirty &&
-      !currentTab.content.trim()
+      !String(currentTab.content || '').trim()
 
     // 当前标签已有内容：直接新建标签，再打开文档，避免覆盖
     const shouldOpenNewTab = !!(currentTab && !isCurrentTabEmpty)
+    let createdTabId: string | null = null
     if (shouldOpenNewTab) {
       // 先创建新空白标签（这会保存当前标签状态）
-      tabManager.createNewTab()
+      createdTabId = tabManager.createNewTab().id
       // 暂停轮询检测，避免冲突
       pausePathWatcher(1500)
     }
@@ -1007,8 +1046,15 @@ function hookOpenFile(): void {
       // 更新当前标签（可能是新创建的空白标签，或复用的空白标签）
       const activeTab = tabManager.getActiveTab()
       if (activeTab) {
+        // 打开解析到了已打开的标签（如 Office 预览按产物路径去重后激活了已有预览标签）：
+        // 本次为打开新建的空标签未承载结果，关闭以免残留
+        if (createdTabId && activeTab.id !== createdTabId && tabManager.findTabById(createdTabId)) {
+          try { await tabManager.closeTab(createdTabId) } catch {}
+        }
         tabManager.updateCurrentTabPath(afterPath)
         tabManager.updateTabContent(activeTab.id, content)
+        // 自愈加固：历史遗留/身份异常可能留下同路径重复标签，折叠之
+        await collapseDuplicateTabsForPath(activeTab.id, afterPath)
         // 打开新文档后同步一次库侧栏选中态（避免“新标签先切换但路径尚未写入”导致高亮停留在旧文档）
         syncFileTreeSelectionToActiveTab()
 
@@ -1021,6 +1067,32 @@ function hookOpenFile(): void {
           // 标记为 PDF 标签
           activeTab.isPdf = true
         }
+      }
+    } else if (createdTabId) {
+      // 打开未生效（打开失败/被取消/重开了当前文件）：
+      // 回滚为本次打开新建的空标签，避免"新建文档N"残留空标签
+      try {
+        logInfo('[Tabs] 打开未生效，回滚空标签', { preset: typeof preset === 'string' ? preset : typeof preset, beforePath: beforePath || null, afterPath: afterPath || null })
+        if (beforeTabId && beforeTabId !== createdTabId && tabManager.findTabById(beforeTabId)) {
+          // 先切回打开前的标签：其内容/路径已存于标签模型，随标签恢复
+          await tabManager.switchToTab(beforeTabId)
+        }
+        if (tabManager.findTabById(createdTabId)) {
+          await tabManager.closeTab(createdTabId)
+        }
+        if (afterPath) {
+          // 目标文件已以等效路径打开（如 Office 预览：docx 与临时副本路径不同但指向同一预览）：
+          // 激活已有标签，并把重载后的内容写回该标签
+          const existing = tabManager.findTabByPath(afterPath)
+          if (existing) {
+            tabManager.updateTabContent(existing.id, content)
+            await tabManager.switchToTab(existing.id)
+            // 自愈加固：历史遗留/身份异常可能留下同路径重复标签，折叠之
+            await collapseDuplicateTabsForPath(existing.id, afterPath)
+          }
+        }
+      } catch (e) {
+        console.warn('[Tabs] 回滚未生效打开的空标签失败:', e)
       }
     }
   }

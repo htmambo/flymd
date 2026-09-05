@@ -35,7 +35,7 @@ export type FileTreeOptions = {
 
 export type FileTreeAdditionalSuffixMeta = {
   show?: boolean
-  icon?: 'file' | 'pdf'
+  icon?: 'file' | 'pdf' | 'word'
 }
 
 export type FileTreeAPI = {
@@ -90,8 +90,8 @@ async function updateAdditionalSuffixCache(): Promise<void> {
         const item = (v && typeof v === 'object') ? (v as any) : {}
         const show =
           typeof item.show === 'boolean' ? item.show : true
-        const icon: 'file' | 'pdf' =
-          item.icon === 'pdf' ? 'pdf' : 'file'
+        const icon: 'file' | 'pdf' | 'word' =
+          item.icon === 'pdf' ? 'pdf' : item.icon === 'word' ? 'word' : 'file'
         meta[ext] = { show, icon }
       }
     }
@@ -834,6 +834,38 @@ function makePdfSvg(): SVGElement {
   return svg
 }
 
+// Word 图标：与 PDF 徽标同模式，Word 蓝底 + 反色 "W"
+function makeWordSvg(): SVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 32 24')
+  svg.setAttribute('width', '20')
+  svg.setAttribute('height', '16')
+  svg.classList.add('lib-ico', 'lib-ico-svg', 'lib-ico-word')
+  const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  badge.setAttribute('x', '1.5')
+  badge.setAttribute('y', '5')
+  badge.setAttribute('width', '29')
+  badge.setAttribute('height', '14')
+  badge.setAttribute('rx', '1.8')
+  badge.setAttribute('fill', 'currentColor')
+  badge.classList.add('word-badge')
+  svg.appendChild(badge)
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  text.setAttribute('x', '16')
+  text.setAttribute('y', '12.4')
+  text.setAttribute('font-size', '9.6')
+  text.setAttribute('font-weight', '800')
+  text.setAttribute('font-family', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif')
+  text.setAttribute('text-anchor', 'middle')
+  text.setAttribute('dominant-baseline', 'middle')
+  text.setAttribute('textLength', '12')
+  text.setAttribute('lengthAdjust', 'spacingAndGlyphs')
+  text.classList.add('word-text')
+  text.textContent = 'W'
+  svg.appendChild(text)
+  return svg
+}
+
 // 文件夹图标：顶级库使用书架图标，普通文件夹根据展开状态切换图标
 function makeFolderIcon(_path?: string, isRoot?: boolean, expanded?: boolean): HTMLElement {
   if (isRoot) {
@@ -1062,6 +1094,7 @@ async function buildDir(root: string, dir: string, parent: HTMLElement, level: n
         }
       })()
       if (ext === 'pdf' || aspIcon === 'pdf') iconEl = makePdfSvg() as unknown as HTMLElement
+      else if (aspIcon === 'word') iconEl = makeWordSvg() as unknown as HTMLElement
       else if (ext === 'md' || ext === 'markdown' || ext === 'txt') iconEl = makeMarkdownSvg() as unknown as HTMLElement
       else iconEl = makeFileSvg() as unknown as HTMLElement
       // 让图标与文字都成为可拖拽起点（某些内核仅触发“被按住元素”的拖拽，不会透传到父元素）

@@ -239,7 +239,7 @@ fn init_startup_log<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
   }
 }
 
-// 判定是否为受支持的文档扩展名（md/markdown/txt/pdf），并确保路径存在
+// 判定是否为受支持的文档扩展名（md/markdown/txt/pdf/doc/docx），并确保路径存在
 fn is_supported_doc_path(path: &std::path::Path) -> bool {
   use std::path::Path;
   let p: &Path = path;
@@ -247,7 +247,10 @@ fn is_supported_doc_path(path: &std::path::Path) -> bool {
     return false;
   }
   match p.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()) {
-    Some(ext) => ext == "md" || ext == "markdown" || ext == "txt" || ext == "pdf",
+    Some(ext) => {
+      ext == "md" || ext == "markdown" || ext == "txt" || ext == "pdf"
+        || ext == "doc" || ext == "docx"
+    }
     None => false,
   }
 }
@@ -2189,7 +2192,12 @@ fn main() {
       get_cli_args,
       get_platform,
       get_virtual_screen_size,
-      open_as_sticky_note
+      open_as_sticky_note,
+      office_probe,
+      office_preview_cache_path,
+      docx_to_markdown,
+      office_to_pdf,
+      read_file_bytes_any
     ])
     .setup(|app| {
       init_startup_log(&app.handle());
@@ -3036,6 +3044,413 @@ async fn write_text_file_any(path: String, content: String) -> Result<(), String
   Ok(())
 }
 
+// ========== Office 文档预览（doc/docx → 临时 Markdown / PDF） ==========
+// 设计：Word 文件转换为临时目录里的 Markdown/PDF 副本，前端用现有 Markdown/PDF
+// 预览管线展示；缓存键 = hash(源文件绝对路径 | mtime)，仅源文件变化才重新转换。
+
+// Office 转换工具探测结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficeProbeResult {
+  pandoc: bool,
+  soffice: bool,
+}
+
+// docx → Markdown 转换结果：
+// status = "ok"（已生成/命中缓存，cache_path 可直接打开）
+//        | "fallback"（无 pandoc，需前端用 mammoth 兜底，cache_path 为目标写入路径）
+//        | "error"
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DocxToMarkdownResult {
+  status: String,
+  cache_path: Option<String>,
+  cached: bool,
+  message: Option<String>,
+}
+
+// Office → PDF 转换结果（用于 .doc 预览；docx 优先走 Markdown 管线）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OfficeToPdfResult {
+  status: String,
+  pdf_path: Option<String>,
+  cached: bool,
+  message: Option<String>,
+}
+
+fn office_preview_cache_root() -> std::path::PathBuf {
+  std::env::temp_dir().join("flymd-office-preview")
+}
+
+// 缓存键：源文件绝对路径 + mtime；同一文件内容变化（mtime 变）即换目录，避免误用旧副本
+fn office_cache_key(abs_path: &std::path::Path, mtime_ms: u64) -> String {
+  let mut h = sha2::Sha256::new();
+  h.update(abs_path.to_string_lossy().as_bytes());
+  h.update(b"|");
+  h.update(mtime_ms.to_string().as_bytes());
+  let digest = h.finalize();
+  hex::encode(&digest[..8])
+}
+
+// 源文件名 stem 净化：只保留常见字符，避免路径注入/特殊字符问题
+fn office_doc_stem(path: &std::path::Path) -> String {
+  let raw = path
+    .file_stem()
+    .map(|s| s.to_string_lossy().to_string())
+    .unwrap_or_else(|| "document".to_string());
+  let cleaned: String = raw
+    .chars()
+    .map(|c| {
+      if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' ' {
+        c
+      } else {
+        '_'
+      }
+    })
+    .collect();
+  let cleaned = cleaned.trim();
+  if cleaned.is_empty() {
+    "document".to_string()
+  } else {
+    cleaned.to_string()
+  }
+}
+
+// 探测命令是否可执行（--version 能跑通即认为可用）
+fn command_available(program: &str) -> bool {
+  std::process::Command::new(program)
+    .arg("--version")
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .status()
+    .map(|s| s.success())
+    .unwrap_or(false)
+}
+
+fn find_pandoc() -> bool {
+  command_available("pandoc")
+}
+
+// LibreOffice 在多数发行版是 soffice，部分（如 Windows 某些安装）只有 libreoffice
+fn find_soffice_program() -> Option<String> {
+  if command_available("soffice") {
+    Some("soffice".to_string())
+  } else if command_available("libreoffice") {
+    Some("libreoffice".to_string())
+  } else {
+    None
+  }
+}
+
+fn file_mtime_ms(path: &std::path::Path) -> Option<u64> {
+  let md = std::fs::metadata(path).ok()?;
+  md
+    .modified()
+    .ok()?
+    .duration_since(std::time::UNIX_EPOCH)
+    .ok()
+    .map(|d| d.as_millis() as u64)
+}
+
+// LibreOffice 必须使用独立 UserInstallation profile，否则会与系统中已运行的
+// LibreOffice 实例发生单实例锁冲突，导致转换直接失败
+fn lo_user_installation_url(profile_dir: &std::path::Path) -> String {
+  let p = profile_dir.to_string_lossy().replace('\\', "/");
+  format!("file://{p}")
+}
+
+fn office_source_abs(path: &str) -> Result<std::path::PathBuf, String> {
+  let p = std::path::PathBuf::from(path);
+  if !p.exists() {
+    return Err("path not found".into());
+  }
+  if p.is_dir() {
+    return Err("path is a directory".into());
+  }
+  Ok(p.canonicalize().unwrap_or(p))
+}
+
+#[tauri::command]
+async fn office_probe() -> Result<OfficeProbeResult, String> {
+  let res = tauri::async_runtime::spawn_blocking(move || OfficeProbeResult {
+    pandoc: find_pandoc(),
+    soffice: find_soffice_program().is_some(),
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))?;
+  write_startup_log(&format!(
+    "[office] probe: pandoc={} soffice={}",
+    res.pandoc, res.soffice
+  ));
+  Ok(res)
+}
+
+// 仅计算 Office 预览缓存产物路径（不执行转换，缓存文件存在才返回）：
+// 供前端标签系统在"打开前"按产物路径去重，命中已有预览标签时直接激活，
+// 避免先新建空标签再关闭的闪烁
+#[tauri::command]
+async fn office_preview_cache_path(path: String) -> Result<Option<String>, String> {
+  tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+    let Ok(src) = office_source_abs(&path) else {
+      return Ok(None);
+    };
+    let mtime = file_mtime_ms(&src).unwrap_or(0);
+    let key = office_cache_key(&src, mtime);
+    let stem = office_doc_stem(&src);
+    let cache_dir = office_preview_cache_root().join(key);
+    for ext in ["md", "pdf"] {
+      let target = cache_dir.join(format!("{stem}.{ext}"));
+      if target.exists() {
+        return Ok(Some(target.to_string_lossy().to_string()));
+      }
+    }
+    Ok(None)
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))?
+}
+
+// docx → Markdown（优先 pandoc -t gfm；无 pandoc 时返回 fallback 让前端走 mammoth）
+#[tauri::command]
+async fn docx_to_markdown(path: String) -> Result<DocxToMarkdownResult, String> {
+  let src = office_source_abs(&path)?;
+  let ext = src
+    .extension()
+    .and_then(|s| s.to_str())
+    .map(|s| s.to_ascii_lowercase())
+    .unwrap_or_default();
+  if ext != "docx" {
+    return Ok(DocxToMarkdownResult {
+      status: "error".into(),
+      cache_path: None,
+      cached: false,
+      message: Some(format!("docx_to_markdown 仅支持 .docx，收到: .{ext}")),
+    });
+  }
+
+  let res = tauri::async_runtime::spawn_blocking(move || -> Result<DocxToMarkdownResult, String> {
+    let mtime = file_mtime_ms(&src).unwrap_or(0);
+    let key = office_cache_key(&src, mtime);
+    let stem = office_doc_stem(&src);
+    let cache_dir = office_preview_cache_root().join(key);
+    let target = cache_dir.join(format!("{stem}.md"));
+
+    if target.exists() {
+      write_startup_log(&format!(
+        "[office] docx→md 命中缓存: {} -> {}",
+        src.to_string_lossy(),
+        target.to_string_lossy()
+      ));
+      return Ok(DocxToMarkdownResult {
+        status: "ok".into(),
+        cache_path: Some(target.to_string_lossy().to_string()),
+        cached: true,
+        message: None,
+      });
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+      return Ok(DocxToMarkdownResult {
+        status: "error".into(),
+        cache_path: None,
+        cached: false,
+        message: Some(format!("create cache dir error: {e}")),
+      });
+    }
+
+    if find_pandoc() {
+      write_startup_log(&format!(
+        "[office] docx→md 实际转换(pandoc): {} -> {}",
+        src.to_string_lossy(),
+        target.to_string_lossy()
+      ));
+      let out = std::process::Command::new("pandoc")
+        .arg(&src)
+        .arg("-t")
+        .arg("gfm")
+        .arg("--wrap=none")
+        .arg("-o")
+        .arg(&target)
+        .output();
+      match out {
+        Ok(o) if o.status.success() && target.exists() => {
+          return Ok(DocxToMarkdownResult {
+            status: "ok".into(),
+            cache_path: Some(target.to_string_lossy().to_string()),
+            cached: false,
+            message: None,
+          });
+        }
+        Ok(o) => {
+          let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+          write_startup_log(&format!("[office] pandoc 转换失败: {stderr}"));
+          // pandoc 失败仍允许前端 mammoth 兜底
+          return Ok(DocxToMarkdownResult {
+            status: "fallback".into(),
+            cache_path: Some(target.to_string_lossy().to_string()),
+            cached: false,
+            message: Some(if stderr.is_empty() { "pandoc failed".into() } else { stderr }),
+          });
+        }
+        Err(e) => {
+          return Ok(DocxToMarkdownResult {
+            status: "fallback".into(),
+            cache_path: Some(target.to_string_lossy().to_string()),
+            cached: false,
+            message: Some(format!("pandoc spawn error: {e}")),
+          });
+        }
+      }
+    }
+
+    write_startup_log(&format!(
+      "[office] 无 pandoc，docx→md 走前端 mammoth 兜底: {}",
+      src.to_string_lossy()
+    ));
+    Ok(DocxToMarkdownResult {
+      status: "fallback".into(),
+      cache_path: Some(target.to_string_lossy().to_string()),
+      cached: false,
+      message: None,
+    })
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))??;
+
+  Ok(res)
+}
+
+// Office（.doc/.docx）→ PDF，供 .doc 预览使用；必须系统装有 LibreOffice
+#[tauri::command]
+async fn office_to_pdf(path: String) -> Result<OfficeToPdfResult, String> {
+  let src = office_source_abs(&path)?;
+  let ext = src
+    .extension()
+    .and_then(|s| s.to_str())
+    .map(|s| s.to_ascii_lowercase())
+    .unwrap_or_default();
+  if ext != "doc" && ext != "docx" {
+    return Ok(OfficeToPdfResult {
+      status: "error".into(),
+      pdf_path: None,
+      cached: false,
+      message: Some(format!("office_to_pdf 仅支持 .doc/.docx，收到: .{ext}")),
+    });
+  }
+
+  let res = tauri::async_runtime::spawn_blocking(move || -> Result<OfficeToPdfResult, String> {
+    let mtime = file_mtime_ms(&src).unwrap_or(0);
+    let key = office_cache_key(&src, mtime);
+    let stem = office_doc_stem(&src);
+    let cache_dir = office_preview_cache_root().join(key);
+    let target = cache_dir.join(format!("{stem}.pdf"));
+
+    if target.exists() {
+      write_startup_log(&format!(
+        "[office] →pdf 命中缓存: {} -> {}",
+        src.to_string_lossy(),
+        target.to_string_lossy()
+      ));
+      return Ok(OfficeToPdfResult {
+        status: "ok".into(),
+        pdf_path: Some(target.to_string_lossy().to_string()),
+        cached: true,
+        message: None,
+      });
+    }
+
+    let Some(program) = find_soffice_program() else {
+      write_startup_log("[office] 未检测到 LibreOffice，无法转 PDF");
+      return Ok(OfficeToPdfResult {
+        status: "error".into(),
+        pdf_path: None,
+        cached: false,
+        message: Some("LibreOffice not found".into()),
+      });
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+      return Ok(OfficeToPdfResult {
+        status: "error".into(),
+        pdf_path: None,
+        cached: false,
+        message: Some(format!("create cache dir error: {e}")),
+      });
+    }
+
+    let profile_dir = office_preview_cache_root().join("lo-profile");
+    let _ = std::fs::create_dir_all(&profile_dir);
+    let profile_url = lo_user_installation_url(&profile_dir);
+
+    write_startup_log(&format!(
+      "[office] →pdf 实际转换(soffice): {} -> {}",
+      src.to_string_lossy(),
+      target.to_string_lossy()
+    ));
+    let out = std::process::Command::new(&program)
+      .arg("--headless")
+      .arg("--norestore")
+      .arg(format!("-env:UserInstallation={profile_url}"))
+      .arg("--convert-to")
+      .arg("pdf")
+      .arg("--outdir")
+      .arg(&cache_dir)
+      .arg(&src)
+      .output();
+
+    match out {
+      Ok(o) if o.status.success() && target.exists() => Ok(OfficeToPdfResult {
+        status: "ok".into(),
+        pdf_path: Some(target.to_string_lossy().to_string()),
+        cached: false,
+        message: None,
+      }),
+      Ok(o) => {
+        let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+        let detail = if !stderr.trim().is_empty() { stderr } else { stdout };
+        write_startup_log(&format!("[office] soffice 转换失败: {detail}"));
+        Ok(OfficeToPdfResult {
+          status: "error".into(),
+          pdf_path: None,
+          cached: false,
+          message: Some(if detail.trim().is_empty() { "soffice convert failed".into() } else { detail }),
+        })
+      }
+      Err(e) => Ok(OfficeToPdfResult {
+        status: "error".into(),
+        pdf_path: None,
+        cached: false,
+        message: Some(format!("soffice spawn error: {e}")),
+      }),
+    }
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))??;
+
+  Ok(res)
+}
+
+// 读取任意文件字节（供前端 mammoth 兜底读 docx；read_text_file_any 是 lossy 文本，不适用二进制）
+#[tauri::command]
+async fn read_file_bytes_any(path: String) -> Result<Vec<u8>, String> {
+  use std::io::Read;
+  let pathbuf = std::path::PathBuf::from(path);
+  if !pathbuf.exists() {
+    return Err("path not found".into());
+  }
+
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut f = std::fs::File::open(&pathbuf).map_err(|e| format!("open error: {e}"))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).map_err(|e| format!("read error: {e}"))?;
+    Ok::<Vec<u8>, String>(buf)
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))?
+}
+
 // 前端兜底查询：获取并清空待打开路径，避免事件竞态丢失
 #[tauri::command]
 async fn get_pending_open_path(state: State<'_, PendingOpenPath>) -> Result<Option<String>, ()> {
@@ -3253,4 +3668,70 @@ fn match_macos_assets(assets: &[GhAsset]) -> (Option<&GhAsset>, Option<&GhAsset>
     }
   }
   (x64, arm)
+}
+
+
+#[cfg(test)]
+mod office_preview_tests {
+  use super::*;
+
+  #[test]
+  fn cache_key_deterministic() {
+    let p = std::path::Path::new("/tmp/报告.docx");
+    let a = office_cache_key(p, 123456);
+    let b = office_cache_key(p, 123456);
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 16);
+  }
+
+  #[test]
+  fn cache_key_depends_on_path_and_mtime() {
+    let p = std::path::Path::new("/tmp/a.docx");
+    let k1 = office_cache_key(p, 1);
+    let k2 = office_cache_key(p, 2);
+    let k3 = office_cache_key(std::path::Path::new("/tmp/b.docx"), 1);
+    assert_ne!(k1, k2);
+    assert_ne!(k1, k3);
+  }
+
+  #[test]
+  fn stem_sanitize_and_fallback() {
+    let p = std::path::Path::new("/tmp/季度 报告-v2.docx");
+    assert_eq!(office_doc_stem(p), "季度 报告-v2");
+    let weird = std::path::Path::new("/tmp/../../../../etc/passwd");
+    // stem 净化后不允许出现路径分隔语义，且不包含 /
+    let stem = office_doc_stem(weird);
+    assert!(!stem.contains('/'));
+    assert!(!stem.contains('\\'));
+    let none = std::path::Path::new("/tmp/.docx");
+    let stem2 = office_doc_stem(none);
+    assert!(!stem2.is_empty());
+  }
+
+  #[test]
+  fn supported_doc_path_accepts_office() {
+    // 不存在的路径恒为 false（该函数要求 exists）
+    assert!(!is_supported_doc_path(std::path::Path::new("/no/such/file.docx")));
+    // 临时造一个真实文件验证扩展名放行
+    let dir = std::env::temp_dir().join(format!("flymd-office-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for ext in ["docx", "doc", "md", "pdf"] {
+      let f = dir.join(format!("t.{ext}"));
+      std::fs::write(&f, b"x").unwrap();
+      assert!(is_supported_doc_path(&f), "ext {ext} 应被放行");
+      std::fs::remove_file(&f).unwrap();
+    }
+    let bad = dir.join("t.exe");
+    std::fs::write(&bad, b"x").unwrap();
+    assert!(!is_supported_doc_path(&bad));
+    std::fs::remove_file(&bad).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+  }
+
+  #[test]
+  fn lo_profile_url() {
+    let url = lo_user_installation_url(std::path::Path::new("/tmp/flymd/lo-profile"));
+    assert!(url.starts_with("file://"));
+    assert!(!url.contains('\\'));
+  }
 }

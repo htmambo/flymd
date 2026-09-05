@@ -15,6 +15,7 @@ import {
   type TabTransferContent,
   type TabTransferOffer,
 } from './tabTransferProtocol'
+import { normalizeOfficePreviewTabState } from '../core/officePreviewPath'
 
 type UndoLike = { resetCurrentStackBaseline: () => void }
 
@@ -128,6 +129,8 @@ async function handleOffer(
       target.isPdf = isPdf
       target.mode = (tab.mode === 'preview' ? 'preview' : 'edit') as any
       target.wysiwygEnabled = !!tab.wysiwygEnabled
+      // Office 转换预览标签锁定阅读模式：拖入的 Office 预览标签归一化为阅读态
+      if (filePath) normalizeOfficePreviewTabState(filePath, target)
       target.content = hasBody ? (body as string) : ''
 
       // 关键：无路径/冲突降级的标签一律视为 dirty，防止用户误以为已保存
