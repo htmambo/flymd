@@ -452,8 +452,14 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
       }
       if (typeof prefs.contentMaxWidth === 'number' && prefs.contentMaxWidth > 0) {
         c.style.setProperty('--layout-content-max-width', `${prefs.contentMaxWidth}px`)
+        c.style.removeProperty('--layout-content-pad-x')
+      } else if (prefs.contentMaxWidth === 0) {
+        // 自适应：占满可见范围（用超大值让源码模式的 calc() 公式仍然有效），两侧各留 20px
+        c.style.setProperty('--layout-content-max-width', '100000px')
+        c.style.setProperty('--layout-content-pad-x', '20px')
       } else {
         c.style.removeProperty('--layout-content-max-width')
+        c.style.removeProperty('--layout-content-pad-x')
       }
       if (typeof prefs.textIndent === 'number' && prefs.textIndent > 0) {
         c.style.setProperty('--layout-text-indent', `${prefs.textIndent}em`)

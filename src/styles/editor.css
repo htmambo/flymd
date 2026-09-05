@@ -157,7 +157,7 @@ body.dark-mode .editor-line-number.active {
   box-sizing: content-box;
   height: calc(100% - var(--workspace-bottom-gap, 0px));
   width: min(
-    calc(var(--preview-max-width, 960px) + var(--editor-line-gutter-width, 56px)),
+    calc(var(--layout-content-max-width, var(--preview-max-width, 960px)) + var(--editor-line-gutter-width, 56px)),
     max(0px, calc(100% - var(--workspace-left-gap, 0px) - var(--workspace-right-gap, 0px)))
   );
   padding-left: var(--workspace-left-gap, 0px);
@@ -437,7 +437,7 @@ body > .block-menu { display: none !important; }
 /* ProseMirror 基础样式，确保 V2 视图可编辑、可滚动、行距正常 */
 .container.wysiwyg-v2 .ProseMirror {
   min-height: 100%;
-  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px;
+  padding: 14px var(--layout-content-pad-x, 16px) calc(40px + var(--scroll-past-end, 0px)) var(--layout-content-pad-x, 16px);
   outline: none;
   white-space: pre-wrap;
   word-break: break-word;
@@ -593,7 +593,7 @@ body > .block-menu { display: none !important; }
   opacity: 1;
   pointer-events: none; /* 不拦截点击，V1 仅显示 */
   /* 与编辑器对齐（避免文字看起来在光标“下面”） */
-  padding: 14px 16px calc(40px + var(--scroll-past-end, 0px)) 16px; /* 与 .editor 一致 */
+  padding: 14px var(--layout-content-pad-x, 16px) calc(40px + var(--scroll-past-end, 0px)) var(--layout-content-pad-x, 16px); /* 与 .editor 一致 */
   /* 使用与编辑器完全一致的等宽字体，保证 ch 宽度一致 */
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 16px; /* 与 .editor 一致 */
