@@ -213,7 +213,8 @@ body.compact-titlebar .window-btn.window-close:hover {
 
 #plugin-dropdown-panel button,
 #plugin-dropdown-panel .plugin-menu-item {
-  width: auto;
+  width: 100%;
+  box-sizing: border-box;
   text-align: left;
   border: none;
   background: transparent;
@@ -221,7 +222,8 @@ body.compact-titlebar .window-btn.window-close:hover {
   color: var(--fg);
   padding: 6px 12px;
   cursor: pointer;
-  display: block;
+  display: flex;
+  align-items: center;
 }
 
 #plugin-dropdown-panel button:hover:not(:disabled) {
@@ -263,6 +265,8 @@ body.compact-titlebar .window-btn.window-close:hover {
 
 /* 插件菜单 - 通用菜单项样式 */
 .plugin-menu-item {
+  width: 100%;
+  box-sizing: border-box;
   text-align: left;
   border: none;
   background: transparent;
@@ -270,7 +274,8 @@ body.compact-titlebar .window-btn.window-close:hover {
   color: var(--fg);
   padding: 8px 16px;
   cursor: pointer;
-  display: block;
+  display: flex;
+  align-items: center;
   position: relative;
 }
 

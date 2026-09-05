@@ -842,7 +842,7 @@ async function restoreConfigFromPayload(payload: ConfigBackupPayload): Promise<{
   if (hasAppLocalScope) {
     await clearAppLocalDataForRestore()
   } else if (pluginFiles > 0) {
-    await removePluginDir(PLUGINS_DIR)
+    await pluginRuntimeProxy.removePluginDir(PLUGINS_DIR)
   }
   for (const entry of files) {
     const info = resolveBackupPath(entry?.path || '')
@@ -1225,7 +1225,7 @@ function initContextMenuListener() {
       try { e.preventDefault() } catch {}
       const ctx = buildContextMenuContext(e, getContextMenuDeps())
       void showContextMenu(e.clientX, e.clientY, ctx, {
-        pluginItems: pluginContextMenuItems,
+        pluginItems: getPluginCtxItemsSafe(),
         buildBuiltinItems: buildBuiltinContextMenuItems,
       })
     })
@@ -1238,7 +1238,7 @@ function initContextMenuListener() {
         try { e.preventDefault() } catch {}
         const ctx = buildContextMenuContext(e, getContextMenuDeps())
         void showContextMenu(e.clientX, e.clientY, ctx, {
-          pluginItems: pluginContextMenuItems,
+          pluginItems: getPluginCtxItemsSafe(),
           buildBuiltinItems: buildBuiltinContextMenuItems,
         })
       })
@@ -1252,7 +1252,7 @@ function initContextMenuListener() {
       try { e.preventDefault() } catch {}
       const ctx = buildContextMenuContext(e, getContextMenuDeps())
       void showContextMenu(e.clientX, e.clientY, ctx, {
-        pluginItems: pluginContextMenuItems,
+        pluginItems: getPluginCtxItemsSafe(),
         buildBuiltinItems: buildBuiltinContextMenuItems,
       })
     }, true)
@@ -9449,21 +9449,16 @@ function startAsyncUploadFromBlob(blob: Blob, fname: string, mime: string): Prom
 
 // 注意：不要从 pluginRuntimeProxy 顶层解构具体句柄——模块求值时运行时未初始化，
 // 解构拿到的是永久桩函数。所有使用必须写成 pluginRuntimeProxy.xxx 调用时懒解析。
-const {
-  pluginContextMenuItems,
-  updatePluginDockGaps,
-  getInstalledPlugins,
-  setInstalledPlugins,
-  installPluginFromGit,
-  installPluginFromLocal,
-  activatePlugin,
-  deactivatePlugin,
-  openPluginSettings,
-  checkPluginUpdatesOnStartup,
-  updateInstalledPlugin,
-  removePluginDir,
-  loadAndActivateEnabledPlugins,
-} = pluginRuntimeProxy
+
+// 懒取插件右键菜单项：运行时未初始化时 Proxy 会返回桩函数，这里防御为非数组即返回空表
+const getPluginCtxItemsSafe = (): PluginContextMenuItem[] => {
+  try {
+    const items = pluginRuntimeProxy.pluginContextMenuItems
+    return Array.isArray(items) ? items : []
+  } catch {
+    return []
+  }
+}
 
 // ASP：提供给文件树使用的“额外后缀展示配置”查询入口（避免在 fileTree.ts 中直接依赖插件运行时）
 try {
@@ -9481,8 +9476,8 @@ try { if (fileTreeReady) { void fileTree.refresh() } } catch {}
 
 // 插件菜单管理：提供“右键菜单 / 下拉菜单”可见性开关的宿主依赖
 const pluginMenuManagerHost: PluginMenuManagerHost = {
-  getInstalledPlugins: () => getInstalledPlugins(),
-  getPluginContextMenuItems: () => pluginContextMenuItems,
+  getInstalledPlugins: () => pluginRuntimeProxy.getInstalledPlugins(),
+  getPluginContextMenuItems: () => getPluginCtxItemsSafe(),
   getDropdownPlugins: () => {
     try {
       return getPluginsMenuItemsSnapshot()
@@ -9506,7 +9501,7 @@ setCommandPaletteProvider(async () => {
         try { return getPluginDropdownItems() || [] } catch { return [] }
       },
       getPluginContextMenuItems: () => {
-        try { return pluginContextMenuItems || [] } catch { return [] }
+        try { return getPluginCtxItemsSafe() } catch { return [] }
       },
       buildBuiltinContextMenuItems: (ctx) => buildBuiltinContextMenuItems(ctx),
       getContextMenuContext: () => buildContextMenuContextForPalette(getContextMenuDeps()),
