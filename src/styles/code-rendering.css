@@ -30,11 +30,10 @@
   border: 1px solid var(--code-border);
   border-radius: var(--radius-xl);
   /* 统一以变量记录代码块上下内边距，便于各风格覆盖时参与计算 */
-  --code-pre-pad-y: 20px;
+  --code-pre-pad-y: 2px;
   padding: var(--code-pre-pad-y);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
-  margin: 16px 0;
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
   transition: box-shadow 0.2s ease;
 }
@@ -46,7 +45,7 @@
   background: transparent;
   color: var(--code-fg);
   font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
-  font-size: 14px;
+  font-size: 0.875em;  /* 相对容器字号（默认 16px → 14px），随全局字号调整缩放 */
   line-height: 1.7;
   letter-spacing: 0.02em;
 }
@@ -172,7 +171,7 @@
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
   font-family: Consolas, Monaco, 'Courier New', monospace !important;
-  font-size: 14px !important;
+  font-size: 0.875em !important;  /* 相对 .ProseMirror 字号（默认 16px → 14px），随全局字号调整缩放 */
   line-height: 1.5 !important;
   tab-size: 4 !important;
   display: block;

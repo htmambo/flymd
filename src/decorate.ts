@@ -50,6 +50,15 @@ export function decorateCodeBlocks(preview: HTMLElement) {
           let buf = ''
           for (let i = 0; i < lines.length; i++) buf += '<span class="ln">' + (i + 1) + '</span>'
           lnWrap.innerHTML = buf
+          // 行号列宽按位数动态计算：CSS 固定 3.5em 约容纳 3 位数字，超过 999 行时
+          // 按实际位数加宽（等宽字体 + tabular-nums 下每位数字恰为 1ch），
+          // 并同步加宽 pre 的 padding-left 让位（需 important 压过 CSS 里的固定公式）
+          const digits = String(lines.length).length
+          if (digits > 3) {
+            const colWidth = `calc(${digits}ch + 0.6em + 0.5ch)` // 数字区 + 左内边距 0.6em + 右内边距 0.5ch
+            lnWrap.style.width = colWidth
+            pre.style.setProperty('padding-left', `calc(var(--code-pre-pad-y, 20px) + ${digits}ch + 0.6em + 0.5ch + 1px)`, 'important')
+          }
           pre.appendChild(lnWrap)
           // 微对齐：测量第一行在 pre 内的实际像素起点，修正与行号列的起点差（通常为 0~2px）
           try {
