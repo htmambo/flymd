@@ -35,6 +35,7 @@ import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
 import { taskListTogglePlugin } from './plugins/taskList'
 import { docBoundaryEscapePlugin, trailingParagraphPlugin } from './plugins/docBoundaryEscape'
 import { clearExpandedCodeBlocks, codeBlockIndexFromDom, setCodeBlockExpandedByIndex, codeExpandDecorationPlugin, isCodeBlockExpandedByIndex } from './plugins/codeExpandState'
+import { codeBlockJumpPlugin } from './plugins/codeBlockJump'
 import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from '../../plugins/strongBoundaryCompat'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -543,7 +544,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       ctx.set(editorViewOptionsCtx, { editable: () => true })
       // 文档边界插件（首块上方逃逸 + 末尾空段落）：直接注入 prose 插件列表。
       // 不走 .use($prose(...)) —— 其 SchemaReady 异步加载链路在本接入方式下会静默不生效。
-      ctx.update(prosePluginsCtx, (ps) => [...ps, docBoundaryEscapePlugin, trailingParagraphPlugin, codeExpandDecorationPlugin])
+      ctx.update(prosePluginsCtx, (ps) => [...ps, docBoundaryEscapePlugin, trailingParagraphPlugin, codeExpandDecorationPlugin, codeBlockJumpPlugin])
       // 配置上传：接入现有图床上传逻辑，同时允许从 HTML 粘贴的文件触发上传
       try {
         ctx.update(uploadConfig.key, (prev) => ({
