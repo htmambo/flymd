@@ -19,12 +19,15 @@ body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="3"])::before { b
 body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="4"])::before { background: var(--lib-color-4); }
 body.lib-color-depth .lib-children:has(> .lib-node[data-scheme="5"])::before { background: var(--lib-color-5); }
 
-/* 横线 stub:从竖线连到子节点图标左缘。 */
+/* 横线 stub:从竖线连到子节点图标左缘。
+   纵向定位走 50% + translateY(-50%),与 JS 量算的 rail 终点 (offsetTop + offsetHeight/2) 对齐,
+   避免旧版硬编码 top:16px 在 20-24px 行高下与 rail 之间出现 4-6px 缝隙。 */
 .library .lib-children > .lib-node::before {
   content: '';
   position: absolute;
   left: -6px;
-  top: 16px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 16px;
   height: 1px;
   background: rgba(127, 127, 127, 0.4);
@@ -38,12 +41,13 @@ body.lib-color-depth .lib-children > .lib-node[data-scheme="5"]::before { backgr
 
 /* 展开的目录:从横线中点向下延伸一小段竖线,连到子级 rail。
    颜色与该父级"自己的 rail 颜色"一致 —— 用 :has(+ .lib-children > .lib-node[data-scheme=N])
-   取父级 kids 容器首子 scheme,与 rail 5 条规则保持同一取色策略,避免根行(红)::after 覆盖到子级 rail(绿)的视觉跳色。 */
+   取父级 kids 容器首子 scheme,与 rail 5 条规则保持同一取色策略,避免根行(红)::after 覆盖到子级 rail(绿)的视觉跳色。
+   起点 top: 50% 与 stub 的 50% 对齐,不再依赖硬编码 17px,与行高解耦。 */
 .library .lib-node.expanded::after {
   content: '';
   position: absolute;
   left: 4px;
-  top: 17px;
+  top: 50%;
   bottom: -1px;
   width: 1px;
   background: rgba(127, 127, 127, 0.4);
