@@ -447,3 +447,20 @@ docs/Task/
     - 用 `fs2::FileExt::lock_exclusive` 直接调 + `Drop` 自动释放(Rust RAII)
   - **验证**: `cargo check` 0 错 / `npx tsc --noEmit` 0 错 / `npm test` 15 新增通过(总 725/726,1 pre-existing 与本 PR 无关) / `npm run build` 成功(4.41s)
   - **下一步**: PR-3 (libraryPrivate 框架)
+- ✅ [2026-09-11-library-private-v2-pr3-libraryprivate.md](Archive/2026-09/2026-09-11-library-private-v2-pr3-libraryprivate.md) — 库私有化 v2 第三个 PR: 通道 C 框架 `libraryPrivate.ts`(完成 2026-09-11)
+  - **背景**: PR-3 = PR-2 基础设施的 JS 层集成。建 `.flymd/local.json` 读写框架
+  - **改动**:
+    - `src/core/libraryPrivate.ts` (新建 280 行): 类型 / 模块级状态 / 读 / 写 (immediate + debounced) / flush / 失效缓存 / 订阅 / mtime 轮询 / 备份滚动 / 与 `flymd:library:changed` 事件桥接
+    - `src/core/libraryPrivate.test.ts` (新建 200 行, 15 测试)
+  - **测试覆盖**: 路径 / 读 / 写(immediate + debounced) / flush / 失效缓存 / 事件常量
+  - **修复的 bug**:
+    - `_pendingPatch` 第一行 `...patch` 会替换嵌套 docPos → 改用字段级合并
+    - `doWrite` 同问题:base.docPos + patch.docPos 需按 key 合并而非整体替换
+    - test env 无 `window` → `setTimeout` 改用全局,事件 dispatch 加 `typeof window` guard
+  - **设计亮点**:
+    - 跨 PR 集成通过 `LIBRARY_CHANGED_EVENT` 订阅而非 main.ts 显式 hook (main.ts 改动 = 0)
+    - 500ms 防抖 + immediate 模式
+    - 滚动 3 个 .bak 备份
+    - 3s mtime 轮询 + 派发 `flymd:libraryPrivate:changed`
+  - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 15 新增通过(总 740/741,1 pre-existing 与本 PR 无关) / `npm run build` 成功(5.63s)
+  - **下一步**: PR-4 (消费方迁移到 local.json)
