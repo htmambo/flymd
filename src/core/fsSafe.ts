@@ -142,3 +142,73 @@ export async function statFileAnySafe(p: string): Promise<FileSnapshot | null> {
   }
 }
 
+// ========== 库私有化 v2（PR-2）基础设施包装 ==========
+// 目的：为 .flymd/local.json 提供原子写 + 跨进程文件锁。
+// 全部优先调 Rust 后端命令（PR-2 新增），失败 fallback 到 plugin-fs。
+
+/**
+ * 原子写：tmp + fsync + rename + fsync dir。
+ * 失败 fallback 到 plugin-fs writeFile（不保证原子性,但不丢写）。
+ */
+export async function writeFileAtomicSafe(p: string, content: string): Promise<void> {
+  try {
+    await invoke('write_file_atomic', { path: p, content })
+  } catch (e) {
+    // fallback: ensure dir + plain write
+    try {
+      const dir = p.replace(/[\\/][^\\/]*$/, '')
+      if (dir && dir !== p) await ensureDir(dir)
+    } catch {}
+    await writeFile(p as any, new TextEncoder().encode(content) as any)
+  }
+}
+
+/**
+ * 启动期清理 `<root>/.flymd/*.tmp`。返回删除数量。
+ * 失败返回 0（容错，不阻塞启动）。
+ */
+export async function cleanupStaleTmpFilesSafe(root: string): Promise<number> {
+  try {
+    const n = await invoke<number>('cleanup_stale_tmp_files', { root })
+    return Number(n) || 0
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * 跨进程文件锁：以 `<path>.lock` 旁路文件 fs2 排他锁。
+ * 返回 token；解锁时传回 unlockFileSafe。
+ * 超时或失败时抛错。
+ */
+export async function tryLockFileSafe(p: string, timeoutMs = 5000): Promise<string> {
+  const token = await invoke<string>('try_lock_file', { path: p, timeoutMs: timeoutMs })
+  if (typeof token !== 'string' || !token) {
+    throw new Error('try_lock_file returned empty token')
+  }
+  return token
+}
+
+/** 释放 token 对应的锁。token 不存在时后端返回错误,这里吞掉（容错）。 */
+export async function unlockFileSafe(token: string): Promise<void> {
+  try {
+    await invoke('unlock_file', { token })
+  } catch {
+    // best-effort: 进程退出自动释放,这里静默
+  }
+}
+
+/** 便捷：带锁读文件。 */
+export async function readFileLockedSafe(p: string, timeoutMs = 5000): Promise<string> {
+  return await invoke<string>('read_file_locked', { path: p, timeoutMs: timeoutMs })
+}
+
+/** 便捷：带锁原子写文件。 */
+export async function writeFileLockedSafe(
+  p: string,
+  content: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await invoke('write_file_locked', { path: p, content, timeoutMs: timeoutMs })
+}
+

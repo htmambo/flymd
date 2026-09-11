@@ -2166,6 +2166,13 @@ fn main() {
         stat_any,
         write_text_file_any,
         list_dir_any,
+        // 库私有化 v2 (PR-2)
+        write_file_atomic,
+        cleanup_stale_tmp_files,
+        try_lock_file,
+        unlock_file,
+        read_file_locked,
+        write_file_locked,
       get_pending_open_path,
       http_xmlrpc_post,
       ai_novel_api,
@@ -3042,6 +3049,218 @@ async fn write_text_file_any(path: String, content: String) -> Result<(), String
   .map_err(|e| format!("join error: {e}"))??;
 
   Ok(())
+}
+
+// ========== 库私有化 v2 基础设施（PR-2） ==========
+// 目的：为后续 PR-3/4 的 .flymd/local.json 提供原子写 + 跨进程文件锁 + stale 清理。
+// 设计要点：
+//   - 原子写：tmp 文件 + fsync + rename + fsync 父目录；任一失败回滚 tmp
+//   - 文件锁：<path>.lock 旁路文件 + fs2 (POSIX flock / Windows LockFileEx)
+//   - 超时：用 std::thread::spawn + mpsc::recv_timeout 避免引入 tokio::time
+//   - Token：SystemTime nanos + atomic counter 碰撞概率极低
+
+use fs2::FileExt;
+use std::collections::HashMap;
+use std::fs::File;
+use std::sync::Mutex;
+
+/// 全局锁注册表：token -> 持有 fd 的 File（Drop 时自动释放锁）。
+static LOCK_REGISTRY: OnceLock<Mutex<HashMap<String, File>>> = OnceLock::new();
+
+fn lock_registry() -> &'static Mutex<HashMap<String, File>> {
+    LOCK_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn gen_lock_token() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let c = COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("{:x}-{:x}", now, c)
+}
+
+/// 原子写：先写 `<path>.tmp` → fsync → rename → fsync 父目录。
+/// 任一失败清理残留 .tmp 并返回错误。
+#[tauri::command]
+async fn write_file_atomic(path: String, content: String) -> Result<(), String> {
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    let pathbuf = PathBuf::from(&path);
+    let tmp_path = match pathbuf.file_name() {
+        Some(name) => {
+            let mut s = name.to_os_string();
+            s.push(".tmp");
+            match pathbuf.parent() {
+                Some(p) => p.join(s),
+                None => return Err("invalid path: no parent".into()),
+            }
+        }
+        None => return Err("invalid path: no file name".into()),
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // 确保父目录存在
+        if let Some(parent) = pathbuf.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent).map_err(|e| format!("create_dir_all error: {e}"))?;
+            }
+        }
+        // 写 tmp 文件
+        {
+            let mut f = fs::File::create(&tmp_path)
+                .map_err(|e| format!("create tmp error: {e}"))?;
+            f.write_all(content.as_bytes())
+                .map_err(|e| format!("write tmp error: {e}"))?;
+            f.sync_all().map_err(|e| format!("fsync tmp error: {e}"))?;
+        }
+        // rename (POSIX 原子; Windows ReplaceFile 行为等价)
+        fs::rename(&tmp_path, &pathbuf).map_err(|e| {
+            // 失败时尽力清理 tmp
+            let _ = fs::remove_file(&tmp_path);
+            format!("rename error: {e}")
+        })?;
+        // fsync 父目录确保 rename 元数据落盘（POSIX 需要,Windows 忽略）
+        if let Some(parent) = pathbuf.parent() {
+            if let Ok(dir) = fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))??;
+
+    Ok(())
+}
+
+/// 启动期清理：扫描 `<root>/.flymd/*.tmp` 删除。返回删除数量。
+#[tauri::command]
+async fn cleanup_stale_tmp_files(root: String) -> Result<u32, String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let flymd_dir = PathBuf::from(&root).join(".flymd");
+    tauri::async_runtime::spawn_blocking(move || {
+        if !flymd_dir.exists() {
+            return Ok::<u32, String>(0);
+        }
+        let mut count = 0u32;
+        let entries = fs::read_dir(&flymd_dir).map_err(|e| format!("read_dir error: {e}"))?;
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.ends_with(".tmp") {
+                if fs::remove_file(entry.path()).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+        Ok(count)
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))?
+}
+
+/// 尝试以排他锁持有 `<path>.lock`。超时返回错误。返回 token 用于 unlock。
+#[tauri::command]
+async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> {
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let pathbuf = PathBuf::from(&path);
+    // 旁路 lock 文件：<path>.lock
+    let lock_path = match pathbuf.file_name() {
+        Some(name) => {
+            let mut s = name.to_os_string();
+            s.push(".lock");
+            match pathbuf.parent() {
+                Some(p) => p.join(s),
+                None => return Err("invalid path: no parent".into()),
+            }
+        }
+        None => return Err("invalid path: no file name".into()),
+    };
+    let timeout = Duration::from_millis(timeout_ms);
+
+    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    std::thread::spawn(move || {
+        let result: Result<String, String> = (|| {
+            // 确保 lock 文件存在
+            if let Some(parent) = lock_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("create_dir_all error: {e}"))?;
+                }
+            }
+            let f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&lock_path)
+                .map_err(|e| format!("open lock file error: {e}"))?;
+            f.lock_exclusive()
+                .map_err(|e| format!("lock_exclusive error: {e}"))?;
+            let token = gen_lock_token();
+            // 注册到全局表,File 进入 map 后由 map 持有,Drop 时自动释放锁
+            lock_registry()
+                .lock()
+                .map_err(|e| format!("registry lock error: {e}"))?
+                .insert(token.clone(), f);
+            Ok(token)
+        })();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(_) => Err(format!("Lock timeout after {}ms", timeout_ms)),
+    }
+}
+
+/// 释放 token 对应的锁。token 不存在时返回错误。
+#[tauri::command]
+async fn unlock_file(token: String) -> Result<(), String> {
+    let mut map = lock_registry()
+        .lock()
+        .map_err(|e| format!("registry lock error: {e}"))?;
+    if map.remove(&token).is_some() {
+        // File 被 drop,锁自动释放
+        Ok(())
+    } else {
+        Err(format!("Lock token not found: {}", token))
+    }
+}
+
+/// 便捷：acquire lock + read + release。返回文件内容。
+#[tauri::command]
+async fn read_file_locked(path: String, timeout_ms: u64) -> Result<String, String> {
+    let token = try_lock_file(path.clone(), timeout_ms).await?;
+    let result = read_text_file_any(path.clone()).await;
+    // 任何情况下都尝试释放（即使 read 失败）
+    let _ = unlock_file(token).await;
+    result
+}
+
+/// 便捷：acquire lock + atomic write + release。
+#[tauri::command]
+async fn write_file_locked(
+    path: String,
+    content: String,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    let token = try_lock_file(path.clone(), timeout_ms).await?;
+    let result = write_file_atomic(path, content).await;
+    let _ = unlock_file(token).await;
+    result
 }
 
 // ========== Office 文档预览（doc/docx → 临时 Markdown / PDF） ==========

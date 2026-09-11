@@ -431,3 +431,19 @@ docs/Task/
   - **验证**: `npx tsc --noEmit` 0 错误 / `npm test` 12 新增通过(710/711 总过,1 个 pre-existing 与本 PR 无关) / `npm run build` 成功(5.43s)
   - **发现**: 当前 WebDAV 设置对话框**未暴露** include/exclude glob UI,只走默认值 → 后续 PR-7 加 UI 时需加"保留项不可删"锁死逻辑
   - **下一步**: PR-2 (Rust 原子写 + 跨进程文件锁)
+- ✅ [2026-09-11-library-private-v2-pr2-rust-atomic-lock.md](Archive/2026-09/2026-09-11-library-private-v2-pr2-rust-atomic-lock.md) — 库私有化 v2 第二个 PR: Rust 原子写 + 跨进程文件锁基础设施(完成 2026-09-11)
+  - **背景**: 为 PR-3/4 的 .flymd/local.json 提供原子写 + 跨进程文件锁
+  - **改动**:
+    - `Cargo.toml` 加 `fs2 = "0.4"` 依赖
+    - `main.rs` 新增 6 个 Tauri 命令 + LOCK_REGISTRY 全局状态 + token 生成器
+    - `fsSafe.ts` 新增 6 个 JS 包装(atomic / cleanup / lock / unlock / read-locked / write-locked)
+  - **测试**: 新增 `src/core/fsSafe.test.ts` 15 用例
+  - **修复的 Rust 错误**:
+    - `unlock_file` 的 `let map` 缺 `mut` (HashMap::remove)
+    - `cleanup_stale_tmp_files` 缺 `Ok(count)` 返回;改用 `?` 让 spawn_blocking 内层 Result 自动 flatten
+  - **设计决策**:
+    - 用 `std::thread::spawn` + `mpsc::recv_timeout` 代替 `tokio::time` 避免引入 `time` feature
+    - LockToken = SystemTime nanos + atomic counter 碰撞概率极低
+    - 用 `fs2::FileExt::lock_exclusive` 直接调 + `Drop` 自动释放(Rust RAII)
+  - **验证**: `cargo check` 0 错 / `npx tsc --noEmit` 0 错 / `npm test` 15 新增通过(总 725/726,1 pre-existing 与本 PR 无关) / `npm run build` 成功(4.41s)
+  - **下一步**: PR-3 (libraryPrivate 框架)
