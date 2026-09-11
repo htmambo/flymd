@@ -24,7 +24,7 @@
 import { rename, remove } from '@tauri-apps/plugin-fs'
 import { getLibraryScope, invalidateLibraryConfigCache, LIBRARY_CHANGED_EVENT } from './libraryConfig'
 import { ensureDir, readTextFileAnySafe, statFileAnySafe } from './fsSafe'
-import { writeFileLockedSafe } from './fsSafe'
+import { writeFileLockedSafe, readModifyWriteLockedSafe } from './fsSafe'
 
 /** 通道 C 数据 schema 版本。v2 时按段迁移。 */
 export const LIBRARY_PRIVATE_SCHEMA_VERSION = 1
@@ -252,36 +252,52 @@ async function doWrite(patch: Partial<LibraryPrivateData>): Promise<boolean> {
   const path = libraryPrivateFilePath(root)
 
   const task = _writeQueue.then(async () => {
-    // 写时合并磁盘最新值（避免过期内存覆盖外部变更）
-    let base: LibraryPrivateData = { version: LIBRARY_PRIVATE_SCHEMA_VERSION }
-    try {
-      const text = await readTextFileAnySafe(path)
-      const parsed = JSON.parse(text)
-      if (parsed && typeof parsed === 'object') {
-        base = { ...base, ...parsed }
+    // 写时合并磁盘最新值（避免过期内存覆盖外部变更）。
+    // PR-2 复审反馈：把"读 base"也放入文件锁作用域内（read-modify-write 原子），
+    // 防止多窗口/多进程并发"读 base → 另一进程写 → 写回覆盖"丢数据。
+    await ensureDir(root.replace(/[\\/]+$/, '') + '/.flymd')
+    // 滚动备份放在锁内（在原子写之前,确保 .bakN 反映旧版本）。
+    // 备份与写入都在同一锁内，避免并发写入相互踩 .bakN。
+    const next = await readModifyWriteLockedSafe(
+      path,
+      (current) => {
+        let base: LibraryPrivateData = { version: LIBRARY_PRIVATE_SCHEMA_VERSION }
+        try {
+          const parsed = JSON.parse(current)
+          if (parsed && typeof parsed === 'object') {
+            base = { ...base, ...parsed }
+            if (!base.version) base.version = LIBRARY_PRIVATE_SCHEMA_VERSION
+          }
+        } catch {}
         if (!base.version) base.version = LIBRARY_PRIVATE_SCHEMA_VERSION
+
+        // 深合并：docPos / prefs 这种 Record 字段需要按 key 合并而非整体替换
+        const merged: LibraryPrivateData = { ...base, ...patch }
+        if (patch.docPos && base.docPos) {
+          merged.docPos = { ...base.docPos, ...patch.docPos }
+        }
+        if (patch.prefs && base.prefs) {
+          merged.prefs = { ...base.prefs, ...patch.prefs }
+        }
+        return JSON.stringify(merged, null, 2)
+      },
+      WRITE_LOCK_TIMEOUT_MS,
+    )
+    // 解析 next 反向同步到 _cache（基于锁内读到的 base，避免后续读漏更新）
+    try {
+      const parsed = JSON.parse(next)
+      if (parsed && typeof parsed === 'object') {
+        _cache = { root, data: { version: LIBRARY_PRIVATE_SCHEMA_VERSION, ...parsed } as LibraryPrivateData }
       }
     } catch {}
-    if (!base.version) base.version = LIBRARY_PRIVATE_SCHEMA_VERSION
-
-    // 深合并：docPos / prefs 这种 Record 字段需要按 key 合并而非整体替换
-    const next: LibraryPrivateData = { ...base, ...patch }
-    if (patch.docPos && base.docPos) {
-      next.docPos = { ...base.docPos, ...patch.docPos }
-    }
-    if (patch.prefs && base.prefs) {
-      next.prefs = { ...base.prefs, ...patch.prefs }
-    }
-    _cache = { root, data: next }
-    await ensureDir(root.replace(/[\\/]+$/, '') + '/.flymd')
-    // 滚动备份（在原子写之前，确保 .bakN 反映旧版本）
+    // 旋转备份（在原子写完成后），保证 .bak1 是上一稳定版本
     await rotateBackups(path)
-    // 原子写 + 跨进程文件锁（PR-2 基础设施）
-    await writeFileLockedSafe(path, JSON.stringify(next, null, 2), WRITE_LOCK_TIMEOUT_MS)
     // 自身写入后刷新 mtime 基线
     await refreshMtimeBaseline(path)
   })
-  _writeQueue = task.catch(() => {})
+  _writeQueue = task.catch((e) => {
+    try { console.warn('[libraryPrivate] doWrite 失败:', e) } catch {}
+  })
   try {
     await task
     return true

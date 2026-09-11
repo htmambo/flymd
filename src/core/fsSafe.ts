@@ -212,3 +212,27 @@ export async function writeFileLockedSafe(
   await invoke('write_file_locked', { path: p, content, timeoutMs: timeoutMs })
 }
 
+/**
+ * 读-改-写原子操作：在同一文件锁内完成"读取当前内容 → 调 modify 合并 → 原子写"。
+ * 关键用途：libraryPrivate.doWrite 等"需要先读 base 再合并 patch"的场景，
+ * 把读也放入锁作用域，避免多窗口/多进程并发下"读 base → 另一个窗口写 → 写回覆盖"的数据丢失。
+ *
+ * 调用方负责合并逻辑：modify 接收当前文件内容（不存在则为空字符串），返回要写入的新内容。
+ */
+export async function readModifyWriteLockedSafe(
+  p: string,
+  modify: (current: string) => string | Promise<string>,
+  timeoutMs = 5000,
+): Promise<string> {
+  const token = await tryLockFileSafe(p, timeoutMs)
+  try {
+    let current = ''
+    try { current = await readTextFileAnySafe(p) } catch { /* 文件不存在/不可读 */ }
+    const next = await modify(current)
+    await writeFileAtomicSafe(p, next)
+    return next
+  } finally {
+    await unlockFileSafe(token)
+  }
+}
+

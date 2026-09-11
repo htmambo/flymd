@@ -61,7 +61,10 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
       if (mapLoading) return await mapLoading
       mapLoading = (async () => {
         let map: Record<string, DocPos> = {}
-        // PR-4: 优先读新通道 libraryPrivate.docPos
+        // PR-4: 优先读新通道 libraryPrivate.docPos。
+        // 注释（PR-2 复审反馈）：libraryPrivate 是 per-libRoot 文件隔离，
+        // 理论上不会混入其他库数据；保留原始行为不过滤主路径，只在
+        // 下方的"旧全局 docPos 种子化"中用 isInside 过滤（这是真正的跨库迁移）。
         try {
           const priv = await readLibraryPrivate()
           if (priv?.docPos && typeof priv.docPos === 'object') {

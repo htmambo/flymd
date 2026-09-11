@@ -3171,6 +3171,14 @@ async fn cleanup_stale_tmp_files(root: String) -> Result<u32, String> {
 }
 
 /// 尝试以排他锁持有 `<path>.lock`。超时返回错误。返回 token 用于 unlock。
+///
+/// 修复（2026-09 PR-2 复审反馈）：原实现用 `thread::spawn` + `recv_timeout`，
+/// 超时时调用方拿到 Err，但 thread 仍在阻塞 flock，最终拿到锁后会
+/// `insert(token, f)` 进入 LOCK_REGISTRY。由于调用方已经 timeout 永远
+/// 不会调 unlock_file，导致：(1) LOCK_REGISTRY 中堆积死 token + fd；
+/// (2) HashMap 单调增长内存泄漏。修复方案：仅在 tx.send 成功（调用方
+/// 收到 token）后才 insert；send 失败说明调用方已 timeout，drop fd 让
+/// flock 立即释放，**不** insert LOCK_REGISTRY。
 #[tauri::command]
 async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> {
     use std::path::PathBuf;
@@ -3194,7 +3202,8 @@ async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> 
 
     let (tx, rx) = mpsc::channel::<Result<String, String>>();
     std::thread::spawn(move || {
-        let result: Result<String, String> = (|| {
+        // 1. 打开 + flock
+        let f_result: Result<std::fs::File, String> = (|| {
             // 确保 lock 文件存在
             if let Some(parent) = lock_path.parent() {
                 if !parent.as_os_str().is_empty() {
@@ -3209,15 +3218,27 @@ async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> 
                 .map_err(|e| format!("open lock file error: {e}"))?;
             f.lock_exclusive()
                 .map_err(|e| format!("lock_exclusive error: {e}"))?;
-            let token = gen_lock_token();
-            // 注册到全局表,File 进入 map 后由 map 持有,Drop 时自动释放锁
-            lock_registry()
-                .lock()
-                .map_err(|e| format!("registry lock error: {e}"))?
-                .insert(token.clone(), f);
-            Ok(token)
+            Ok(f)
         })();
-        let _ = tx.send(result);
+
+        let f = match f_result {
+            Ok(f) => f,
+            Err(e) => { let _ = tx.send(Err(e)); return; }
+        };
+
+        // 2. 试图 send token。send 失败 = 调用方已 timeout / receiver drop。
+        //    此场景必须立即 drop fd（flock 自动释放）并 return，**不** insert LOCK_REGISTRY。
+        let token = gen_lock_token();
+        if tx.send(Ok(token.clone())).is_err() {
+            // 调用方已超时,fd drop → flock 释放,LOCK_REGISTRY 无污染
+            drop(f);
+            return;
+        }
+
+        // 3. 调用方已收到 token,才插入 LOCK_REGISTRY。File Drop 时自动释放 flock。
+        let _ = lock_registry()
+            .lock()
+            .map(|mut m| m.insert(token, f));
     });
 
     match rx.recv_timeout(timeout) {

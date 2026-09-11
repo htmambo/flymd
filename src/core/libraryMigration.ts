@@ -69,6 +69,16 @@ export async function migrateLibraryToLocalOnce(
   const scope = getLibraryScope()
   const root = scope.root || ''
 
+  // 无 root 临时库场景：libraryPrivate.writeLibraryPrivate 不会真正落盘，
+  // 此时如果仍写 marker，会把临时库数据标记为"已迁移"导致永久遗弃。
+  // 选择：直接跳过（不写 marker，不报错），用户后续用持久化库时会再次触发迁移。
+  // 临时库本身的 docPos 行为：v2.0 范围内不保证持久化（设计决策）。
+  if (!root) {
+    result.skipped.push('docPos', 'uploader')
+    // 不写 marker，下次切到持久化库时仍会尝试迁移（无害）
+    return result
+  }
+
   // 2. 准备写入到 libraryPrivate 的 patch
   const patches: { docPos?: any; uploader?: any } = {}
 

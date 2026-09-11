@@ -44,6 +44,16 @@ vi.mock('./fsSafe', async (importOriginal) => {
     writeFileAtomicSafe: vi.fn(async (p: string, content: string) => {
       fileStore.set(p, { mtime: Date.now(), content })
     }),
+    // PR-2 复审反馈（read-modify-write 原子化）：mock 模拟"锁内读+改+写"语义,
+    // push write_locked op 以兼容原有断言。
+    readModifyWriteLockedSafe: vi.fn(async (p: string, modify: (cur: string) => string | Promise<string>) => {
+      lockOps.push({ op: 'write_locked', path: p })
+      let cur = ''
+      try { cur = (await (await import('./fsSafe' as any)).readTextFileAnySafe(p) as any) } catch {}
+      const next = await modify(cur)
+      fileStore.set(p, { mtime: Date.now(), content: next })
+      return next
+    }),
   }
 })
 
