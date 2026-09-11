@@ -128,6 +128,7 @@ const dict = {
     'common.saved': '已保存',
     'common.saveFailed': '保存失败',
     'common.clear': '清空',
+    'common.export': '导出',
 
     'file.new': '新建',
     'file.open': '打开…',
@@ -725,6 +726,7 @@ const dict = {
     'common.saved': 'Saved',
     'common.saveFailed': 'Save failed',
     'common.clear': 'Clear',
+    'common.export': 'Export',
 
     'file.new': 'New',
     'file.open': 'Open…',

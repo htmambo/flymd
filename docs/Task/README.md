@@ -512,3 +512,20 @@ docs/Task/
   - **完成度**: 核心 helper 完成 100%,UI 集成(`librarySettingsDialog` 按钮 + 二次确认弹窗)留 PR-7 收尾
   - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 13 新增通过(总 784/785,1 pre-existing 与本 PR 无关) / `npm run build` 成功(2.88s)
   - **下一步**: PR-7 (文档 + UI 收尾 + 审计)
+- ✅ [2026-09-11-library-private-v2-pr7-finalize.md](Archive/2026-09/2026-09-11-library-private-v2-pr7-finalize.md) — 库私有化 v2 第七个 PR: 文档 + UI 收尾 + 审计(完成 2026-09-11)
+  - **背景**: 整个库私有化 v2 系列的收尾 PR
+  - **改动**:
+    - `docs/Usage/LIBRARY_PRIVATE_CONFIG_GUIDE.md` (新, ~180 行: 用户角度主指南)
+    - `docs/Usage/PLUGIN_PRIVATE_DATA_GUIDE.md` (新, ~90 行: 插件开发者)
+    - `docs/Usage/EXTERNAL_FILE_WATCH_GUIDE.md` 加 .flymd 排除项说明
+    - `src/ui/librarySettingsDialog.ts` 加"导出此库配置"按钮 + 凭据二次确认
+    - `src/main.ts` 启动序列: 注册 store getter + 挂 library changed 桥接
+    - `src/core/libraryConfig.ts` 顶部注释更新(三通道说明)
+    - `src/i18n.ts` 加 `common.export` 中英
+  - **关键设计**:
+    - 导出流程简化:无凭据默认 → 探测凭据 → 询问是否含凭据重导
+    - 通知用 `NotificationManager.show('announcement', ...)` 兼容 NotificationType enum
+    - main.ts 启动序列是 PR-4/5 集成点,显式注册确保 PR-4 迁移正确触发
+  - **系列总览**: 7 个 PR 全部完成,库私有化 v2 落地
+  - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 784/785(1 pre-existing 与本 PR 无关) / `npm run build` 成功(3.20s)
+  - **后续**: 等待人工 Tauri 端到端冒烟 + codex/coding-bridge 复审

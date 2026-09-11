@@ -2663,6 +2663,12 @@ async function initStore() {
     // Tauri v2 使用 Store.load，在应用数据目录下持久化
     store = await Store.load('flymd-settings.json')
     try { bindSharedStore(store) } catch {}
+    // PR-7: 注册 store getter + 挂 library changed 桥接,触发 PR-4 一次性迁移
+    try {
+      const { setStoreForMigration, installLibraryChangedBridge } = await import('./core/libraryPrivate')
+      setStoreForMigration(() => store as any)
+      installLibraryChangedBridge()
+    } catch (e) { try { console.warn('[init] library private bridge failed', e) } catch {} }
     void logInfo('应用存储初始化成功')
     return true
   } catch (error) {

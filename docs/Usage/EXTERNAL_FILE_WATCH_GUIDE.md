@@ -55,6 +55,7 @@ flymd 在打开文件时会**自动监听**该文件的外部修改。其它程�
 
 1. **仅激活标签**:后台标签的外部修改**不**会触发提示(避免误覆盖未展示的编辑)。切换到该标签时会做一次 stat 复检,若有差异会走完整策略。
 2. **PDF 文件不监听**:PDF 由内置 reader 自管理(`isSkippablePath` 规则匹配 `.pdf` 扩展名)。
+3. **`.flymd/` 目录不监听**(v2.0+):库内配置(`.flymd/config.json`、`.flymd/local.json`)由 `libraryConfig.ts` / `libraryPrivate.ts` 自己的 3s mtime 轮询 + 原子写协调,不混入此处的"打开文件外部监听"策略;直接编辑 `.flymd/local.json` 会被 libraryPrivate 识别为外部变更并自动重载,不会弹三选一对话框。
 3. **网盘同步客户端**(iCloud / OneDrive / Dropbox):
    - 同步**完成**后的最终写入可被检测到
    - 同步**过程中**的中间态(rename + write)有两级 stat 重试(400ms)兜底

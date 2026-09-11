@@ -9,6 +9,8 @@ import { DEFAULT_METADATA_LABELS, normalizeMetadataLabelMap, parseMetadataLabelM
 import { openRenameDialog } from './linkDialogs'
 import { ask, open } from '@tauri-apps/plugin-dialog'
 import { normalizePath as normalizeFsPath } from '../core/fsSafe'
+import { exportLibraryConfig, hasLibraryCredentials } from '../core/libraryExport'
+import { NotificationManager } from '../core/uiNotifications'
 
 type Opts = {
   // 通知外部刷新 UI（例如库侧栏的库列表）
@@ -133,6 +135,14 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
         <div class="lib-settings-sep"></div>
 
         <div class="lib-settings-subtitle-row">
+          <div class="lib-settings-subtitle">${t('lib.settings.exportConfig') || '导出此库配置…'}</div>
+          <button id="lib-settings-export-config" type="button" class="btn-secondary">${t('common.export') || '导出…'}</button>
+        </div>
+        <div class="upl-hint">${t('lib.settings.exportConfig.desc') || '将当前库的 .flymd/config.json（共享段）打包为 .flymdconfig 文件。可选是否包含凭据。'}</div>
+
+        <div class="lib-settings-sep"></div>
+
+        <div class="lib-settings-subtitle-row">
           <div class="lib-settings-subtitle">文件夹模板</div>
           <span class="upl-hint">在指定文件夹内新建文件时，自动使用模板填充内容</span>
         </div>
@@ -180,6 +190,7 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
   const elMetadataLabels = overlay.querySelector('#lib-settings-metadata-labels') as HTMLTextAreaElement
   const elMetadataDefaults = overlay.querySelector('#lib-settings-metadata-defaults') as HTMLButtonElement | null
   const elMetadataClear = overlay.querySelector('#lib-settings-metadata-clear') as HTMLButtonElement | null
+  const elExportConfig = overlay.querySelector('#lib-settings-export-config') as HTMLButtonElement | null
 
   let libs0 = await getLibraries()
   let activeId = await getActiveLibraryId()
@@ -346,6 +357,45 @@ export async function openLibrarySettingsDialog(opts: Opts = {}): Promise<void> 
       dirtyMetadataLabels.add(selectedLibId)
       elMetadataLabels.value = ''
     } catch {}
+  })
+  // PR-7: 导出此库配置按钮(关联 PR-6 libraryExport helper)
+  // 简化流程:先无凭据导出(安全),如库有凭据再询问是否含凭据重新导出
+  elExportConfig?.addEventListener('click', async () => {
+    try {
+      if (!selectedLibId) return
+      const lib = libs0.find((l) => l.id === selectedLibId)
+      if (!lib) return
+      // 第一步:无凭据导出
+      const result = await exportLibraryConfig({
+        libId: lib.id,
+        libRoot: lib.root,
+        mode: 'noCredentials',
+      })
+      if (!result) {
+        try { NotificationManager.show('announcement', t('lib.settings.exportConfig.cancelled') || '已取消', 2000) } catch {}
+        return
+      }
+      try { NotificationManager.show('announcement', t('lib.settings.exportConfig.success').replace('{path}', result.path), 3000) } catch {}
+      // 第二步:探测凭据,询问是否含凭据重导
+      const hasCreds = await hasLibraryCredentials(lib.root)
+      if (!hasCreds) return
+      const includeCreds = await confirmDialog(
+        t('lib.settings.exportConfig.confirmCreds') ||
+          '将包含图床/S3 凭据与加密密钥等敏感数据。请妥善保管，不要分享给他人。是否含凭据重导？',
+        t('lib.settings.exportConfig.title') || '导出库配置',
+      )
+      if (!includeCreds) return
+      const result2 = await exportLibraryConfig({
+        libId: lib.id,
+        libRoot: lib.root,
+        mode: 'withCredentials',
+      })
+      if (result2) {
+        try { NotificationManager.show('announcement', t('lib.settings.exportConfig.success').replace('{path}', result2.path), 3000) } catch {}
+      }
+    } catch (e) {
+      try { console.warn('[librarySettingsDialog] export config failed', e) } catch {}
+    }
   })
 
   function getDraftLibraries(): Array<{ id: string; name: string; root: string }> {
