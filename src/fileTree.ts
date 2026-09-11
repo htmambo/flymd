@@ -1,4 +1,5 @@
 import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
+import { invoke } from '@tauri-apps/api/core'
 import { t } from './i18n'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig, toLibraryRelativePath, resolveLibraryPath, resolveStoredLibraryPath, LIBRARY_CONFIG_CHANGED_EVENT } from './core/libraryConfig'
@@ -658,10 +659,45 @@ async function listDir(root: string, dir: string): Promise<{ name: string; path:
 }
 
 // 递归判断目录是否包含受支持文档（带缓存）
+// 原生整树预扫描结果缓存（key：正斜杠归一化路径）：refreshTree 时由
+// scan_dirs_doc_presence 一次性填充，避免逐目录递归 readDir 造成数千次 IPC
+const _dirDocPresenceScan = new Map<string, boolean>()
+
+async function prefetchDirDocPresence(root: string): Promise<void> {
+  try {
+    if (typeof invoke !== 'function') return
+    const allow = state.additionalSuffixAllow || new Set(['md', 'markdown', 'txt', 'pdf'])
+    const t0 = Date.now()
+    const map = await invoke<Record<string, boolean>>('scan_dirs_doc_presence', {
+      root,
+      exts: Array.from(allow),
+      maxDepth: 20,
+    })
+    _dirDocPresenceScan.clear()
+    for (const k of Object.keys(map || {})) _dirDocPresenceScan.set(k, !!map[k])
+    const cost = Date.now() - t0
+    if (cost >= 300) {
+      try {
+        const { logInfo } = await import('./core/logger')
+        logInfo('[启动耗时] 目录文档预扫描', { 耗时ms: cost, 目录数: _dirDocPresenceScan.size })
+      } catch {}
+    }
+  } catch {}
+}
+
 async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, depth = 20): Promise<boolean> {
   try {
     if (shouldSkipLibraryDir(dir)) { hasDocCache.set(dir, false); return false }
     if (hasDocCache.has(dir)) return hasDocCache.get(dir) as boolean
+    // 优先命中原生整树预扫描结果（key 为正斜杠归一化路径）
+    try {
+      const key = norm(dir).replace(/\\/g, '/')
+      if (_dirDocPresenceScan.has(key)) {
+        const v = _dirDocPresenceScan.get(key) as boolean
+        hasDocCache.set(dir, v)
+        return v
+      }
+    } catch {}
     if (hasDocPending.has(dir)) return await (hasDocPending.get(dir) as Promise<boolean>)
 
     const p = (async (): Promise<boolean> => {
@@ -1516,6 +1552,9 @@ async function refreshTree() {
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
+  // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
+  try { await prefetchDirDocPresence(root) } catch {}
   await renderRoot(root)
 }
 
@@ -1554,6 +1593,9 @@ async function refresh() {
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
+  // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
+  try { await prefetchDirDocPresence(root) } catch {}
   await renderRoot(root)
 
     // 设置文件监听（如果还未设置或根目录改变了）

@@ -435,8 +435,11 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
     const nodes = Array.from(root.querySelectorAll('.mermaid')) as HTMLElement[]
     try { if (DEBUG_RENDER) console.log('[预处理] 准备渲染 Mermaid 节点:', nodes.length) } catch {}
     if (nodes.length > 0) {
+      const _mmdT0 = performance.now()
       const { loadMermaid } = await import('./core/mermaidLoader')
       const mermaid = await loadMermaid()
+      const _mmdLoadMs = Math.round(performance.now() - _mmdT0)
+      if (_mmdLoadMs >= 300) { try { logInfo('[启动耗时] Mermaid模块加载', { 耗时ms: _mmdLoadMs }) } catch {} }
       if (!mermaidReady) {
         mermaid.initialize(getMermaidConfig());
         mermaidReady = true
@@ -491,6 +494,8 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
           } catch {}
         }
       }
+      const _mmdTotalMs = Math.round(performance.now() - _mmdT0)
+      if (_mmdTotalMs >= 300) { try { logInfo('[启动耗时] Mermaid渲染总耗时', { 耗时ms: _mmdTotalMs, 图数: nodes.length }) } catch {} }
     }
   } catch {}
 }
@@ -618,6 +623,14 @@ let _autoWysiwygAfterOpenSeq = 0
 let _suppressOpenSwitchConfirm = false
 // 批量打开期间置位，跳过 recent 推入（打开顺序不应反转库配置记录的最近使用顺序）。
 let _suppressRecentPush = false
+// 批量还原标签（启动/切库全量打开 recent）期间置位：跳过每个文件的完整预览渲染
+// 与"打开后后台切所见"定时器——非激活标签的渲染纯属浪费（激活时 restoreTabState 会
+// 重新渲染），N 个文件串行 N 次全管线渲染会把刚显示窗口的主线程占满（表现为
+// "窗口出来了但操作要卡一会"）。批量结束后由 openRecentSetAsTabs 统一补一次渲染。
+let _batchRestoringTabs = false
+// 批量还原期间是否有文件希望进入所见模式（默认所见/打开前所见）：
+// 批量中跳过逐文件的后台所见切换，批量结束后对最终激活文档补一次。
+let _batchOpenWantsWysiwyg = false
 // 启动早期（插件运行时/ASP 规则尚未注册）被跳过的 Office 文档路径，
 // 待 Word 预览扩展注册完成后由 ric 初始化块补打开。防止二进制 docx 被当纯文本渲染。
 let _pendingOfficeOpenRetry: string | null = null
@@ -2835,6 +2848,32 @@ type RenderPreviewOptions = {
   forPrint?: boolean
 }
 
+// 让出主线程到下一个空闲期：启动后台任务的各个重活步骤之间插入，
+// 用户的首次输入/窗口操作可以插队执行，避免"能看不能动"的连续 jank。
+// timeout 保证空闲长期不来时任务仍会推进。
+function nextIdle(timeout = 800): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const ric: any = (window as any).requestIdleCallback
+      if (typeof ric === 'function') ric(() => resolve(), { timeout })
+      else setTimeout(resolve, 0)
+    } catch {
+      setTimeout(resolve, 0)
+    }
+  })
+}
+
+// 启动性能诊断：包裹耗时步骤，超过阈值才写日志（避免日志 IPC 本身成为干扰）
+async function timedStep<T>(label: string, fn: () => Promise<T> | T): Promise<T> {
+  const t0 = performance.now()
+  try {
+    return await fn()
+  } finally {
+    const cost = Math.round(performance.now() - t0)
+    if (cost >= 100) { try { logInfo(`[启动耗时] ${label}`, { 耗时ms: cost }) } catch {} }
+  }
+}
+
 let _renderPreviewTimer: number | null = null
 
 // 防抖调度预览渲染：快速连续输入/粘贴时只触发一次
@@ -2845,7 +2884,13 @@ function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
     }
     _renderPreviewTimer = window.setTimeout(() => {
       _renderPreviewTimer = null
-      void renderPreview(opts)
+      const t0 = performance.now()
+      void Promise.resolve(renderPreview(opts)).finally(() => {
+        const cost = Math.round(performance.now() - t0)
+        if (cost >= 300) {
+          try { logInfo('[启动耗时] 预览渲染', { 耗时ms: cost, 文档长度: (editor?.value || '').length }) } catch {}
+        }
+      })
     }, 150)
   } catch {}
 }
@@ -3672,7 +3717,10 @@ function checkUpdateSilentOnceAfterStartup() {
     setTimeout(async () => {
       try {
         if (getUpdateCheckDisabled()) return
+        const _t0 = performance.now()
         const resp = await invoke('check_update', { force: false, include_prerelease: false }) as any as CheckUpdateResp
+        const _cost = Math.round(performance.now() - _t0)
+        if (_cost >= 1000) { try { logInfo('[启动耗时] 应用更新检查', { 耗时ms: _cost }) } catch {} }
         if (resp && resp.hasUpdate) {
           titlebarStatusApi?.setUpdateBadge(true, `发现新版本 v${resp.latest}`)
           // 显示应用更新通知（10秒后自动消失，点击打开更新对话框）
@@ -4153,9 +4201,13 @@ async function openFile2(preset?: unknown) {
 
     // 打开后视图策略：若最终会进入所见，则中间态强制用预览（更接近所见，且不会露出 textarea）
     if (shouldEnableWysiwyg && !officePreviewTab) {
+      if (_batchRestoringTabs) _batchOpenWantsWysiwyg = true
       mode = 'preview'
       try { preview.classList.remove('hidden') } catch {}
-      try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
+      // 批量还原期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
+      if (!_batchRestoringTabs) {
+        try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
+      }
       try { titlebarStatusApi?.syncToggleButton() } catch {}
     } else {
       // 打开后默认进入预览/源码（尊重“默认源码模式”设置；Office 预览副本强制阅读模式）
@@ -4170,7 +4222,8 @@ async function openFile2(preset?: unknown) {
     await restoreDocPosIfAny(selectedPath)
 
     // 默认所见/上次所见：后台无感切入（准备好再一次性切换）
-    if (shouldEnableWysiwyg && !officePreviewTab && !wysiwyg) {
+    // 批量还原期间跳过：逐文件定时器只会相互取消，批量结束后对最终激活文档统一补一次
+    if (!_batchRestoringTabs && shouldEnableWysiwyg && !officePreviewTab && !wysiwyg) {
       setTimeout(() => {
         void (async () => {
           try {
@@ -4190,7 +4243,10 @@ async function openFile2(preset?: unknown) {
     if (!_suppressRecentPush) {
       await pushRecent(store, currentFilePath)
     }
-    await renderRecentPanel(false)
+    // 批量还原期间跳过逐文件刷面板，批量结束后统一刷一次
+    if (!_batchRestoringTabs) {
+      await renderRecentPanel(false)
+    }
     logInfo('文件打开成功', { path: selectedPath, size: content.length })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
@@ -4574,7 +4630,10 @@ async function switchToPreviewAfterOpen(forcePreview = false) {
     }
 
     mode = 'preview'
-    try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
+    // 批量还原期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
+    if (!_batchRestoringTabs) {
+      try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
+    }
     try { preview.classList.remove('hidden') } catch {}
     try { titlebarStatusApi?.syncToggleButton() } catch {}
   } catch {}
@@ -4748,9 +4807,14 @@ async function pickRecentSetToOpen(): Promise<{ paths: string[]; active: string 
 // flymdOpenFile 挂钩自动"切换到已有标签"去重），最后激活 active 对应的标签
 // （不改变标签顺序）。批量打开期间屏蔽脏文档切换询问，且不推入 recent
 // （避免打开顺序反转库配置记录的"最近使用顺序"）。
+// 批量期间（_batchRestoringTabs）跳过每个文件的完整预览渲染/后台所见切换/面板刷新：
+// 这些只对最终激活标签有意义，逐文件执行会把刚显示窗口的主线程占满
+// （"窗口出来了但操作要卡一会"），统一在批量结束后补一次。
 async function openRecentSetAsTabs(paths: string[], active: string | null): Promise<void> {
   _suppressOpenSwitchConfirm = true
   _suppressRecentPush = true
+  _batchRestoringTabs = true
+  _batchOpenWantsWysiwyg = false
   try {
     for (const p of paths) {
       try { await openFile2(p) } catch (e) { console.warn('打开最近文件失败:', p, e) }
@@ -4758,9 +4822,36 @@ async function openRecentSetAsTabs(paths: string[], active: string | null): Prom
   } finally {
     _suppressOpenSwitchConfirm = false
     _suppressRecentPush = false
+    _batchRestoringTabs = false
   }
   if (active) {
     try { const m = await import('./tabs/integration'); await m.activateTabByPathIfOpen(active) } catch {}
+  }
+  // 统一收尾：最近文件面板刷一次；最终激活文档的预览渲染补一次
+  // （scheduleRenderPreview 自带 150ms 去抖，与 activateTabByPathIfOpen →
+  // restoreTabState 触发的 refreshPreview 合并为一次实际渲染）
+  try { await renderRecentPanel(false) } catch {}
+  try { if (!wysiwyg && mode === 'preview') scheduleRenderPreview() } catch {}
+  // 批量中有文件希望进入所见（默认所见/切库前处于所见）：对最终激活文档后台补一次切入
+  // （Milkdown 初始化是重活，放空闲期执行，避免与启动首波交互争主线程）
+  const wantsWysiwyg = _batchOpenWantsWysiwyg
+  _batchOpenWantsWysiwyg = false
+  if (wantsWysiwyg && !wysiwyg) {
+    const targetPath = currentFilePath
+    const openSeq = _autoWysiwygAfterOpenSeq
+    const ricW: any = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 800))
+    ricW(() => {
+      void (async () => {
+        try {
+          await timedStep('批量还原后启用所见模式', () => setWysiwygEnabled(true, {
+            background: true,
+            shouldCommit: () => _autoWysiwygAfterOpenSeq === openSeq && currentFilePath === targetPath && !wysiwyg,
+          }))
+        } catch (e) {
+          console.error('[WYSIWYG] 批量还原后启用所见模式失败:', e)
+        }
+      })()
+    }, { timeout: 1500 })
   }
 }
 
@@ -8901,6 +8992,42 @@ function bindEvents() {
   try {
     try { logInfo('打点:JS启动') } catch {}
 
+    // 启动期长任务监控（前 30s）：凡是主线程连续占用 ≥300ms 的任务都记录到日志，
+    // 用于定位"窗口出来了但操作要等几秒才响应"的元凶
+    try {
+      const PO: any = (window as any).PerformanceObserver
+      if (PO) {
+        const obs = new PO((list: any) => {
+          try {
+            for (const e of list.getEntries()) {
+              if (e.duration >= 300) {
+                logInfo('[启动长任务]', { 开始ms: Math.round(e.startTime), 耗时ms: Math.round(e.duration), 名称: String(e.name || '') })
+              }
+            }
+          } catch {}
+        })
+        obs.observe({ entryTypes: ['longtask'] })
+        setTimeout(() => { try { obs.disconnect() } catch {} }, 30000)
+      }
+    } catch {}
+
+    // 主线程卡顿探针（WebKitGTK 不支持 longtask API，改用定时器漂移检测：
+    // 500ms 定时器若晚到 ≥600ms，说明主线程被同步任务占住了）
+    try {
+      let _lagLast = performance.now()
+      const _lagIv = setInterval(() => {
+        try {
+          const now = performance.now()
+          const drift = now - _lagLast - 500
+          _lagLast = now
+          if (drift >= 600) {
+            logInfo('[主线程卡顿]', { 卡顿ms: Math.round(drift), 发生时刻: new Date().toISOString(), 启动后ms: Math.round(now) })
+          }
+        } catch {}
+      }, 500)
+      setTimeout(() => { try { clearInterval(_lagIv) } catch {} }, 60000)
+    } catch {}
+
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
     // 库私有配置作用域缓存：必须在任何按库读写之前就绪
@@ -8993,11 +9120,11 @@ function bindEvents() {
       ric(async () => {
         try {
           // 动态加载扩展运行时宿主，避免把 extensions/runtime.ts 及其依赖压入启动包。
-          const [runtimeMod, pluginRuntimeHostMod, coreExtensionsMod] = await Promise.all([
+          const [runtimeMod, pluginRuntimeHostMod, coreExtensionsMod] = await timedStep('扩展运行时模块加载', () => Promise.all([
             import('./extensions/runtime'),
             import('./extensions/pluginRuntimeHost'),
             import('./extensions/coreExtensions'),
-          ])
+          ]))
           // 扩展：初始化目录并激活已启用扩展（此时 Store 已就绪）
           await runtimeMod.ensurePluginsDir()
           pluginRuntime = pluginRuntimeHostMod.initPluginRuntime({
@@ -9090,9 +9217,11 @@ function bindEvents() {
               showPdfPreview: async (p: string) => { await showPdfPreview(p, { updateRecent: false }) },
             })
           } catch (e) { console.warn('[Extensions] Word 预览初始化失败:', e) }
-          await pluginRuntime.loadAndActivateEnabledPlugins()
+          await nextIdle()
+          await timedStep('激活全部已启用插件', () => pluginRuntime!.loadAndActivateEnabledPlugins())
           // 插件可能注册了额外后缀（ASP），刷新文件树以应用过滤与图标规则
-          try { if (fileTreeReady) await fileTree.refresh() } catch {}
+          await nextIdle()
+          try { if (fileTreeReady) await timedStep('插件后缀生效后刷新文件树', () => fileTree.refresh()) } catch {}
           // 启动早期被防护门跳过的 Office 文档：此时 ASP 规则已就绪，补打开
           // （扩展被停用时给出明确提示，不再重试，避免二进制落入文本渲染管线）
           try {
@@ -9109,14 +9238,17 @@ function bindEvents() {
               }
             }
           } catch (e) { console.warn('Office 待打开补发失败:', e) }
-          await coreExtensionsMod.ensureCoreExtensionsAfterStartup(store, APP_VERSION, (p) => pluginRuntime!.activatePlugin(p))
+          await nextIdle()
+          await timedStep('核心扩展启动后检查', () => coreExtensionsMod.ensureCoreExtensionsAfterStartup(store, APP_VERSION, (p) => pluginRuntime!.activatePlugin(p)))
           // 启动后后台检查一次扩展更新（仅提示，不自动更新）
-          await pluginRuntime.checkPluginUpdatesOnStartup()
+          await nextIdle()
+          await timedStep('扩展更新检查', () => pluginRuntime!.checkPluginUpdatesOnStartup())
         } catch (e) {
           console.warn('[Extensions] 延迟初始化失败:', e)
         }
       })
-    ric(async () => {
+    // WebDAV 初始化错开启动关键期（800ms 后再等空闲），避免与扩展激活争夺主线程
+    setTimeout(() => ric(async () => {
       try {
         // 将 WebDAV 插件 API 暴露给插件宿主
         try {
@@ -9185,19 +9317,21 @@ function bindEvents() {
           })
         } catch {}
         setSyncBlockReasonProvider(() => isTemporaryLibraryActive() ? '临时库不参与 WebDAV 同步' : null)
-        await initWebdavSync()
+        await timedStep('WebDAV初始化', () => initWebdavSync())
       } catch (e) {
         console.warn('[WebDAV] 延迟初始化失败:', e)
       }
-    })
+    }), 800)
     // 启动后后台预热扩展管理面板：提前完成市场索引加载与 UI 构建
-    ric(async () => {
+    // （再错开一些，等扩展激活/WebDAV 初始化完成后再跑；
+    // 无有效市场缓存时 prewarm 内部直接跳过，不在启动关键期触发网络请求）
+    setTimeout(() => ric(async () => {
       try {
-        await panelPrewarmExtensionsPanel()
+        await timedStep('扩展面板预热', () => panelPrewarmExtensionsPanel())
       } catch (e) {
         console.warn('[ExtensionsPanel] 延迟预热失败:', e)
       }
-    })
+    }), 2000)
     // 开启 DevTools 快捷键（生产/开发环境均可）
     try {
       document.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -9310,11 +9444,11 @@ function bindEvents() {
           let tabsMod: any = null
           try {
             tabsMod = await import('./tabs/integration')
-            await tabsMod.initTabSystem({ restoreSession: false })
+            await timedStep('标签系统初始化', () => tabsMod.initTabSystem({ restoreSession: false }))
           } catch {}
-          const { paths, active } = await pickRecentSetToOpen()
-          if (paths.length) await openRecentSetAsTabs(paths, active)
-          try { if (tabsMod) await tabsMod.restoreDirtyDraftsFromSession() } catch {}
+          const { paths, active } = await timedStep('挑选启动打开文件集', () => pickRecentSetToOpen())
+          if (paths.length) await timedStep('批量打开最近文件为标签', () => openRecentSetAsTabs(paths, active))
+          try { if (tabsMod) await timedStep('抢救会话未保存草稿', () => tabsMod.restoreDirtyDraftsFromSession()) } catch {}
           if (active) {
             try { if (tabsMod) await tabsMod.activateTabByPathIfOpen(active) } catch {}
           }
@@ -9379,14 +9513,16 @@ function bindEvents() {
       const shouldEnableWysiwyg = wysiwygDefault && !sourcemodeDefault && !hasCurrentPdf
 
       if (shouldEnableWysiwyg && !wysiwyg && !stickyNoteMode) {
-        // 延迟一小段时间，确保编辑器已完全初始化
-        setTimeout(async () => {
+        // Milkdown 初始化（加载 chunk + remark 全量解析文档）是重活，
+        // 放空闲期执行，避免与用户启动后的首次操作抢主线程
+        const ricW: any = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 800))
+        ricW(async () => {
           try {
-            await setWysiwygEnabled(true)
+            await timedStep('默认启用所见模式', () => setWysiwygEnabled(true))
           } catch (e) {
             console.error('[WYSIWYG] 默认启用所见模式失败:', e)
           }
-        }, 200)
+        }, { timeout: 1500 })
       }
     } catch (e) {
       console.error('[WYSIWYG] 检查默认所见模式设置失败:', e)

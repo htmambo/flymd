@@ -1299,9 +1299,14 @@ function ensureExtensionsOverlayMounted(): void {
   btnBrowseLocal?.addEventListener('click', () => { void browseLocalFolder() })
 }
 
-// 启动后后台预热扩展面板：提前完成市场索引加载与 UI 构建
+// 启动后后台预热扩展面板：提前完成市场索引加载与 UI 构建。
+// 仅在市场索引缓存有效时预热——无缓存意味着预热必然触发网络请求
+// （GitHub 源超时回退链可能长达 8~16s），启动关键期不碰网络，
+// 面板在用户首次打开时按需加载（showExtensionsOverlay 内有兜底）。
 export async function prewarmExtensionsPanel(): Promise<void> {
   try {
+    const hasCache = await (pluginMarket as any).hasValidMarketCache?.()
+    if (!hasCache) return
     await ensureExtensionsPanelRenderedOnce()
   } catch {}
 }

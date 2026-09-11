@@ -257,6 +257,21 @@ async function httpFetchWithTimeout(fetcher: any, url: string, init: any, timeou
 
 // 文本抓取：优先 tauri http，失败回退到浏览器 fetch
 export async function fetchTextSmart(url: string): Promise<string> {
+  const _t0 = Date.now()
+  try {
+    return await fetchTextSmartInner(url)
+  } finally {
+    const cost = Date.now() - _t0
+    if (cost >= 1000) {
+      try {
+        const { logInfo } = await import('../core/logger')
+        logInfo('[诊断] fetchTextSmart 慢请求', { url: String(url).slice(0, 120), 耗时ms: cost })
+      } catch {}
+    }
+  }
+}
+
+async function fetchTextSmartInner(url: string): Promise<string> {
   try {
     const http = await getHttpClient()
     if (http && http.fetch) {

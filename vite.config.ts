@@ -53,7 +53,9 @@ export default defineConfig(({ mode }) => ({
     cssCodeSplit: true, // CSS 代码分割
     cssMinify: true, // CSS 压缩
     reportCompressedSize: false, // 禁用 gzip 大小报告，加快构建
-    chunkSizeWarningLimit: 1000, // 提高警告阈值到 1MB
+    // mermaid (~6.6MB) 是按设计懒加载的单一用途 chunk，桌面应用本地磁盘加载，
+    // 不存在网络传输开销，体积警告无意义，阈值提到 7MB 让警告只在异常膨胀时出现
+    chunkSizeWarningLimit: 7000,
     rollupOptions: {
       output: {
         // 优化的代码分割策略
@@ -92,11 +94,13 @@ export default defineConfig(({ mode }) => ({
           }
           // 应用代码分割：将大型模块分离
           if (id.includes('/src/')) {
-            // WYSIWYG 相关代码
-            if (id.includes('/wysiwyg/')) return 'wysiwyg'
-            // 扩展系统
-            if (id.includes('/extensions/')) return 'extensions'
-            // 文件树
+            // 注意：不要按目录强制把 /src/wysiwyg/、/src/extensions/ 等归入
+            // 独立 chunk——它们与入口共享的模块（uploader/utils/core 等）会被
+            // 一并拖进懒加载 chunk，入口静态引用这些共享模块后整条
+            // wysiwyg→milkdown→mermaid 链就会被拖成启动即加载
+            // （dist/index.html 里 mermaid 6.6MB 的 modulepreload 就是这么来的）。
+            // 交给 rolldown 按动态 import 边界自动拆分即可。
+            // 文件树（入口静态依赖，独立 chunk 便于缓存）
             if (id.includes('/fileTree')) return 'filetree'
             // HTML 转 Markdown
             if (id.includes('/html2md')) return 'html2md'
@@ -109,6 +113,6 @@ export default defineConfig(({ mode }) => ({
       }
     },
     minify: 'esbuild', // 使用 esbuild 压缩（比 terser 快）
-    sourcemap: false // 关闭 source map 以减小体积
+    sourcemap: process.env.BUILD_SOURCEMAP === '1' ? true : false // 关闭 source map 以减小体积
   }
 }))

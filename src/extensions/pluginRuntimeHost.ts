@@ -441,11 +441,30 @@ export function initPluginRuntime(
       }
 
       for (const p of toEnable) {
+        const t0 = performance.now()
         try {
           await activatePlugin(p)
         } catch (e) {
           console.warn('插件激活失败', p.id, e)
         }
+        const cost = Math.round(performance.now() - t0)
+        if (cost >= 100) {
+          try {
+            const { logInfo } = await import('../core/logger')
+            logInfo('[启动耗时] 插件激活', { 插件: p.id, 耗时ms: cost })
+          } catch {}
+        }
+        // 每个插件激活之间让出主线程：插件模块求值/激活是同步重活，
+        // 连续执行会把刚启动的窗口卡到无法响应输入
+        await new Promise<void>((resolve) => {
+          try {
+            const ric: any = (window as any).requestIdleCallback
+            if (typeof ric === 'function') ric(() => resolve(), { timeout: 300 })
+            else setTimeout(resolve, 0)
+          } catch {
+            setTimeout(resolve, 0)
+          }
+        })
       }
       // 如果当前窗口为 AI 独立窗口，尝试自动挂载 AI 助手
       try {

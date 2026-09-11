@@ -1749,6 +1749,60 @@ async fn flymd_list_markdown_files(root: String) -> Result<Vec<String>, String> 
   Ok(result)
 }
 
+// 文件树"目录是否含受支持文档"整树预扫描：一次 IPC 返回所有目录的布尔判定，
+// 替代前端逐目录递归 readDir（大库数千目录会产生数千次 IPC 往返，响应消息会
+// 淹死 Web 主线程——曾表现为启动后 8~10 秒无法操作）。
+// 语义与前端 dirHasSupportedDocRecursive 保持一致：跳过名单目录不递归、
+// symlink 按文件处理（仅看后缀）、深度上限默认 20。返回 key 统一为正斜杠路径。
+#[tauri::command]
+async fn scan_dirs_doc_presence(root: String, exts: Vec<String>, max_depth: Option<usize>) -> Result<std::collections::HashMap<String, bool>, String> {
+  use std::collections::{HashMap, HashSet};
+  use std::path::{Path, PathBuf};
+
+  let root_path = PathBuf::from(root.clone());
+  if !root_path.is_dir() {
+    return Err(format!("root 不是有效目录: {}", root));
+  }
+  let max_depth = max_depth.unwrap_or(20);
+
+  tauri::async_runtime::spawn_blocking(move || {
+    let allow: HashSet<String> = exts.iter().map(|e| e.to_ascii_lowercase()).collect();
+    fn skip_dir(name: &str) -> bool {
+      let n = name.trim().to_lowercase();
+      matches!(n.as_str(),
+        "ebwebview" | "node_modules" | ".git" | ".hg" | ".svn" | "target"
+        | "dist" | "build" | ".next" | ".vite" | "code cache" | "gpucache" | "service worker")
+    }
+    fn scan(dir: &Path, depth_left: usize, allow: &HashSet<String>, out: &mut HashMap<String, bool>) -> bool {
+      if depth_left == 0 { return false }
+      let entries = match std::fs::read_dir(dir) { Ok(e) => e, Err(_) => return false };
+      let mut has = false;
+      let mut subdirs: Vec<PathBuf> = Vec::new();
+      for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let ft = match entry.file_type() { Ok(f) => f, Err(_) => continue };
+        if ft.is_dir() {
+          if !skip_dir(&name) { subdirs.push(entry.path()) }
+        } else {
+          // 与前端一致：非目录（含 symlink）只按名称后缀判断
+          let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+          if allow.contains(&ext) { has = true }
+        }
+      }
+      for sub in subdirs {
+        if scan(&sub, depth_left - 1, allow, out) { has = true }
+      }
+      out.insert(dir.to_string_lossy().replace('\\', "/"), has);
+      has
+    }
+    let mut out = HashMap::new();
+    scan(&root_path, max_depth, &allow, &mut out);
+    out
+  })
+  .await
+  .map_err(|e| format!("join error: {e}"))
+}
+
 // 库内全文搜索：递归扫描 root 下的 md/markdown/txt 文件，返回每个文件的首个命中行
 #[derive(serde::Serialize)]
 struct FlymdSearchHit {
@@ -2179,6 +2233,7 @@ fn main() {
       flymd_piclist_upload,
       flymd_list_markdown_files,
       flymd_search_files_content,
+      scan_dirs_doc_presence,
       check_update,
       download_file,
       git_status_summary,

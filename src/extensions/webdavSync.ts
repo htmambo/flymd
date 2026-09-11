@@ -3067,8 +3067,15 @@ export async function initWebdavSync(): Promise<void> {
       }, { capture: true })  // 使用捕获阶段，优先拦截
     } catch {}
 
-    // 启动后触发一次
-    if (cfg.enabled && cfg.onStartup) { setTimeout(() => { void syncNow('startup') }, 600) }
+    // 启动后触发一次（错开启动关键期：全库扫描+网络同步若在刚启动时执行，
+    // 会与扩展激活/首次渲染争夺主线程，表现为"窗口出来了但操作卡"）
+    if (cfg.enabled && cfg.onStartup) {
+      setTimeout(() => {
+        const ric: any = (window as any).requestIdleCallback
+        if (typeof ric === 'function') ric(() => { void syncNow('startup') }, { timeout: 3000 })
+        else void syncNow('startup')
+      }, 2500)
+    }
 
     // 关闭前同步：统一由主入口（src/main.ts）处理，避免重复注册 close 监听导致时序/交互混乱
   } catch {}

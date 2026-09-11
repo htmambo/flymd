@@ -131,12 +131,27 @@ export function createPluginMarket(deps: PluginMarketDeps) {
       for (const u of urls) {
         if (!u) continue
         tried.push(u)
+        const _t0 = Date.now()
         try {
           const t = await deps.fetchTextSmart(u)
+          const _cost = Date.now() - _t0
+          if (_cost >= 1000) {
+            try {
+              const { logInfo } = await import('../core/logger')
+              logInfo('[启动耗时] 市场索引源', { 源: u, 耗时ms: _cost, 成功: !!t })
+            } catch {}
+          }
           if (!t || !String(t).trim()) continue
           text = String(t)
           break
         } catch {
+          const _cost = Date.now() - _t0
+          if (_cost >= 1000) {
+            try {
+              const { logInfo } = await import('../core/logger')
+              logInfo('[启动耗时] 市场索引源失败', { 源: u, 耗时ms: _cost })
+            } catch {}
+          }
           // 忽略失败，尝试下一个源
         }
       }
@@ -190,10 +205,26 @@ export function createPluginMarket(deps: PluginMarketDeps) {
     return FALLBACK_INSTALLABLES
   }
 
+  // 是否存在有效的市场索引缓存（供启动预热决策：无缓存则不在启动时触发网络请求）
+  async function hasValidMarketCache(): Promise<boolean> {
+    try {
+      const store = deps.getStore()
+      if (!store) return false
+      const c = (await store.get('pluginMarket:cache')) as any
+      const now = Date.now()
+      if (c && Array.isArray(c.items) && typeof c.ts === 'number' && typeof c.ttl === 'number') {
+        const ver = Number.isFinite(c.cacheVersion) ? c.cacheVersion : 0
+        if (ver === PLUGIN_MARKET_CACHE_VERSION && now - c.ts < c.ttl) return true
+      }
+    } catch {}
+    return false
+  }
+
   return {
     getMarketUrl,
     getMarketChannel,
     setMarketChannel,
     loadInstallablePlugins,
+    hasValidMarketCache,
   }
 }
