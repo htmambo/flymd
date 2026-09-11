@@ -349,4 +349,23 @@ export function installLibraryChangedBridge(): void {
       try { onLibraryChangedForPrivate() } catch {}
     })
   })
+  // PR-4: 切库后异步触发迁移（fire-and-forget, 不阻塞切库）
+  window.addEventListener(LIBRARY_CHANGED_EVENT, () => {
+    queueMicrotask(async () => {
+      try {
+        const { runMigrationForScope } = await import('./libraryMigration')
+        // 动态 import 避免循环依赖
+        runMigrationForScope(getLibraryScope().id, getStoreForMigration)
+      } catch {}
+    })
+  })
+}
+
+/** 注入 store getter（PR-4 迁移用）。main.ts 启动时调用一次。 */
+let _getStoreForMigration: (() => any) | null = null
+export function setStoreForMigration(fn: () => any): void {
+  _getStoreForMigration = fn
+}
+function getStoreForMigration(): any {
+  return _getStoreForMigration ? _getStoreForMigration() : null
 }

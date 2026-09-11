@@ -1,14 +1,27 @@
 // 从 store.get('uploader') 的原始对象解析出可用配置
 // 原则：默认 provider=s3，旧字段保持不变；仅在启用时做严格校验
+//
+// PR-4: 读优先走 libraryPrivate.uploader（新通道,库内 local.json,含凭据）,
+// fallback 到旧 Store key（v1.4.4 及之前的 `uploader:<libId>`）。
+// 写只走 libraryPrivate —— 迁移完成后不再写旧 Store key。
 
 import type { Store } from '@tauri-apps/plugin-store'
 import type { AnyUploaderConfig, ImgLaUploaderConfig, S3UploaderConfig, UploaderProvider } from './types'
-import { libraryScopedKey } from '../core/libraryConfig'
+import { libraryScopedKey, getLibraryScope } from '../core/libraryConfig'
+import { readLibraryPrivate, writeLibraryPrivate } from '../core/libraryPrivate'
 
-// 图床配置按库隔离：持久化库激活时读写 Store 的 `uploader:<libId>`（含凭据，
-// 留在系统层不进库目录）；库级 key 不存在时回落全局 'uploader'，写入则写库级 key。
-// 临时库/无库读写全局 key（保持旧行为）。
+// 图床配置按库隔离：持久化库激活时优先读 libraryPrivate.uploader（含凭据，
+// 随库目录走,PR-1 已默认排除 WebDAV 同步）；fallback 到 Store 的 `uploader:<libId>`
+// （旧通道,v1.4.4 及之前数据）。库级 key 不存在时回落全局 'uploader'。
+// 临时库/无库走全局 key（保持旧行为）。
 export async function getUploaderRaw(store: Store | null): Promise<any> {
+  // PR-4: 优先新通道
+  try {
+    const priv = await readLibraryPrivate()
+    if (priv?.uploader !== undefined) return priv.uploader
+  } catch {}
+
+  // Fallback: 旧 Store key
   if (!store) return null
   try {
     const key = libraryScopedKey('uploader')
@@ -22,6 +35,16 @@ export async function getUploaderRaw(store: Store | null): Promise<any> {
 }
 
 export async function setUploaderRaw(store: Store | null, raw: any): Promise<void> {
+  // PR-4: 写只走新通道 libraryPrivate
+  // 但要尊重临时库/无库场景:此时 libraryPrivate 不生效,fallback 旧 Store
+  const scope = getLibraryScope()
+  if (scope.persisted && scope.root) {
+    try {
+      await writeLibraryPrivate({ uploader: raw ?? null }, { immediate: true })
+      return
+    } catch {}
+  }
+  // Fallback: 旧 Store（保持旧行为,无库 / 临时库场景）
   if (!store) return
   try {
     await store.set(libraryScopedKey('uploader'), raw)

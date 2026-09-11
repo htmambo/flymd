@@ -5,10 +5,15 @@
 // 状态量(_docPosSaveTimer / _docPosMapCache / _docPosMapLoading)随实例封闭,模块自包含。
 // mode 字段扩到 'edit' | 'preview' | 'wysiwyg'(主态 Mode = 'edit'|'preview'),
 // 故使用本地 DocPosMode 类型避免污染主类型。
+//
+// PR-4: 读优先走 libraryPrivate.docPos（新通道,库内 local.json）,
+// fallback 到旧 Store key（v1.4.4 及之前的 `docPos:<libId>`）确保升级期平滑。
+// 写只走 libraryPrivate —— 迁移完成后不再写旧 Store key。
 
 import type { Store } from '@tauri-apps/plugin-store'
 import { libraryScopedKey, LIBRARY_CHANGED_EVENT, getLibraryScope } from './libraryConfig'
 import { isInside } from './fsSafe'
+import { readLibraryPrivate, writeLibraryPrivate } from './libraryPrivate'
 
 export type DocPosMode = 'edit' | 'preview' | 'wysiwyg'
 
@@ -41,8 +46,7 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
   let mapCache: Record<string, DocPos> | null = null
   let mapLoading: Promise<Record<string, DocPos>> | null = null
 
-  // 按库隔离：Store key 追加 libId 后缀（临时库/无库回落全局 'docPos'）；
-  // 库切换时清空内存缓存，下次访问重新读新库的 map
+  // 旧通道 Store key（fallback 用,迁移完成后新写不再写这里）
   const storeKey = () => libraryScopedKey('docPos')
   try {
     window.addEventListener(LIBRARY_CHANGED_EVENT, () => {
@@ -53,52 +57,63 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
 
   const getMap = async (): Promise<Record<string, DocPos>> => {
     try {
-      const store = deps.getStore()
-      if (!store) return {}
       if (mapCache) return mapCache
       if (mapLoading) return await mapLoading
       mapLoading = (async () => {
+        let map: Record<string, DocPos> = {}
+        // PR-4: 优先读新通道 libraryPrivate.docPos
         try {
-          const key = storeKey()
-          const m = await store.get(key)
-          let map = (m && typeof m === 'object') ? (m as Record<string, DocPos>) : {}
-          // 播种：按库 key 首次为空时，从全局 docPos 复制本库路径下的条目
-          if (key !== 'docPos' && Object.keys(map).length === 0) {
-            try {
-              const g = await store.get('docPos')
-              if (g && typeof g === 'object') {
-                const scope = getLibraryScope()
-                const seeded: Record<string, DocPos> = {}
-                if (scope.root) {
-                  for (const [p, v] of Object.entries(g as Record<string, DocPos>)) {
-                    if (isInside(scope.root, p)) seeded[p] = v
+          const priv = await readLibraryPrivate()
+          if (priv?.docPos && typeof priv.docPos === 'object') {
+            map = { ...priv.docPos } as Record<string, DocPos>
+          }
+        } catch {}
+        // Fallback: 旧 Store key (兼容 v1.4.4 及之前数据;PR-4 迁移后会写入新通道)
+        if (Object.keys(map).length === 0) {
+          try {
+            const store = deps.getStore()
+            if (store) {
+              const key = storeKey()
+              const m = await store.get(key)
+              if (m && typeof m === 'object') map = m as Record<string, DocPos>
+              // 旧库首次读不到时,种子化:从全局 docPos 复制本库路径下的条目
+              if (Object.keys(map).length === 0 && key !== 'docPos') {
+                const g = await store.get('docPos')
+                if (g && typeof g === 'object') {
+                  const scope = getLibraryScope()
+                  const seeded: Record<string, DocPos> = {}
+                  if (scope.root) {
+                    for (const [p, v] of Object.entries(g as Record<string, DocPos>)) {
+                      if (isInside(scope.root, p)) seeded[p] = v
+                    }
+                  }
+                  if (Object.keys(seeded).length > 0) {
+                    map = seeded
+                    // 触发迁移:旧值复制到新通道
+                    try { await writeLibraryPrivate({ docPos: seeded }, { immediate: true }) } catch {}
                   }
                 }
-                if (Object.keys(seeded).length > 0) {
-                  map = seeded
-                  await store.set(key, map)
-                  await store.save()
-                }
               }
-            } catch {}
-          }
-          mapCache = map
-          return map
-        } catch {
-          mapCache = {}
-          return {}
-        } finally {
-          mapLoading = null
+            }
+          } catch {}
         }
+        mapCache = map
+        return map
       })()
       return await mapLoading
     } catch { return {} }
+    finally { mapLoading = null }
   }
 
   const saveNow = async (): Promise<void> => {
     try {
       const currentFilePath = deps.getCurrentFilePath()
       if (!currentFilePath) return
+      // PR-4: 无库根 / 临时库场景不写新通道(写到无库根也没意义)
+      // 临时库/无库 docPos 行为:无库根 = libraryPrivate.writeLibraryPrivate 返回 false,
+      // 此处短路避免无效调用
+      const scope = getLibraryScope()
+      if (!scope.root) return
       const editor = deps.getEditor()
       const preview = deps.getPreview()
       const map = await getMap()
@@ -110,11 +125,9 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
         mode: deps.getMode(),
         ts: Date.now(),
       }
-      const store = deps.getStore()
-      if (store) {
-        await store.set(storeKey(), map)
-        await store.save()
-      }
+      // PR-4: 写只走新通道 libraryPrivate
+      // 留 debounce 默认 500ms(libraryPrivate 内部),与本模块的 400ms scheduleSave 叠加 = ~900ms 总延迟
+      try { await writeLibraryPrivate({ docPos: map }) } catch {}
     } catch {}
   }
 

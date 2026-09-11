@@ -464,3 +464,23 @@ docs/Task/
     - 3s mtime 轮询 + 派发 `flymd:libraryPrivate:changed`
   - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 15 新增通过(总 740/741,1 pre-existing 与本 PR 无关) / `npm run build` 成功(5.63s)
   - **下一步**: PR-4 (消费方迁移到 local.json)
+- ✅ [2026-09-11-library-private-v2-pr4-migration.md](Archive/2026-09/2026-09-11-library-private-v2-pr4-migration.md) — 库私有化 v2 第四个 PR: 数据迁移 + 消费方改读 local.json(完成 2026-09-11)
+  - **背景**: 把通道 B Store/localStorage 存量数据迁入 local.json(PR-3 已建);消费方切到新通道
+  - **改动**:
+    - `src/core/libraryMigration.ts` (新建 180 行): 幂等迁移 / 字段独立 try/catch / 备份旧 key / 标记 / 通知 hook
+    - `src/core/docPosition.ts` 改读 libraryPrivate.docPos,write 走 libraryPrivate(无库根短路)
+    - `src/uploader/storeConfig.ts` 改读 libraryPrivate.uploader,write 走 libraryPrivate
+    - `src/core/libraryPrivate.ts` 加 setStoreForMigration + runMigrationForScope 桥接
+  - **测试**: 新增 `libraryMigration.test.ts` 13 用例 + `docPosition.test.ts` 11 用例(全部 PR-4 重写)
+  - **设计修正**: v2.0 **不迁** asr / manualTranscribe / officePreview(全局偏好 → per-library 反而降级切库丢配置)
+  - **修复的 bug**:
+    - 测试 mock:`...actual` spread 不能 mock 内部引用原模块 export 的函数 → 必须显式 override `libraryScopedKey`
+    - docPosition 无库根时仍调 writeLibraryPrivate → 加 `scope.root` 短路
+    - tsc 类型:`mockResolvedValueOnce` 返回类型不完整 → `as any`
+  - **关键设计**:
+    - 字段独立 try/catch:单字段失败不阻塞其他(隔离)
+    - 备份旧 key 保留 v2.0 兜底,v2.1 稳定后清理
+    - 标记 `flymd:lib-local-migrated:<libId>` 实现幂等
+    - 通知中心 hook 默认 noop,main.ts 注入可选
+  - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 24 新增通过(总 754/755,1 pre-existing 与本 PR 无关) / `npm run build` 成功(5.11s)
+  - **下一步**: PR-5 (插件 library-scoped 存储 API)
