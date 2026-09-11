@@ -420,3 +420,14 @@ docs/Task/
   - **验证**:`npx tsc --noEmit` EXIT=0、`npm test` 646/646 通过、`npm run build` 成功(5.83s,EXIT=0)
   - **未验证**:npm audit 漏洞清零；运行时 PDF/公式人工回归
   - **External Review**:coding-bridge 2 轮复审(R1 REJECTED 5 risks -> R2 逐项验证 APPROVED);codex/kimi 本会话不可用,先以 tsc+vitest+build 本地三重验证过渡
+
+#### 2026-09
+
+- ✅ [2026-09-11-library-private-v2-pr1-webdav-exclude.md](Archive/2026-09/2026-09-11-library-private-v2-pr1-webdav-exclude.md) — 库私有化 v2 第一个 PR: WebDAV 默认排除 `**/.flymd/local.json`(完成 2026-09-11)
+  - **背景**: 库私有化 v2 路线图(`2026-09-05-library-private-config-roadmap.md`)首个落地 PR
+  - **改动**: `webdavSync.ts` 提取 `DEFAULT_EXCLUDE_GLOBS` 常量,新增 `**/.flymd/local.json` 项;`shouldSyncRelativePath` 改为 `export` 供测试
+  - **测试**: 新增 `src/extensions/webdavExclude.test.ts`,12 用例覆盖保留项 / 库内共享文件 / 路径清洗 / 大小写不敏感
+  - **意外收获**: 跑测试时 `git stash` 验证确认 12 个 pre-existing 失败是新增测试覆盖到的,本 PR 净修复
+  - **验证**: `npx tsc --noEmit` 0 错误 / `npm test` 12 新增通过(710/711 总过,1 个 pre-existing 与本 PR 无关) / `npm run build` 成功(5.43s)
+  - **发现**: 当前 WebDAV 设置对话框**未暴露** include/exclude glob UI,只走默认值 → 后续 PR-7 加 UI 时需加"保留项不可删"锁死逻辑
+  - **下一步**: PR-2 (Rust 原子写 + 跨进程文件锁)

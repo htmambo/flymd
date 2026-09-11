@@ -103,6 +103,19 @@ type SyncMetadata = {
 const LEGACY_META_FILENAME = 'flymd-sync-meta.json'
 const PROFILE_META_PREFIX = 'flymd-sync-meta-'
 
+// 默认 WebDAV 排除 glob 列表。
+// **/.flymd/local.json 是库私有配置 v2 通道 C 的载体，含图床凭据 / 光标位置 /
+// ASR 偏好等设备私有数据，**严禁** 同步到 WebDAV 远端。
+// 列入保留项：即便用户配置清空 excludeGlobs，本默认仍会覆盖生效（见 getWebdavSyncConfig 1025 行）。
+// 详见 docs/Task/Archive/2026-09/2026-09-11-library-private-v2-pr1-webdav-exclude.md
+export const DEFAULT_EXCLUDE_GLOBS: readonly string[] = [
+  '**/.git/**',
+  '**/.trash/**',
+  '**/.DS_Store',
+  '**/Thumbs.db',
+  '**/.flymd/local.json',
+]
+
 type SyncProfileInput = { localRoot: string; baseUrl: string; remoteRoot: string }
 type SyncProfileContext = { key: string; metaPath: string; legacyPath: string }
 type SyncMetadataState = { meta: SyncMetadata; profile: SyncProfileContext; isFreshProfile: boolean; legacyDetected: boolean }
@@ -142,7 +155,7 @@ function normalizeBaseUrlForKey(url: string): string {
   }
 }
 
-function shouldSyncRelativePath(rel: string, nameOpt?: string): boolean {
+export function shouldSyncRelativePath(rel: string, nameOpt?: string): boolean {
   try {
     const raw = String(rel || nameOpt || '').trim()
     if (!raw) return false
@@ -1022,7 +1035,7 @@ function buildWebdavConfigFromRaw(raw: any, defaultRootPathForEmptyConfig: strin
     timeoutMs: Number(raw?.timeoutMs) > 0 ? Number(raw?.timeoutMs) : 120000,
     logRetentionDays: clampInt(raw?.logRetentionDays, 1, 90, DEFAULT_SYNC_LOG_RETENTION_DAYS),
     includeGlobs: Array.isArray(raw?.includeGlobs) ? raw.includeGlobs : ['**/*.md', '**/*.{png,jpg,jpeg,gif,svg,pdf}'],
-    excludeGlobs: Array.isArray(raw?.excludeGlobs) ? raw.excludeGlobs : ['**/.git/**','**/.trash/**','**/.DS_Store','**/Thumbs.db'],
+    excludeGlobs: Array.isArray(raw?.excludeGlobs) ? raw.excludeGlobs : [...DEFAULT_EXCLUDE_GLOBS],
     baseUrl: String(raw?.baseUrl || ''),
     username: String(raw?.username || ''),
     password: String(raw?.password || ''),
