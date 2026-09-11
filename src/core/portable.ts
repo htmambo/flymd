@@ -1,6 +1,12 @@
 /**
  * 便携模式模块
  * 从 main.ts 拆分，支持便携式配置的导入导出
+ *
+ * 重要语义（PR-6 库私有化 v2 修订）：
+ * - 便携模式备份**仅打包全局**（主题/字号/快捷键/全局扩展/全局偏好），
+ *   **不** 包含任何库的内容（库内配置 .flymd/config.json / .flymd/local.json 跟库走）
+ * - 用户若需导出单库配置，应走"库设置 → 导出此库配置"独立入口
+ *   （由 libraryExport.ts 实现,见 ui/librarySettingsDialog.ts）
  */
 
 import { readTextFile, writeTextFile, exists } from '@tauri-apps/plugin-fs'
@@ -40,6 +46,7 @@ export function joinPortableFile(dir: string | null): string | null {
 
 export async function exportPortableBackupSilent(): Promise<boolean> {
   try {
+    // PR-6: 便携模式仅备份全局。不传 includeLibraries,显式声明语义。
     const { files } = await collectConfigBackupFiles()
     if (!files.length) return false
     const payload: ConfigBackupPayload = {

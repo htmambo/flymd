@@ -3,7 +3,7 @@
  * 从 main.ts 拆分，包含配置文件的收集、备份、恢复等功能
  */
 
-import { readDir, readFile, writeFile, mkdir, remove } from '@tauri-apps/plugin-fs'
+import { readDir, readFile, writeFile, mkdir, remove, exists } from '@tauri-apps/plugin-fs'
 import { BaseDirectory } from '@tauri-apps/plugin-fs'
 
 // 备份相关常量
@@ -98,8 +98,11 @@ export async function collectDirFilesForBackup(baseDir: BaseDirectory, relDir: s
   return count
 }
 
-export async function collectConfigBackupFiles(): Promise<{ files: ConfigBackupEntry[] }> {
+export async function collectConfigBackupFiles(
+  opts?: { includeLibraries?: LibraryBackupSpec[] },
+): Promise<{ files: ConfigBackupEntry[] }> {
   const files: ConfigBackupEntry[] = []
+  // 1. 全局 appdata + applocal 段
   const scopes: Array<{ baseDir: BaseDirectory; prefix: string }> = [
     { baseDir: getSettingsBaseDir(), prefix: BACKUP_PREFIX_APPDATA },
     { baseDir: BaseDirectory.AppLocalData, prefix: BACKUP_PREFIX_APPLOCAL },
@@ -107,7 +110,52 @@ export async function collectConfigBackupFiles(): Promise<{ files: ConfigBackupE
   for (const scope of scopes) {
     await collectDirFilesForBackup(scope.baseDir, '', scope.prefix, files)
   }
+  // 2. PR-6: 可选 per-library 段
+  // 默认不打包任何库（便携 / 备份应跟用户走,库跟库走）
+  // 用户显式 includeLibraries 时才附加,且凭据需 includeCredentials: true
+  if (opts?.includeLibraries && opts.includeLibraries.length > 0) {
+    for (const lib of opts.includeLibraries) {
+      if (!lib.id || !lib.root) continue
+      // 2a. 库内共享配置（config.json,通道 A）—— 始终随库走
+      try {
+        const cfgPath = `${lib.root.replace(/[\\/]+$/, '')}/.flymd/config.json`
+        if (await exists(cfgPath as any)) {
+          const data = await readFile(cfgPath as any)
+          const stored = normalizeBackupPath(`libraryConfig:${lib.id}/config.json`)
+          if (stored) {
+            files.push({ path: stored, data: bytesToBase64(data), size: data.length })
+          }
+        }
+      } catch {}
+      // 2b. 库内私有配置（local.json,通道 C）—— 仅 opt-in 凭据时
+      if (lib.includeCredentials) {
+        try {
+          const localPath = `${lib.root.replace(/[\\/]+$/, '')}/.flymd/local.json`
+          if (await exists(localPath as any)) {
+            const data = await readFile(localPath as any)
+            const stored = normalizeBackupPath(`libraryLocal:${lib.id}/local.json`)
+            if (stored) {
+              files.push({ path: stored, data: bytesToBase64(data), size: data.length })
+            }
+          }
+        } catch {}
+      }
+    }
+  }
   return { files }
+}
+
+/** PR-6: per-library 备份条目。 */
+export interface LibraryBackupSpec {
+  /** 库 id（用于备份路径分段 `libraryConfig:<id>/config.json`） */
+  id: string
+  /** 库根绝对路径 */
+  root: string
+  /**
+   * 是否包含凭据（local.json,含图床 key / 加密密钥等敏感数据）。
+   * **强烈建议仅在二次确认后设为 true**。
+   */
+  includeCredentials?: boolean
 }
 
 export function resolveBackupPath(pathRaw: string): BackupPathInfo | null {

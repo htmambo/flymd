@@ -497,3 +497,18 @@ docs/Task/
     - WebDAV 同步被 PR-1 默认排除(凭据安全)
   - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 17 新增通过(总 771/772,1 pre-existing 与本 PR 无关) / `npm run build` 成功(3.06s)
   - **下一步**: PR-6 (便携 / 备份)
+- ✅ [2026-09-11-library-private-v2-pr6-portable-backup.md](Archive/2026-09/2026-09-11-library-private-v2-pr6-portable-backup.md) — 库私有化 v2 第六个 PR: 便携 / 备份语义重定义(完成 2026-09-11)
+  - **背景**: 澄清便携模式 vs 库配置导出的边界
+  - **改动**:
+    - `src/core/configBackup.ts` 扩 `collectConfigBackupFiles(opts?: { includeLibraries?: LibraryBackupSpec[] })` —— 默认不打包任何库
+    - `src/core/portable.ts` 注释更新:便携 = 全局 only,库私有跟库走
+    - `src/core/libraryExport.ts` (新建 100 行): 库配置导出 helper(支持 noCredentials / withCredentials)
+    - `src/core/libraryExport.test.ts` (新建 13 测试)
+    - i18n 加 7 个 `lib.settings.exportConfig.*` 中英
+  - **关键设计**:
+    - 便携 ≠ 库导出(语义分离,避免误把库私凭据打包到便携备份)
+    - 凭据导出需显式 opt-in + UI 二次确认(降低误操作风险)
+    - `hasLibraryCredentials` 预探测:UI 可在导出前判断是否需要"含凭据"选项
+  - **完成度**: 核心 helper 完成 100%,UI 集成(`librarySettingsDialog` 按钮 + 二次确认弹窗)留 PR-7 收尾
+  - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 13 新增通过(总 784/785,1 pre-existing 与本 PR 无关) / `npm run build` 成功(2.88s)
+  - **下一步**: PR-7 (文档 + UI 收尾 + 审计)
