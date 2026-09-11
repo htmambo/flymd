@@ -17,6 +17,71 @@ import {
 } from '@tauri-apps/plugin-fs'
 import { save, open } from '@tauri-apps/plugin-dialog'
 import type { Store } from '@tauri-apps/plugin-store'
+import { getLibraryScope } from '../core/libraryConfig'
+import { readLibraryPrivate, writeLibraryPrivate } from '../core/libraryPrivate'
+
+// ===== PR-5: 库作用域存储工厂 =====
+// 抽离成独立函数便于单测(类比 createDocPositionStore 模式)。
+// 返回 3 个方法:get(key)/set(key,value)/remove(key),分别对应
+// <libRoot>/.flymd/local.json 中 prefs.<pluginId> 段的读写删。
+export interface PluginScopedStorage {
+  get: (key: string) => Promise<any>
+  set: (key: string, value: any) => Promise<boolean>
+  remove: (key: string) => Promise<boolean>
+}
+
+export function createPluginScopedStorage(pluginId: string): PluginScopedStorage {
+  return {
+    get: async (key: string) => {
+      try {
+        const scope = getLibraryScope()
+        if (!scope.persisted || !scope.root) return null
+        const priv = await readLibraryPrivate()
+        const all = (priv && priv.prefs && (priv.prefs as any)[pluginId]) || null
+        if (!all || typeof all !== 'object') return null
+        return (all as any)[key] ?? null
+      } catch {
+        return null
+      }
+    },
+    set: async (key: string, value: any) => {
+      try {
+        const scope = getLibraryScope()
+        if (!scope.persisted || !scope.root) return false
+        const priv = (await readLibraryPrivate()) || ({} as any)
+        const currentPrefs: Record<string, any> = (priv && priv.prefs) || {}
+        const all: Record<string, any> = { ...(currentPrefs[pluginId] || {}) }
+        all[key] = value
+        // 浅合并 prefs 段(libraryPrivate 内部做 docPos 深合并,prefs 走顶层 spread)
+        await writeLibraryPrivate(
+          { prefs: { ...currentPrefs, [pluginId]: all } } as any,
+          { immediate: true },
+        )
+        return true
+      } catch {
+        return false
+      }
+    },
+    remove: async (key: string) => {
+      try {
+        const scope = getLibraryScope()
+        if (!scope.persisted || !scope.root) return false
+        const priv = (await readLibraryPrivate()) || ({} as any)
+        const currentPrefs: Record<string, any> = (priv && priv.prefs) || {}
+        const all: Record<string, any> = { ...(currentPrefs[pluginId] || {}) }
+        if (!(key in all)) return true  // 已不存在,no-op 成功
+        delete all[key]
+        await writeLibraryPrivate(
+          { prefs: { ...currentPrefs, [pluginId]: all } } as any,
+          { immediate: true },
+        )
+        return true
+      } catch {
+        return false
+      }
+    },
+  }
+}
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { appLocalDataDir } from '@tauri-apps/api/path'
 import { getHttpClient } from './runtime'
@@ -998,6 +1063,12 @@ export function createPluginHost(
             await store.save()
           } catch {}
         },
+        // PR-5: 库作用域存储 (per-library)。数据写在 <libRoot>/.flymd/local.json 的
+        // prefs.<pluginId> 段,随库目录走,WebDAV 同步被 PR-1 默认排除。
+        // 与 storage.get/set 的关键差异: 旧 storage 跨库共享(用户级),
+        // 新 storage.scoped 跟随库(数据级)。
+        // 无库根 / 临时库: get 返回 null, set/remove 返回 false (不抛错,graceful 降级)。
+        scoped: createPluginScopedStorage(p.id),
       },
       addMenuItem: (opt: {
         label: string

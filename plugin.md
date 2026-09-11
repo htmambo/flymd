@@ -360,6 +360,42 @@ console.log(data); // { name: 'value', count: 42 }
 await context.storage.set('key', null);
 ```
 
+#### context.storage.scoped（库作用域存储，v2.0+）
+
+与 `storage` 不同，`storage.scoped` 跟随**当前激活的库**——数据写在
+`<库根>/.flymd/local.json` 的 `prefs.<pluginId>` 段,库目录搬走时一起带
+走,WebDAV 同步被默认排除(凭据安全)。
+
+**适用场景**:
+- 插件的"实例数据"(每个库独立的笔记元数据、阅读历史、画板状态等)
+- 不想跨库共享的临时状态
+- 含敏感信息的偏好
+
+**关键差异**:
+- 旧 `storage`:全局(跟用户走,跨库共享)—— 适合 API key、全局开关
+- 新 `storage.scoped`:per-library(跟库走)—— 适合实例数据
+
+```javascript
+// 读取(无库根 / 临时库 / 键不存在 → 返回 null,不抛错)
+const v = await context.storage.scoped.get('myKey');
+
+// 写入(无库根 / 临时库 → 返回 false,不抛错)
+const ok = await context.storage.scoped.set('myKey', { lastRead: Date.now() });
+
+// 删除
+const ok = await context.storage.scoped.remove('myKey');
+```
+
+**优雅降级**:无库根或临时库时,`get` 返回 `null`,`set`/`remove`
+返回 `false`,插件可继续运行(只是数据不持久化)。
+
+**WebDAV 同步**:local.json 不会被 WebDAV 上传(PR-1 默认排除
+`**/.flymd/local.json`),凭据安全。
+
+**与 storage 的迁移建议**:
+- 全局配置(API key、模型选择)→ 继续用 `storage`
+- 实例数据(每个库独立)→ 改用 `storage.scoped`
+
 ### context.addMenuItem
 
 在菜单栏添加自定义菜单项，支持简单菜单项和下拉菜单。

@@ -484,3 +484,16 @@ docs/Task/
     - 通知中心 hook 默认 noop,main.ts 注入可选
   - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 24 新增通过(总 754/755,1 pre-existing 与本 PR 无关) / `npm run build` 成功(5.11s)
   - **下一步**: PR-5 (插件 library-scoped 存储 API)
+- ✅ [2026-09-11-library-private-v2-pr5-plugin-scoped-api.md](Archive/2026-09/2026-09-11-library-private-v2-pr5-plugin-scoped-api.md) — 库私有化 v2 第五个 PR: 插件 library-scoped 存储 API(完成 2026-09-11)
+  - **背景**: 让第三方插件可把数据写入 `<libRoot>/.flymd/local.json` 的 `prefs.<pluginId>` 段
+  - **改动**:
+    - `src/extensions/pluginHost.ts` 抽出 `createPluginScopedStorage(pluginId)` factory + storage.scoped 接入
+    - `src/extensions/pluginHost.test.ts` (新建,17 测试)
+    - `plugin.md` 加 "context.storage.scoped (库作用域存储,v2.0+)" 一节
+  - **关键设计**:
+    - 抽 factory 函数便于单测(类比 `createDocPositionStore` 模式)
+    - 优雅降级:无库根 / 临时库时 get 返回 null,set/remove 返回 false (不抛错)
+    - 旧 `storage` 保留(全局配置)与新 `storage.scoped`(per-library 数据)互补
+    - WebDAV 同步被 PR-1 默认排除(凭据安全)
+  - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 17 新增通过(总 771/772,1 pre-existing 与本 PR 无关) / `npm run build` 成功(3.06s)
+  - **下一步**: PR-6 (便携 / 备份)
