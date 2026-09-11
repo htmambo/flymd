@@ -213,16 +213,20 @@ export async function writeFileLockedSafe(
 }
 
 /**
- * 读-改-写原子操作：在同一文件锁内完成"读取当前内容 → 调 modify 合并 → 原子写"。
- * 关键用途：libraryPrivate.doWrite 等"需要先读 base 再合并 patch"的场景，
- * 把读也放入锁作用域，避免多窗口/多进程并发下"读 base → 另一个窗口写 → 写回覆盖"的数据丢失。
+ * 读-改-写原子操作：在同一文件锁内完成"读取当前内容 → 调 modify 合并 → 原子写 → afterWrite"。
+ * 关键用途：libraryPrivate.doWrite 等"需要先读 base 再合并 patch + 后置副作用（如备份旋转 / mtime 刷新）"的场景，
+ * 把所有操作都在锁作用域内，避免多窗口/多进程并发下"读 base → 另一个窗口写 → 写回覆盖"的数据丢失。
  *
- * 调用方负责合并逻辑：modify 接收当前文件内容（不存在则为空字符串），返回要写入的新内容。
+ * 调用方负责合并逻辑：
+ *   - modify 接收当前文件内容（不存在则为空字符串），返回要写入的新内容。
+ *   - afterWrite（可选）在原子写完成后、释放锁前执行，常用于 rotateBackups / refreshMtimeBaseline 等。
+ *     必须在锁内执行以确保这些后置动作也与并发写入互斥。
  */
 export async function readModifyWriteLockedSafe(
   p: string,
   modify: (current: string) => string | Promise<string>,
   timeoutMs = 5000,
+  afterWrite?: (next: string) => void | Promise<void>,
 ): Promise<string> {
   const token = await tryLockFileSafe(p, timeoutMs)
   try {
@@ -230,6 +234,7 @@ export async function readModifyWriteLockedSafe(
     try { current = await readTextFileAnySafe(p) } catch { /* 文件不存在/不可读 */ }
     const next = await modify(current)
     await writeFileAtomicSafe(p, next)
+    if (afterWrite) await afterWrite(next)
     return next
   } finally {
     await unlockFileSafe(token)

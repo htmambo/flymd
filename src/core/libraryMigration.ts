@@ -74,6 +74,7 @@ export async function migrateLibraryToLocalOnce(
   // 选择：直接跳过（不写 marker，不报错），用户后续用持久化库时会再次触发迁移。
   // 临时库本身的 docPos 行为：v2.0 范围内不保证持久化（设计决策）。
   if (!root) {
+    result.didRun = false  // 实际未跑迁移，避免调用方误判为"已迁移"
     result.skipped.push('docPos', 'uploader')
     // 不写 marker，下次切到持久化库时仍会尝试迁移（无害）
     return result

@@ -3172,13 +3172,14 @@ async fn cleanup_stale_tmp_files(root: String) -> Result<u32, String> {
 
 /// 尝试以排他锁持有 `<path>.lock`。超时返回错误。返回 token 用于 unlock。
 ///
-/// 修复（2026-09 PR-2 复审反馈）：原实现用 `thread::spawn` + `recv_timeout`，
-/// 超时时调用方拿到 Err，但 thread 仍在阻塞 flock，最终拿到锁后会
-/// `insert(token, f)` 进入 LOCK_REGISTRY。由于调用方已经 timeout 永远
-/// 不会调 unlock_file，导致：(1) LOCK_REGISTRY 中堆积死 token + fd；
-/// (2) HashMap 单调增长内存泄漏。修复方案：仅在 tx.send 成功（调用方
-/// 收到 token）后才 insert；send 失败说明调用方已 timeout，drop fd 让
-/// flock 立即释放，**不** insert LOCK_REGISTRY。
+/// 修复（2026-09 PR-2 复审反馈）：
+/// - Round 1: 用 `thread::spawn` + `recv_timeout`，超时时调用方拿到 Err，但 thread
+///   仍在阻塞 flock，最终 insert LOCK_REGISTRY 但调用方永远不调 unlock → 死 token。
+///   修复：仅在 send 成功后才 insert；send 失败 drop fd 立即释放 flock。
+/// - Round 2: 调整顺序为"先 lock registry → insert → send → send 失败则 remove"。
+///   原因：若先 send 后 insert，Mutex poison 时 send 已成功但 insert 失败，
+///   调用方会拿到无效 token（实际锁已被 drop），后续 unlock 找不到 → 不安全。
+///   当前实现：先注册到 LOCK_REGISTRY，再 send；send 失败则从 registry 移除并 drop fd。
 #[tauri::command]
 async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> {
     use std::path::PathBuf;
@@ -3226,19 +3227,28 @@ async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> 
             Err(e) => { let _ = tx.send(Err(e)); return; }
         };
 
-        // 2. 试图 send token。send 失败 = 调用方已 timeout / receiver drop。
-        //    此场景必须立即 drop fd（flock 自动释放）并 return，**不** insert LOCK_REGISTRY。
+        // 2. 先生成 token,先 register 到 LOCK_REGISTRY。
+        //    顺序关键：必须在 send 前 insert，避免 Mutex poison 场景下
+        //    调用方拿到 token 但 LOCK_REGISTRY 中无 entry（导致后续 unlock 失败 + 锁漂移）。
         let token = gen_lock_token();
-        if tx.send(Ok(token.clone())).is_err() {
-            // 调用方已超时,fd drop → flock 释放,LOCK_REGISTRY 无污染
-            drop(f);
-            return;
-        }
+        let mut registry_guard = match lock_registry().lock() {
+            Ok(g) => g,
+            Err(e) => {
+                // Registry lock poison（极小概率，仅某 panic 在持锁时发生），
+                // 不 insert，f 随闭包 drop → flock 释放。
+                drop(f);
+                let _ = tx.send(Err(format!("lock registry poison: {e}")));
+                return;
+            }
+        };
+        registry_guard.insert(token.clone(), f);
 
-        // 3. 调用方已收到 token,才插入 LOCK_REGISTRY。File Drop 时自动释放 flock。
-        let _ = lock_registry()
-            .lock()
-            .map(|mut m| m.insert(token, f));
+        // 3. 试图 send token。send 失败 = 调用方已 timeout / receiver drop。
+        //    此时从 registry 移除（fd drop → flock 释放），保证 LOCK_REGISTRY 无污染。
+        if tx.send(Ok(token.clone())).is_err() {
+            // 调用方已 timeout，从 registry 移除,f 随 entry drop → flock 释放
+            registry_guard.remove(&token);
+        }
     });
 
     match rx.recv_timeout(timeout) {

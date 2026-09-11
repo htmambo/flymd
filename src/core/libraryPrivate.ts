@@ -282,6 +282,12 @@ async function doWrite(patch: Partial<LibraryPrivateData>): Promise<boolean> {
         return JSON.stringify(merged, null, 2)
       },
       WRITE_LOCK_TIMEOUT_MS,
+      // 后置副作用：旋转备份 + 刷新 mtime 基线。
+      // 必须在锁内执行（afterWrite 回调）以防并发写入踩 .bakN 或读到陈旧 mtime。
+      async () => {
+        await rotateBackups(path)
+        await refreshMtimeBaseline(path)
+      },
     )
     // 解析 next 反向同步到 _cache（基于锁内读到的 base，避免后续读漏更新）
     try {
@@ -290,10 +296,6 @@ async function doWrite(patch: Partial<LibraryPrivateData>): Promise<boolean> {
         _cache = { root, data: { version: LIBRARY_PRIVATE_SCHEMA_VERSION, ...parsed } as LibraryPrivateData }
       }
     } catch {}
-    // 旋转备份（在原子写完成后），保证 .bak1 是上一稳定版本
-    await rotateBackups(path)
-    // 自身写入后刷新 mtime 基线
-    await refreshMtimeBaseline(path)
   })
   _writeQueue = task.catch((e) => {
     try { console.warn('[libraryPrivate] doWrite 失败:', e) } catch {}
