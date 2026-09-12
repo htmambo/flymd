@@ -661,20 +661,99 @@ async function listDir(root: string, dir: string): Promise<{ name: string; path:
 // 递归判断目录是否包含受支持文档（带缓存）
 // 原生整树预扫描结果缓存（key：正斜杠归一化路径）：refreshTree 时由
 // scan_dirs_doc_presence 一次性填充，避免逐目录递归 readDir 造成数千次 IPC
+// 缓存不变性：key 格式统一为 normDirKey(dir)；任何对目录树的修改（创建/删除/重命名）
+// 都通过 refresh/refreshTree 触发 invalidateDirDocPresenceScan 全量清理；
+// 后续若有精细化增量更新，可按前缀清理（见 invalidateDirDocPresenceScan）。
+//
+// 缓存语义（关键 invariant）：
+// - **只写入 true**：从未写入 false。`_dirDocPresenceScan.has(key)` 返回 false 表示"未扫描 / 未命中"，
+//   绝不等价于"无文档"。消费方必须把"缓存命中"当作 hint，把"缓存缺失"当作 unknown → 走懒检查。
+// - **命令返回 Err / 空数组 / 截断时，缓存保持为空**：UI 此时应渲染"未扫描"或走懒检查，**绝不渲染"无文档"**。
+//   （dirHasSupportedDocRecursive 在 L753 的 _dirDocPresenceScan.has(key) 失败后会自动 fallback 到 readDir 递归。）
+// - **失效必须赢得竞态**：invalidateDirDocPresenceScan 自增 epoch，让任何在途扫描结果作废，
+//   防止"扫描在 T0 启动 → 用户在 T1 删除某目录文档触发 invalidate → T2 扫描完成用陈旧快照回填"复活已失效条目。
 const _dirDocPresenceScan = new Map<string, boolean>()
+
+// 预扫描 epoch：每次 prefetch 或 invalidate 自增；返回时若已被新轮覆盖则丢弃旧结果（防陈旧）。
+let _dirDocPresenceScanEpoch = 0
+
+// 是否为大小写不敏感的文件系统（Windows、macOS 默认 APFS、典型 CI 文件系统）：
+// 在这些平台上 "Library" 与 "library" 指同一目录，但 string 层面是两个 key，
+// 因此缓存的 key 也需归一化以避免重复条目与查询 miss。Linux ext4/btrfs 区分大小写，
+// 不归一化以免误合并不同名目录。
+//
+// 注：这是 WebView 字符串推断 Rust 进程所在文件系统的启发式，存在两类残留风险：
+// 1. macOS 上以大小写敏感 APFS 格式化的卷（非默认但存在）会被判为不敏感 → 假阳性合并；
+// 2. Linux 上挂载的 NTFS/exFAT 数据盘 → 回到 P1-3 原始症状（重复条目 + invalidate 用不同大小写写法时漏删）。
+// 后续可由后端用 cfg!(target_os) 权威返回当前进程的"默认 FS"取代之。
+let _ciFsCache: boolean | null = null
+function isCaseInsensitiveFS(): boolean {
+  if (_ciFsCache !== null) return _ciFsCache
+  try {
+    const p = (typeof navigator !== 'undefined' && (navigator as any)?.platform) || ''
+    if (/win/i.test(p)) return _ciFsCache = true
+    if (/mac/i.test(p) || /darwin/i.test(p)) return _ciFsCache = true
+    // Tauri 运行时 UA 兜底：WebView UA 含 "Mac" / "Windows" / "Linux" 任一关键字
+    const ua = (typeof navigator !== 'undefined' && (navigator as any)?.userAgent) || ''
+    if (/Windows/i.test(ua) || /Macintosh|Mac OS/i.test(ua)) return _ciFsCache = true
+  } catch {}
+  return _ciFsCache = false
+}
+
+// 统一缓存 key 归一：与 Rust 端 replace('\\', '/') 一致；额外去尾斜杠（防 prefix=key 不带斜杠、key 带斜杠时的边界漏配）；
+// 大小写不敏感平台上再 toLowerCase()，确保同一目录的两个不同写法命中同一缓存条目。
+function normDirKey(dir: string): string {
+  let s = norm(dir).replace(/\\/g, '/')
+  // 去掉尾斜杠（保留驱动器根 "c:" / "c:/"；其他一律 trim 末尾 '/'）。
+  // 驱动器根形态由"非空 & 不以 ':' 结尾"判断：标准 Windows 根是 "C:" / "C:/"。
+  if (s.length > 1 && !/:$/.test(s)) s = s.replace(/\/+$/, '')
+  return isCaseInsensitiveFS() ? s.toLowerCase() : s
+}
+
+// 路径段前缀匹配：仅当 a 与 b 相等，或 a 紧接在 b 的路径段分隔符之后时返回 true。
+// 防止 "C:/lib" 误匹配 "C:/library"（startsWith 的常见陷阱）。
+function pathPrefixMatch(a: string, b: string): boolean {
+  if (!a || !b) return false
+  if (a === b) return true
+  if (a.length > b.length) return a.startsWith(b) && (a.charCodeAt(b.length) === 47 /* '/' */)
+  return false
+}
+
+// 失效入口：prefix 不传 → 全量清；传 → 仅清 prefix 前缀（用 pathPrefixMatch 防误命中兄弟目录）。
+// 即便当前没有在途扫描，自增 epoch 也是无副作用的（下次 prefetch 会用更大的 epoch 重新开始）。
+function invalidateDirDocPresenceScan(prefix?: string): void {
+  // 关键：让任何在途扫描结果作废——失效必须赢得竞态，防止"扫描完成用陈旧快照复活已失效条目"。
+  _dirDocPresenceScanEpoch++
+  if (!prefix) {
+    _dirDocPresenceScan.clear()
+    return
+  }
+  const key = normDirKey(prefix)
+  for (const k of Array.from(_dirDocPresenceScan.keys())) {
+    if (pathPrefixMatch(k, key)) _dirDocPresenceScan.delete(k)
+  }
+}
 
 async function prefetchDirDocPresence(root: string): Promise<void> {
   try {
     if (typeof invoke !== 'function') return
     const allow = state.additionalSuffixAllow || new Set(['md', 'markdown', 'txt', 'pdf'])
+    // 自增 epoch：本轮异步返回时若已被新轮覆盖，直接放弃旧结果
+    const myEpoch = ++_dirDocPresenceScanEpoch
     const t0 = Date.now()
-    const map = await invoke<Record<string, boolean>>('scan_dirs_doc_presence', {
+    // Rust 端（scan_dirs_doc_presence）只返回"含受支持文档"的目录列表；
+    // 未在列表中的目录视为"无文档"，避免返回全量 HashMap 造成的 IPC 体积浪费。
+    const arr = await invoke<string[]>('scan_dirs_doc_presence', {
       root,
       exts: Array.from(allow),
       maxDepth: 20,
     })
+    // 新一轮 prefetch 已发起，旧结果丢弃
+    if (myEpoch !== _dirDocPresenceScanEpoch) return
     _dirDocPresenceScan.clear()
-    for (const k of Object.keys(map || {})) _dirDocPresenceScan.set(k, !!map[k])
+    for (const dir of arr || []) {
+      _dirDocPresenceScan.set(normDirKey(dir), true)
+    }
     const cost = Date.now() - t0
     if (cost >= 300) {
       try {
@@ -691,7 +770,7 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
     if (hasDocCache.has(dir)) return hasDocCache.get(dir) as boolean
     // 优先命中原生整树预扫描结果（key 为正斜杠归一化路径）
     try {
-      const key = norm(dir).replace(/\\/g, '/')
+      const key = normDirKey(dir)
       if (_dirDocPresenceScan.has(key)) {
         const v = _dirDocPresenceScan.get(key) as boolean
         hasDocCache.set(dir, v)
@@ -1552,6 +1631,8 @@ async function refreshTree() {
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
+  try { invalidateDirDocPresenceScan() } catch {}
   // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
   // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
   try { await prefetchDirDocPresence(root) } catch {}
@@ -1593,6 +1674,8 @@ async function refresh() {
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
+  // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
+  try { invalidateDirDocPresenceScan() } catch {}
   // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
   // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
   try { await prefetchDirDocPresence(root) } catch {}

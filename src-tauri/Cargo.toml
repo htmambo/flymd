@@ -34,6 +34,9 @@ trash = "3"
 futures-util = "0.3"
 # 跨平台文件锁（POSIX flock / Windows LockFileEx）。PR-2 库私有化 v2 基础设施。
 fs2 = "0.4"
+# 迭代式目录遍历（scan_dirs_doc_presence 用）：内置 follow_links(false) 防 symlink 循环，
+# 迭代式无栈溢出风险。已是传递依赖，显式声明便于复用。
+walkdir = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

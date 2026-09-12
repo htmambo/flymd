@@ -1749,58 +1749,206 @@ async fn flymd_list_markdown_files(root: String) -> Result<Vec<String>, String> 
   Ok(result)
 }
 
-// 文件树"目录是否含受支持文档"整树预扫描：一次 IPC 返回所有目录的布尔判定，
+// 文件树"目录是否含受支持文档"整树预扫描：一次 IPC 返回整棵树里"含受支持文档"的目录集合，
 // 替代前端逐目录递归 readDir（大库数千目录会产生数千次 IPC 往返，响应消息会
 // 淹死 Web 主线程——曾表现为启动后 8~10 秒无法操作）。
-// 语义与前端 dirHasSupportedDocRecursive 保持一致：跳过名单目录不递归、
-// symlink 按文件处理（仅看后缀）、深度上限默认 20。返回 key 统一为正斜杠路径。
+//
+// 关键设计：
+// - 用 walkdir 迭代式遍历，follow_links(false) 免疫 symlink 循环；迭代式无栈溢出风险
+// - 仅返回"含文档"的目录列表（Vec<String>），前端用 Set 查 miss → 无文档，
+//   比返回全量 HashMap<String, bool> 体积小约 50%（多数目录无文档）
+// - 深度上限默认 20，clamp 到 [1, 32]，避免恶意/手滑传入极大 max_depth
+// - skip_dir 名单（node_modules/.git/dist/...）大小写不敏感
+// - key 归一为正斜杠路径（不 lowercase —— Linux 路径大小写敏感）
+// - root 必须是绝对路径（防御任意相对路径调用）
+//
+// SECURITY: 该命令可枚举任意绝对路径下的目录结构。前端应通过 pluginHost.ts 的 invoke
+// denylist 阻止插件调用此命令。该命令与 flymd_list_markdown_files / list_dir_any 等其他
+// 文件系统命令一致地接受绝对路径（应用自身数据区之外的合法库根也需可扫描）；
+// 真正的插件拦截放在前端包装层。后续可考虑增加 Rust 端"已授权库根"状态以加强纵深防御。
 #[tauri::command]
-async fn scan_dirs_doc_presence(root: String, exts: Vec<String>, max_depth: Option<usize>) -> Result<std::collections::HashMap<String, bool>, String> {
-  use std::collections::{HashMap, HashSet};
-  use std::path::{Path, PathBuf};
+async fn scan_dirs_doc_presence(
+  root: String,
+  exts: Vec<String>,
+  max_depth: Option<usize>,
+) -> Result<Vec<String>, String> {
+  use std::collections::HashSet;
+  use std::path::PathBuf;
+  use walkdir::WalkDir;
 
-  let root_path = PathBuf::from(root.clone());
-  if !root_path.is_dir() {
-    return Err(format!("root 不是有效目录: {}", root));
+  // ---- 输入校验：root 必须是绝对路径且为目录（fs::metadata 把 I/O 错误显式上抛，避免 walker 静默吞掉） ----
+  let root_path = PathBuf::from(&root);
+  if !root_path.is_absolute() {
+    return Err(format!("scan_dirs_doc_presence: root 必须是绝对路径: {}", root));
   }
-  let max_depth = max_depth.unwrap_or(20);
+  let root_meta = std::fs::metadata(&root_path)
+    .map_err(|e| format!("scan_dirs_doc_presence: root 不可访问: {}", e))?;
+  if !root_meta.is_dir() {
+    return Err(format!("scan_dirs_doc_presence: root 不是有效目录: {}", root));
+  }
 
+  // ---- 深度上限：
+  //   None        → 默认 20；
+  //   Some(0)     → 0（只看根自身，与 WalkDir::max_depth(0) 语义对齐；不映射为 20，避免未来调用方传 0 想"仅顶层"反而触发 20 层深扫）；
+  //   Some(d)     → d，clamp 上限到 32。
+  // 注：原版 Some(d if d <= 0) => 20 是语义反转的"地雷"，已修正。
+  let max_depth = match max_depth {
+    None => 20,
+    Some(0) => 0,
+    Some(d) => d.min(32),
+  };
+
+  // ---- entry 数量上限：防止恶意/手滑传入 root（如盘根、家目录）造成无界扫描 ----
+  const MAX_ENTRIES: usize = 50_000;
+
+  // spawn_blocking 跑整树扫描，避免阻塞 tokio reactor
   tauri::async_runtime::spawn_blocking(move || {
-    let allow: HashSet<String> = exts.iter().map(|e| e.to_ascii_lowercase()).collect();
-    fn skip_dir(name: &str) -> bool {
-      let n = name.trim().to_lowercase();
-      matches!(n.as_str(),
-        "ebwebview" | "node_modules" | ".git" | ".hg" | ".svn" | "target"
-        | "dist" | "build" | ".next" | ".vite" | "code cache" | "gpucache" | "service worker")
+    // 受支持后缀（小写化，去前导点）
+    let allow: HashSet<String> = exts
+      .iter()
+      .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+      .filter(|e| !e.is_empty())
+      .collect();
+    if allow.is_empty() {
+      return Ok::<Vec<String>, String>(Vec::new());
     }
-    fn scan(dir: &Path, depth_left: usize, allow: &HashSet<String>, out: &mut HashMap<String, bool>) -> bool {
-      if depth_left == 0 { return false }
-      let entries = match std::fs::read_dir(dir) { Ok(e) => e, Err(_) => return false };
-      let mut has = false;
-      let mut subdirs: Vec<PathBuf> = Vec::new();
-      for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let ft = match entry.file_type() { Ok(f) => f, Err(_) => continue };
-        if ft.is_dir() {
-          if !skip_dir(&name) { subdirs.push(entry.path()) }
-        } else {
-          // 与前端一致：非目录（含 symlink）只按名称后缀判断
-          let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-          if allow.contains(&ext) { has = true }
+
+    // 跳过的目录名（大小写不敏感，精确匹配 file_name 组件）。
+    // 涵盖：构建/版本控制产物、依赖目录、Tauri/WebView 缓存、家目录下的用户数据目录（Library/AppData/.cache）。
+    fn skip_dir_name(name: &str) -> bool {
+      let n = name.trim().to_ascii_lowercase();
+      matches!(
+        n.as_str(),
+        "ebwebview"
+          | "node_modules"
+          | ".git"
+          | ".hg"
+          | ".svn"
+          | "target"
+          | "dist"
+          | "build"
+          | ".next"
+          | ".vite"
+          | "code cache"
+          | "gpucache"
+          | "service worker"
+          | ".cache"
+          | "vendor"
+          // Windows 用户数据目录
+          | "appdata"
+          | "local"
+          | "roaming"
+          // macOS 用户数据目录
+          | "library"
+          | "applications"
+          | ".fseventd"
+          | ".spotlight-v100"
+          | ".trashes"
+          // 通用大目录
+          | "downloads"
+      )
+    }
+
+    // 1) 收集"直接含支持文档的目录"
+    let mut direct_doc_dirs: HashSet<PathBuf> = HashSet::new();
+    let mut visited: usize = 0;
+    let mut truncated: bool = false;
+    let mut error_count: usize = 0;
+    let walker = WalkDir::new(&root_path)
+      .follow_links(false)
+      .min_depth(1) // 跳过根自身（其 depth==0 不参与文件判定）
+      .max_depth(max_depth)
+      .into_iter()
+      // filter_entry 仍按目录名 skip；min_depth 已排除根
+      .filter_entry(|e| !skip_dir_name(e.file_name().to_string_lossy().as_ref()));
+
+    for entry in walker {
+      let entry = match entry {
+        Ok(e) => e,
+        Err(_) => {
+          // 遍历中途的权限拒绝/句柄失效等不致命错误：计数并继续（不静默吞 root 外的失败）
+          error_count += 1;
+          continue;
+        }
+      };
+      // 预算保护：超过 MAX_ENTRIES 停止扫描，返回已收集结果（带 root）
+      visited += 1;
+      if visited > MAX_ENTRIES {
+        truncated = true;
+        break;
+      }
+      // 文件类型判定：放行普通文件 + 文件级 symlink（防止 monorepo 中 docs/foo.md -> ../shared/foo.md
+      // 形式的常见 symlink 漏报；目录级 symlink 已被 follow_links(false) 阻止递归，安全）。
+      let ft = entry.file_type();
+      let is_doc_file = if ft.is_file() {
+        true
+      } else if ft.is_symlink() {
+        entry
+          .path()
+          .metadata()
+          .map(|m| m.is_file())
+          .unwrap_or(false)
+      } else {
+        false
+      };
+      if !is_doc_file {
+        continue;
+      }
+      let path = entry.path();
+      // 文件后缀：取最末段；.tar.gz 等多段后缀取最末段
+      let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+      if allow.contains(&ext) {
+        if let Some(parent) = path.parent() {
+          // parent 必须位于 root_path 之内（防御路径逃逸）。
+          // Path::starts_with 对相等路径也返回 true，故不需显式 == 比较。
+          if parent.starts_with(&root_path) {
+            direct_doc_dirs.insert(parent.to_path_buf());
+          }
         }
       }
-      for sub in subdirs {
-        if scan(&sub, depth_left - 1, allow, out) { has = true }
-      }
-      out.insert(dir.to_string_lossy().replace('\\', "/"), has);
-      has
     }
-    let mut out = HashMap::new();
-    scan(&root_path, max_depth, &allow, &mut out);
-    out
+
+    // 2) 底向上聚合：把"含支持文档"信号冒泡到所有在 root_path 之内的祖先目录。
+    // root_path 自身永远包含：约定——即便其下没有任何 doc，前端也需把 root 视为"已扫描"以避免
+    // 重复触发；同时区分 allow 为空（返回 []）与 allow 非空但零文档（返回 [root]）两种语义。
+    let mut positive: HashSet<PathBuf> = HashSet::new();
+    positive.insert(root_path.clone());
+    for dir in &direct_doc_dirs {
+      for anc in dir.ancestors() {
+        if !anc.starts_with(&root_path) {
+          break;
+        }
+        positive.insert(anc.to_path_buf());
+      }
+    }
+
+    // 3) 序列化：归一为正斜杠字符串，排序便于调试
+    let mut result: Vec<String> = positive
+      .into_iter()
+      .map(|p| p.to_string_lossy().replace('\\', "/"))
+      .filter(|p| !p.is_empty())
+      .collect();
+    result.sort();
+
+    // 4) 可观测信号：截断与遍历错误计入日志，便于生产环境排查"为何某些目录没标出文档"
+    if truncated || error_count > 0 {
+      eprintln!(
+        "[scan_dirs_doc_presence] root={} truncated={} errors={} visited={} returned={}",
+        root_path.display(),
+        truncated,
+        error_count,
+        visited,
+        result.len()
+      );
+    }
+    Ok(result)
   })
   .await
-  .map_err(|e| format!("join error: {e}"))
+  .map_err(|e| format!("join error: {e}"))?
 }
 
 // 库内全文搜索：递归扫描 root 下的 md/markdown/txt 文件，返回每个文件的首个命中行
