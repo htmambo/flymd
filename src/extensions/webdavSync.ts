@@ -2138,6 +2138,25 @@ async function getSyncBlockReason(): Promise<string | null> {
 
 export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; downloaded: number; skipped?: boolean } | null> {
   try {
+    // 启动同步：若此时已有未保存内容（编辑器脏 / 标签系统脏），跳过本次同步。
+    // 原因：启动时脏内容很可能来自上次未正常退出的本地修改，若无脑覆盖到远端会丢工作。
+    // 跳过策略（用户选择方案 A）：仅跳过本次启动同步，状态栏提示用户稍后手动同步。
+    // 不影响 manual / shutdown 路径（这些路径用户主动触发）。
+    if (reason === 'startup') {
+      const isDirtyFn = (window as any).flymdIsDirty as (() => boolean) | undefined
+      const hasUnsavedTabsFn = (window as any).flymdHasUnsavedTabs as (() => boolean) | undefined
+      const dirty = (() => { try { return !!(isDirtyFn && isDirtyFn()) } catch { return false } })()
+      const hasUnsavedTabs = (() => { try { return !!(hasUnsavedTabsFn && hasUnsavedTabsFn()) } catch { return false } })()
+      if (dirty || hasUnsavedTabs) {
+        const msg = '存在未保存内容，跳过本次启动同步（请手动同步）'
+        await syncLog('[skip] ' + msg)
+        console.log('[WebDAV Sync]', msg)
+        updateStatus(msg)
+        clearStatus(3500)
+        return { uploaded: 0, downloaded: 0, skipped: true }
+      }
+    }
+
     const blockedReason = await getSyncBlockReason()
     if (blockedReason) {
       const msg = blockedReason + '，已跳过同步'
