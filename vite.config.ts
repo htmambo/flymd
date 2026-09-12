@@ -53,9 +53,11 @@ export default defineConfig(({ mode }) => ({
     cssCodeSplit: true, // CSS 代码分割
     cssMinify: true, // CSS 压缩
     reportCompressedSize: false, // 禁用 gzip 大小报告，加快构建
-    // mermaid (~6.6MB) 是按设计懒加载的单一用途 chunk，桌面应用本地磁盘加载，
-    // 不存在网络传输开销，体积警告无意义，阈值提到 7MB 让警告只在异常膨胀时出现
-    chunkSizeWarningLimit: 7000,
+    // 警告阈值恢复到默认附近（1000 KB）。原 commit 3f0bf6f 把阈值提到 7000 是为了静默
+    // mermaid 懒加载 chunk 的体积警告——mermaid (~6.6MB) 按设计懒加载，桌面端从本地磁盘加载
+    // 无网络开销，但体积异常应通过拆分或接受解决，而非关闭警告。后续若 CI 撞 mermaid 阈值，
+    // 单独 PR 处理 mermaid 拆分或评估是否值得保留为单一 chunk。
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         // 优化的代码分割策略
