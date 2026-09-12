@@ -30,6 +30,7 @@ import type { PluginContextMenuItem } from '../ui/contextMenus'
 import type { NotificationType } from '../core/uiNotifications'
 import { t } from '../i18n'
 import { APP_VERSION } from '../core/appInfo'
+import { logInfo } from '../core/logger'
 
 // 选择变化监听类型（与 pluginHost 中保持一致）
 type PluginSelectionHandler = (sel: {
@@ -450,7 +451,6 @@ export function initPluginRuntime(
         const cost = Math.round(performance.now() - t0)
         if (cost >= 100) {
           try {
-            const { logInfo } = await import('../core/logger')
             logInfo('[启动耗时] 插件激活', { 插件: p.id, 耗时ms: cost })
           } catch {}
         }

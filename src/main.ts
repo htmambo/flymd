@@ -8988,41 +8988,48 @@ function bindEvents() {
   try {
     try { logInfo('打点:JS启动') } catch {}
 
-    // 启动期长任务监控（前 30s）：凡是主线程连续占用 ≥300ms 的任务都记录到日志，
-    // 用于定位"窗口出来了但操作要等几秒才响应"的元凶
-    try {
-      const PO: any = (window as any).PerformanceObserver
-      if (PO) {
-        const obs = new PO((list: any) => {
-          try {
-            for (const e of list.getEntries()) {
-              if (e.duration >= 300) {
-                logInfo('[启动长任务]', { 开始ms: Math.round(e.startTime), 耗时ms: Math.round(e.duration), 名称: String(e.name || '') })
+    // 性能探针门控：仅在 dev 构建 / 显式开启 __FLYMD_PERF_PROBE__ 时启动。
+    // 生产构建不开：避免 observer/setInterval/PerformanceObserver 对首屏主线程的额外开销。
+    const PERF_PROBES_ENABLED = !!(import.meta as any)?.env?.DEV
+      || (window as any).__FLYMD_PERF_PROBE__ === 1
+
+    if (PERF_PROBES_ENABLED) {
+      // 启动期长任务监控（前 30s）：凡是主线程连续占用 ≥300ms 的任务都记录到日志，
+      // 用于定位"窗口出来了但操作要等几秒才响应"的元凶
+      try {
+        const PO: any = (window as any).PerformanceObserver
+        if (PO) {
+          const obs = new PO((list: any) => {
+            try {
+              for (const e of list.getEntries()) {
+                if (e.duration >= 300) {
+                  logInfo('[启动长任务]', { 开始ms: Math.round(e.startTime), 耗时ms: Math.round(e.duration), 名称: String(e.name || '') })
+                }
               }
+            } catch {}
+          })
+          obs.observe({ entryTypes: ['longtask'] })
+          setTimeout(() => { try { obs.disconnect() } catch {} }, 30000)
+        }
+      } catch {}
+
+      // 主线程卡顿探针（WebKitGTK 不支持 longtask API，改用定时器漂移检测：
+      // 500ms 定时器若晚到 ≥600ms，说明主线程被同步任务占住了）
+      try {
+        let _lagLast = performance.now()
+        const _lagIv = setInterval(() => {
+          try {
+            const now = performance.now()
+            const drift = now - _lagLast - 500
+            _lagLast = now
+            if (drift >= 600) {
+              logInfo('[主线程卡顿]', { 卡顿ms: Math.round(drift), 发生时刻: new Date().toISOString(), 启动后ms: Math.round(now) })
             }
           } catch {}
-        })
-        obs.observe({ entryTypes: ['longtask'] })
-        setTimeout(() => { try { obs.disconnect() } catch {} }, 30000)
-      }
-    } catch {}
-
-    // 主线程卡顿探针（WebKitGTK 不支持 longtask API，改用定时器漂移检测：
-    // 500ms 定时器若晚到 ≥600ms，说明主线程被同步任务占住了）
-    try {
-      let _lagLast = performance.now()
-      const _lagIv = setInterval(() => {
-        try {
-          const now = performance.now()
-          const drift = now - _lagLast - 500
-          _lagLast = now
-          if (drift >= 600) {
-            logInfo('[主线程卡顿]', { 卡顿ms: Math.round(drift), 发生时刻: new Date().toISOString(), 启动后ms: Math.round(now) })
-          }
-        } catch {}
-      }, 500)
-      setTimeout(() => { try { clearInterval(_lagIv) } catch {} }, 60000)
-    } catch {}
+        }, 500)
+        setTimeout(() => { try { clearInterval(_lagIv) } catch {} }, 60000)
+      } catch {}
+    }
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()

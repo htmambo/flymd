@@ -11,6 +11,7 @@ import type { Store } from '@tauri-apps/plugin-store'
 import type { InstallableItem } from './market'
 import { PLUGINS_DIR } from '../core/configBackup'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from '../core/libraryConfig'
+import { logInfo } from '../core/logger'
 
 // 插件运行时基础：类型 + 目录保证 + 仓库输入解析 + 版本比较 + HTTP 工具 + 更新检测
 // 尽量保持无副作用，方便 main.ts 以及其他扩展模块复用
@@ -264,7 +265,6 @@ export async function fetchTextSmart(url: string): Promise<string> {
     const cost = Date.now() - _t0
     if (cost >= 1000) {
       try {
-        const { logInfo } = await import('../core/logger')
         logInfo('[诊断] fetchTextSmart 慢请求', { url: String(url).slice(0, 120), 耗时ms: cost })
       } catch {}
     }

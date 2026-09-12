@@ -1,6 +1,8 @@
 // 扩展市场相关逻辑（索引获取、排序、缓存）
 // 与宿主解耦：通过依赖注入访问 Store 和 HTTP
 
+import { logInfo } from '../core/logger'
+
 export type InstallableItem = {
   id: string
   name: string
@@ -137,7 +139,6 @@ export function createPluginMarket(deps: PluginMarketDeps) {
           const _cost = Date.now() - _t0
           if (_cost >= 1000) {
             try {
-              const { logInfo } = await import('../core/logger')
               logInfo('[启动耗时] 市场索引源', { 源: u, 耗时ms: _cost, 成功: !!t })
             } catch {}
           }
@@ -148,7 +149,6 @@ export function createPluginMarket(deps: PluginMarketDeps) {
           const _cost = Date.now() - _t0
           if (_cost >= 1000) {
             try {
-              const { logInfo } = await import('../core/logger')
               logInfo('[启动耗时] 市场索引源失败', { 源: u, 耗时ms: _cost })
             } catch {}
           }
