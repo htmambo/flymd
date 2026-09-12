@@ -86,6 +86,74 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { appLocalDataDir } from '@tauri-apps/api/path'
 import { getHttpClient } from './runtime'
 import type { InstalledPlugin } from './runtime'
+
+// ---- 插件 invoke denylist ----
+// 插件通过 ctx.invoke(cmd, args) 调用 Tauri 命令。原生 invoke 是 raw 暴露，等价于让插件以应用
+// 权限执行任意命令——包括读/写/删除任意绝对路径、扫描整树、删除上传图片、git/http/office 等。
+// 这里在 JS 层封装一层 denylist，阻止插件调用下列"内部/敏感"命令。真正的纵深防御仍应在
+// Rust 端加 scope 校验（参见 main.rs scan_dirs_doc_presence 顶部的 SECURITY 注释）。
+//
+// 列表按"被锁住的攻击面"分组（fs / upload / git / http / office / ai / lock / search / list）。
+// 注：denylist 是"黑名单"——任何不在表内的新命令都将默认放行。新增内部命令时请同步更新本表。
+const PLUGIN_INVOKE_DENYLIST: ReadonlySet<string> = new Set<string>([
+  // 文件系统：任意路径读/写/删/枚举
+  'scan_dirs_doc_presence',
+  'read_text_file_any',
+  'stat_any',
+  'write_text_file_any',
+  'list_dir_any',
+  'force_remove_path',
+  'move_to_trash',
+  'write_file_atomic',
+  'try_lock_file',
+  'unlock_file',
+  'read_file_locked',
+  'write_file_locked',
+  // 上传图床管理
+  'flymd_record_uploaded_image',
+  'flymd_list_uploaded_images',
+  'flymd_delete_uploaded_image',
+  'flymd_piclist_upload',
+  // 列表/搜索
+  'flymd_list_markdown_files',
+  'flymd_search_files_content',
+  // 办公文档转换
+  'office_to_markdown',
+  'office_supported',
+  // Git
+  'git_status',
+  'git_diff',
+  'git_log',
+  'git_show',
+  'git_commit',
+  'git_pull',
+  'git_push',
+  'git_fetch',
+  'git_clone',
+  'git_init',
+  'git_add',
+  'git_reset',
+  'git_checkout',
+  'git_branch',
+  // 内部 HTTP
+  'http_request',
+  'http_upload',
+  'http_download',
+  // AI
+  'ai_novel_api',
+])
+
+function pluginInvoke(cmd: string, args?: Record<string, unknown>): Promise<any> {
+  if (typeof cmd !== 'string' || !cmd) {
+    return Promise.reject(new Error('plugin invoke: 命令名必须为非空字符串'))
+  }
+  if (PLUGIN_INVOKE_DENYLIST.has(cmd)) {
+    const err = new Error(`plugin cannot invoke internal command: ${cmd}`)
+    console.warn('[PluginSecurity] denied plugin invoke:', cmd)
+    return Promise.reject(err)
+  }
+  return invoke(cmd, args)
+}
 import {
   watchPathsAbs,
   type PluginWatchEvent,
@@ -957,7 +1025,7 @@ export function createPluginHost(
       http,
       htmlToMarkdown: (html: string, opts?: { baseUrl?: string }) =>
         htmlToMarkdownForPlugin(html, opts),
-      invoke,
+      invoke: pluginInvoke,
       openAiWindow,
       getAssetUrl: (relPath: string) =>
         toPluginAssetUrl(pluginAssetsAbs, relPath),
@@ -2549,7 +2617,7 @@ export function createPluginHost(
       const http = await getHttpClient()
       const ctx = {
         http,
-        invoke,
+        invoke: pluginInvoke,
         asp: {
           register: (spec: AdditionalSuffixRegisterSpec) => {
             try {
