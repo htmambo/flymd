@@ -677,54 +677,8 @@ const _dirDocPresenceScan = new Map<string, boolean>()
 // 预扫描 epoch：每次 prefetch 或 invalidate 自增；返回时若已被新轮覆盖则丢弃旧结果（防陈旧）。
 let _dirDocPresenceScanEpoch = 0
 
-// 是否为大小写不敏感的文件系统（Windows、macOS 默认 APFS、典型 CI 文件系统）：
-// 在这些平台上 "Library" 与 "library" 指同一目录，但 string 层面是两个 key，
-// 因此缓存的 key 也需归一化以避免重复条目与查询 miss。Linux ext4/btrfs 区分大小写，
-// 不归一化以免误合并不同名目录。
-//
-// 注：这是 WebView 字符串推断 Rust 进程所在文件系统的启发式，存在两类残留风险：
-// 1. macOS 上以大小写敏感 APFS 格式化的卷（非默认但存在）会被判为不敏感 → 假阳性合并；
-// 2. Linux 上挂载的 NTFS/exFAT 数据盘 → 回到 P1-3 原始症状（重复条目 + invalidate 用不同大小写写法时漏删）。
-// 后续可由后端用 cfg!(target_os) 权威返回当前进程的"默认 FS"取代之。
-let _ciFsCache: boolean | null = null
-function isCaseInsensitiveFS(): boolean {
-  if (_ciFsCache !== null) return _ciFsCache
-  try {
-    const p = (typeof navigator !== 'undefined' && (navigator as any)?.platform) || ''
-    if (/win/i.test(p)) return _ciFsCache = true
-    if (/mac/i.test(p) || /darwin/i.test(p)) return _ciFsCache = true
-    // Tauri 运行时 UA 兜底：WebView UA 含 "Mac" / "Windows" / "Linux" 任一关键字
-    const ua = (typeof navigator !== 'undefined' && (navigator as any)?.userAgent) || ''
-    if (/Windows/i.test(ua) || /Macintosh|Mac OS/i.test(ua)) return _ciFsCache = true
-  } catch {}
-  return _ciFsCache = false
-}
-
-// 统一缓存 key 归一：与 Rust 端 replace('\\', '/') 一致；额外去尾斜杠（防 prefix=key 不带斜杠、key 带斜杠时的边界漏配）；
-// 大小写不敏感平台上再 toLowerCase()，确保同一目录的两个不同写法命中同一缓存条目。
-//
-// 边界：
-// - 反斜杠 → 正斜杠（第一步必做，Rust Windows PathBuf::to_string_lossy 输出 '\\'）
-// - 驱动器根 "C:" / "C:/" → "c:"（保留尾冒号，避免与子目录碰撞）
-// - 单一 "/" / "//" → 空串，调用方应跳过缓存走递归路径（pathPrefixMatch 已对空串返回 false）
-// - 非空且不以 ':' 结尾 → 去掉尾随 '/'（防 prefix "C:/docs" 与 key "C:/docs/" 边界漏配）
-function normDirKey(dir: string): string {
-  let s = norm(dir).replace(/\\/g, '/')
-  if (s.length > 1 && !/:$/.test(s)) s = s.replace(/\/+$/, '')
-  // 空串 guard：避免 "//" / "/" 在去尾斜杠后变 ""，进入 pathPrefixMatch 时行为虽然已安全
-  // （!a || !b 返回 false），但显式保留原始形态以便上层做"缓存不可用"判断。
-  if (!s) return dir
-  return isCaseInsensitiveFS() ? s.toLowerCase() : s
-}
-
-// 路径段前缀匹配：仅当 a 与 b 相等，或 a 紧接在 b 的路径段分隔符之后时返回 true。
-// 防止 "C:/lib" 误匹配 "C:/library"（startsWith 的常见陷阱）。
-function pathPrefixMatch(a: string, b: string): boolean {
-  if (!a || !b) return false
-  if (a === b) return true
-  if (a.length > b.length) return a.startsWith(b) && (a.charCodeAt(b.length) === 47 /* '/' */)
-  return false
-}
+// 路径 key 归一与段级前缀匹配：抽到独立模块便于单测与复用。
+import { normDirKey, pathPrefixMatch } from './fileTreePathKey'
 
 // 失效入口：prefix 不传 → 全量清；传 → 仅清 prefix 前缀（用 pathPrefixMatch 防误命中兄弟目录）。
 // 即便当前没有在途扫描，自增 epoch 也是无副作用的（下次 prefetch 会用更大的 epoch 重新开始）。
