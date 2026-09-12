@@ -623,13 +623,10 @@ let _autoWysiwygAfterOpenSeq = 0
 let _suppressOpenSwitchConfirm = false
 // 批量打开期间置位，跳过 recent 推入（打开顺序不应反转库配置记录的最近使用顺序）。
 let _suppressRecentPush = false
-// 批量还原标签（启动/切库全量打开 recent）期间置位：跳过每个文件的完整预览渲染
-// 与"打开后后台切所见"定时器——非激活标签的渲染纯属浪费（激活时 restoreTabState 会
-// 重新渲染），N 个文件串行 N 次全管线渲染会把刚显示窗口的主线程占满（表现为
-// "窗口出来了但操作要卡一会"）。批量结束后由 openRecentSetAsTabs 统一补一次渲染。
-let _batchRestoringTabs = false
 // 批量还原期间是否有文件希望进入所见模式（默认所见/打开前所见）：
 // 批量中跳过逐文件的后台所见切换，批量结束后对最终激活文档补一次。
+// 注：批量还原的"跳过逐文件预览渲染/刷面板"语义已迁移为 openFile2(p, { quiet: true })
+// 显式参数（替代此前的全局 _batchRestoringTabs 标志），避免隐式副作用。
 let _batchOpenWantsWysiwyg = false
 // 启动早期（插件运行时/ASP 规则尚未注册）被跳过的 Office 文档路径，
 // 待 Word 预览扩展注册完成后由 ric 初始化块补打开。防止二进制 docx 被当纯文本渲染。
@@ -3987,7 +3984,7 @@ async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boole
 }
 
 // 全新的文件打开实现（避免历史遗留的路径处理问题）
-async function openFile2(preset?: unknown) {
+async function openFile2(preset?: unknown, opts?: { quiet?: boolean }) {
   try {
     // 如果是事件对象（点击/键盘），忽略它，相当于未传入预设路径
     if (preset && typeof preset === 'object') {
@@ -4201,17 +4198,18 @@ async function openFile2(preset?: unknown) {
 
     // 打开后视图策略：若最终会进入所见，则中间态强制用预览（更接近所见，且不会露出 textarea）
     if (shouldEnableWysiwyg && !officePreviewTab) {
-      if (_batchRestoringTabs) _batchOpenWantsWysiwyg = true
+      // quiet（批量还原）期间只做标记，等批量结束统一为最终激活标签切入所见
+      if (opts?.quiet) _batchOpenWantsWysiwyg = true
       mode = 'preview'
       try { preview.classList.remove('hidden') } catch {}
-      // 批量还原期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
-      if (!_batchRestoringTabs) {
+      // quiet 期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
+      if (!opts?.quiet) {
         try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
       }
       try { titlebarStatusApi?.syncToggleButton() } catch {}
     } else {
-      // 打开后默认进入预览/源码（尊重“默认源码模式”设置；Office 预览副本强制阅读模式）
-      await switchToPreviewAfterOpen(officePreviewTab)
+      // 打开后默认进入预览/源码（尊重”默认源码模式”设置；Office 预览副本强制阅读模式）
+      await switchToPreviewAfterOpen(officePreviewTab, opts)
     }
     // Office 预览副本锁定阅读模式：若全局分屏处于开启态，关闭（源码栏会露出临时副本）
     if (officePreviewTab) {
@@ -4222,8 +4220,8 @@ async function openFile2(preset?: unknown) {
     await restoreDocPosIfAny(selectedPath)
 
     // 默认所见/上次所见：后台无感切入（准备好再一次性切换）
-    // 批量还原期间跳过：逐文件定时器只会相互取消，批量结束后对最终激活文档统一补一次
-    if (!_batchRestoringTabs && shouldEnableWysiwyg && !officePreviewTab && !wysiwyg) {
+    // quiet 期间跳过：逐文件定时器只会相互取消，批量结束后对最终激活文档统一补一次
+    if (!opts?.quiet && shouldEnableWysiwyg && !officePreviewTab && !wysiwyg) {
       setTimeout(() => {
         void (async () => {
           try {
@@ -4238,13 +4236,13 @@ async function openFile2(preset?: unknown) {
       }, 0)
     }
 
-    // 批量还原打开（启动/切库全量打开记录文件）期间不推入 recent：
+    // quiet（批量还原）打开期间不推入 recent：
     // 保持库配置里记录的"最近使用顺序"不被打开顺序反转
     if (!_suppressRecentPush) {
       await pushRecent(store, currentFilePath)
     }
-    // 批量还原期间跳过逐文件刷面板，批量结束后统一刷一次
-    if (!_batchRestoringTabs) {
+    // quiet 期间跳过逐文件刷面板，批量结束后统一刷一次
+    if (!opts?.quiet) {
       await renderRecentPanel(false)
     }
     logInfo('文件打开成功', { path: selectedPath, size: content.length })
@@ -4608,7 +4606,7 @@ async function renderRecentPanel(toggle = true) {
 
 // 打开文件后强制切换为预览模式
 // forcePreview：Office 转换预览副本等只读标签——绕过"默认源码模式"设置，强制阅读模式
-async function switchToPreviewAfterOpen(forcePreview = false) {
+async function switchToPreviewAfterOpen(forcePreview = false, opts?: { quiet?: boolean }) {
   try {
     // 所见模式会在外部显式关闭/重新开启，这里只负责普通预览
     if (wysiwyg) return
@@ -4630,8 +4628,8 @@ async function switchToPreviewAfterOpen(forcePreview = false) {
     }
 
     mode = 'preview'
-    // 批量还原期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
-    if (!_batchRestoringTabs) {
+    // quiet 期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
+    if (!opts?.quiet) {
       try { await renderPreview() } catch (e) { try { showError('预览渲染失败', e) } catch {} }
     }
     try { preview.classList.remove('hidden') } catch {}
@@ -4807,22 +4805,20 @@ async function pickRecentSetToOpen(): Promise<{ paths: string[]; active: string 
 // flymdOpenFile 挂钩自动"切换到已有标签"去重），最后激活 active 对应的标签
 // （不改变标签顺序）。批量打开期间屏蔽脏文档切换询问，且不推入 recent
 // （避免打开顺序反转库配置记录的"最近使用顺序"）。
-// 批量期间（_batchRestoringTabs）跳过每个文件的完整预览渲染/后台所见切换/面板刷新：
-// 这些只对最终激活标签有意义，逐文件执行会把刚显示窗口的主线程占满
+// 批量期间通过 quiet: true 参数让 openFile2 跳过每个文件的完整预览渲染/后台所见切换/
+// 面板刷新：这些只对最终激活标签有意义，逐文件执行会把刚显示窗口的主线程占满
 // （"窗口出来了但操作要卡一会"），统一在批量结束后补一次。
 async function openRecentSetAsTabs(paths: string[], active: string | null): Promise<void> {
   _suppressOpenSwitchConfirm = true
   _suppressRecentPush = true
-  _batchRestoringTabs = true
   _batchOpenWantsWysiwyg = false
   try {
     for (const p of paths) {
-      try { await openFile2(p) } catch (e) { console.warn('打开最近文件失败:', p, e) }
+      try { await openFile2(p, { quiet: true }) } catch (e) { console.warn('打开最近文件失败:', p, e) }
     }
   } finally {
     _suppressOpenSwitchConfirm = false
     _suppressRecentPush = false
-    _batchRestoringTabs = false
   }
   if (active) {
     try { const m = await import('./tabs/integration'); await m.activateTabByPathIfOpen(active) } catch {}
