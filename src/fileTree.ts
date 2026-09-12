@@ -702,11 +702,18 @@ function isCaseInsensitiveFS(): boolean {
 
 // 统一缓存 key 归一：与 Rust 端 replace('\\', '/') 一致；额外去尾斜杠（防 prefix=key 不带斜杠、key 带斜杠时的边界漏配）；
 // 大小写不敏感平台上再 toLowerCase()，确保同一目录的两个不同写法命中同一缓存条目。
+//
+// 边界：
+// - 反斜杠 → 正斜杠（第一步必做，Rust Windows PathBuf::to_string_lossy 输出 '\\'）
+// - 驱动器根 "C:" / "C:/" → "c:"（保留尾冒号，避免与子目录碰撞）
+// - 单一 "/" / "//" → 空串，调用方应跳过缓存走递归路径（pathPrefixMatch 已对空串返回 false）
+// - 非空且不以 ':' 结尾 → 去掉尾随 '/'（防 prefix "C:/docs" 与 key "C:/docs/" 边界漏配）
 function normDirKey(dir: string): string {
   let s = norm(dir).replace(/\\/g, '/')
-  // 去掉尾斜杠（保留驱动器根 "c:" / "c:/"；其他一律 trim 末尾 '/'）。
-  // 驱动器根形态由"非空 & 不以 ':' 结尾"判断：标准 Windows 根是 "C:" / "C:/"。
   if (s.length > 1 && !/:$/.test(s)) s = s.replace(/\/+$/, '')
+  // 空串 guard：避免 "//" / "/" 在去尾斜杠后变 ""，进入 pathPrefixMatch 时行为虽然已安全
+  // （!a || !b 返回 false），但显式保留原始形态以便上层做"缓存不可用"判断。
+  if (!s) return dir
   return isCaseInsensitiveFS() ? s.toLowerCase() : s
 }
 

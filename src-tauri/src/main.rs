@@ -1814,11 +1814,14 @@ async fn scan_dirs_doc_presence(
     }
 
     // 跳过的目录名（大小写不敏感，精确匹配 file_name 组件）。
-    // 涵盖：构建/版本控制产物、依赖目录、Tauri/WebView 缓存、家目录下的用户数据目录（Library/AppData/.cache）。
+    // 涵盖：构建/版本控制产物、依赖目录、Tauri/WebView 缓存、跨平台系统目录（macOS/Windows/Linux）。
+    // 注意：拼写与真实系统目录严格一致（如 `.fseventsd` 不是 `.fseventd`），匹配先 to_ascii_lowercase
+    // 再做字符串等比，确保变体（Library / library / LIBRARY）均命中。
     fn skip_dir_name(name: &str) -> bool {
       let n = name.trim().to_ascii_lowercase();
       matches!(
         n.as_str(),
+        // 构建/版本控制
         "ebwebview"
           | "node_modules"
           | ".git"
@@ -1834,16 +1837,22 @@ async fn scan_dirs_doc_presence(
           | "service worker"
           | ".cache"
           | "vendor"
-          // Windows 用户数据目录
+          // Windows 用户数据目录与回收站
           | "appdata"
           | "local"
           | "roaming"
-          // macOS 用户数据目录
+          | "$recycle.bin"
+          | "system volume information"
+          // macOS 用户数据与系统目录
           | "library"
           | "applications"
-          | ".fseventd"
+          | ".fseventsd"   // ← FSEvents daemon（真实系统目录）
           | ".spotlight-v100"
           | ".trashes"
+          | ".documentrevisions-v100"
+          | ".temporaryitems"
+          // Linux 卷根与临时
+          | "lost+found"
           // 通用大目录
           | "downloads"
       )
