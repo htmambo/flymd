@@ -93,8 +93,14 @@ fi
 
 # 安装前端依赖
 if [[ ! -d node_modules ]] || [[ "$CLEAN_BUILD" -eq 1 ]]; then
-  echo "==> Installing npm dependencies"
-  npm ci
+  echo "==> Installing frontend dependencies"
+  if [[ -f pnpm-lock.yaml ]] && command -v pnpm >/dev/null 2>&1; then
+    echo "    detected pnpm-lock.yaml, using pnpm"
+    pnpm install --frozen-lockfile
+  else
+    echo "    using npm"
+    npm ci
+  fi
 fi
 
 # Tauri 构建（生成 .deb + AppImage）

@@ -91,8 +91,14 @@ if [[ -n "$pkgbuild_version" && "$package_version" != "$pkgbuild_version" ]]; th
 fi
 
 if [[ "$NPM_CI_MODE" == "always" || ( "$NPM_CI_MODE" == "auto" && ! -d node_modules ) ]]; then
-  echo "==> Installing npm dependencies"
-  npm ci
+  echo "==> Installing frontend dependencies"
+  if [[ -f pnpm-lock.yaml ]] && command -v pnpm >/dev/null 2>&1; then
+    echo "    detected pnpm-lock.yaml, using pnpm"
+    pnpm install --frozen-lockfile
+  else
+    echo "    using npm"
+    npm ci
+  fi
 elif [[ "$NPM_CI_MODE" == "auto" ]]; then
   echo "==> Reusing existing node_modules (pass --npm-ci for a clean install)"
 fi

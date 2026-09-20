@@ -1,0 +1,9 @@
+# pnpm 11+ 把构建脚本白名单从 package.json 的 pnpm.onlyBuiltDependencies
+# 搬到了 pnpm-workspace.yaml 的 allowBuilds。
+# 这里列出的包允许执行 preinstall/install/postinstall。
+# - esbuild: 安装时下载/链接平台相关的二进制
+# - core-js: 注入 polyfill 时执行 postinstall
+# 若后续有其它包需要运行构建脚本，加进下方 map 即可。
+allowBuilds:
+  esbuild: true
+  core-js: true

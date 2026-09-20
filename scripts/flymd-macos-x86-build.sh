@@ -188,9 +188,15 @@ fi
 # ── 1. 安装依赖 ─────────────────────────────────────────────────────────────
 info "安装前端依赖…"
 if [ ! -d "node_modules" ]; then
-  npm ci
+  if [ -f pnpm-lock.yaml ] && command -v pnpm >/dev/null 2>&1; then
+    info "检测到 pnpm-lock.yaml，使用 pnpm"
+    pnpm install --frozen-lockfile
+  else
+    info "使用 npm ci"
+    npm ci
+  fi
 else
-  info "node_modules 已存在，跳过 npm ci"
+  info "node_modules 已存在，跳过安装"
 fi
 
 # 依赖 npm ci 已锁定的 @tauri-apps/cli（devDependencies），不再执行 npm install -D 以避免污染 package-lock.json
