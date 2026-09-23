@@ -717,6 +717,9 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
 .library .lib-node.selected .lib-ico-markdown { color: var(--accent); }
 .library .lib-file .lib-ico-pdf { color: #f4a261; }
 .library .lib-node.selected .lib-ico-pdf { color: #e53935; }
+/* 选中态文件名与图标同色高亮（覆盖 ui-enhance.css 的 fg/500，不能只高亮图标） */
+.library .lib-node.selected .lib-name { color: var(--accent); font-weight: 500; }
+.library .lib-node.selected:has(.lib-ico-pdf) .lib-name { color: #e53935; }
 .library .lib-dir { cursor: pointer; }
 .library .lib-file { cursor: pointer; }
 .library .lib-toggle {

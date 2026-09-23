@@ -650,6 +650,10 @@ async function doInitTabSystem(restoreSession: boolean): Promise<void> {
       try { saveTabSession() } catch {}
     } else if (event.type === 'tab-closed') {
       undoManager.removeTab(event.tabId)
+      // TabManager.closeTab 只发 tab-closed 不发 tab-switched（即使关闭的是当前标签、
+      // 内部已切到相邻标签或新建空白标签），需显式同步库侧栏高亮：
+      // 关闭当前文档 → 高亮跟到新激活文档；关闭最后一个文档 → 高亮清除
+      syncFileTreeSelectionToActiveTab()
       // 关闭标签时解除该标签对应文件的监听
       // 优先用 event.filePath(TabManager.closeTab 在 emit 前已抓取),避免监听端再查已移除的 tab
       try {
