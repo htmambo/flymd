@@ -41,6 +41,10 @@
   --accent-light: rgba(37, 99, 235, 0.1);
   --accent-dark: #60a5fa;  /* 深色模式用 */
 
+  /* 任务列表：已完成项的弱化透明度（阅读模式与所见模式共用，见
+     styles/preview.css 的 li.task-list-item 与 style.css 的 li[data-item-type="task"]） */
+  --task-done-opacity: 0.65;
+
   /* 圆角规范 */
   --radius-sm: 4px;
   --radius-md: 6px;

@@ -4,6 +4,11 @@
 // (官方方案是 Crepe 的 list-item-block 组件,本项目未引入)。
 // 外观由 style.css 里 li[data-item-type="task"]::before 的伪元素复选框补齐;
 // 本插件负责点击该复选框区域时翻转 checked 属性,由 gfm 序列化器自动写回 `- [ ]`/`- [x]`。
+//
+// ⚠ Milkdown/@milkdown/preset-gfm 升级回归点:
+// 本插件与 style.css 的复选框外观都依赖 toDOM 输出的 li[data-item-type="task"][data-checked]
+// 结构。升级后若点击复选框无响应或复选框消失,首先核对上述 DOM 结构是否变化。
+// 升级检查清单见 docs/Task/Active/2026-09-24-wysiwyg-html-source-edit-hardening.md 子任务 8。
 
 import { $prose } from '@milkdown/utils'
 import { Plugin, PluginKey } from '@milkdown/prose/state'

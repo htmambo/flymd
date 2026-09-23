@@ -611,9 +611,9 @@ body.dark-mode .codebox .code-copy.copy-fail {
   transform: rotate(-45deg);
   pointer-events: none;
 }
-/* 已完成项弱化显示，与阅读模式一致 */
+/* 已完成项弱化显示，与阅读模式一致（透明度共用 --task-done-opacity，见 styles/base.css） */
 .container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"] {
-  opacity: 0.65;
+  opacity: var(--task-done-opacity, 0.65);
 }
 .container.wysiwyg-v2 .ProseMirror li[data-item-type="task"][data-checked="true"] > p {
   text-decoration: line-through;

@@ -1790,6 +1790,24 @@ function scheduleWysiwygRender() {
 
 // YAML Front Matter 解析：仅检测文首形如
 
+// 预览消毒：默认仅开发环境开启（localStorage flymd:sanitizePreview 可覆盖，
+// 见 core/sanitize.ts），DOMPurify 按需动态加载并缓存。
+// KaTeX 占位符（data-math 属性）是普通 span，消毒后保留，后续仍由 KaTeX.render() 替换。
+let _previewSanitize: ((h: string) => string) | null = null
+async function sanitizePreviewHtml(html: string): Promise<string> {
+  try {
+    if (!shouldSanitizePreview()) return html
+    if (!_previewSanitize) {
+      const mod: any = await import('dompurify')
+      const DOMPurify = mod?.default || mod
+      _previewSanitize = (h: string) => DOMPurify.sanitize(h)
+    }
+    return _previewSanitize(html)
+  } catch {
+    return html
+  }
+}
+
 // 轻渲染：仅生成安全的 HTML，不执行 Mermaid/代码高亮等重块
 async function renderPreviewLight() {
   try { if ((currentFilePath || '').toLowerCase().endsWith('.pdf')) return } catch {}
@@ -1894,9 +1912,7 @@ async function renderPreviewLight() {
   try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
   raw = guardStrongBoundaryForCommonMark(raw)
   const html = stripStrongBoundaryGuard(md!.render(raw))
-  // 方案 A：占位符机制不需要 DOMPurify
-  // KaTeX 占位符（data-math 属性）是安全的，后续会用 KaTeX.render() 替换
-  const safe = html
+  const safe = await sanitizePreviewHtml(html)
   // 渲染 .md-math-* 占位符为 KaTeX
   try {
     const tempDiv = document.createElement('div')
@@ -3044,9 +3060,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   } catch {}
   try { if (DEBUG_RENDER) console.log('Markdown 渲染后的 HTML 片段:', html.substring(0, 500)) } catch {}
 
-  // 方案 A：占位符机制不需要 DOMPurify
-  // KaTeX 占位符（data-math 属性）是安全的，后续会用 KaTeX.render() 替换
-  const safe = html
+  const safe = await sanitizePreviewHtml(html)
   // WYSIWYG 防闪烁：使用离屏容器完成 Mermaid 替换后一次性提交
   try {
     preview.classList.add('rendering')

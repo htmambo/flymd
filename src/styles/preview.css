@@ -496,10 +496,10 @@
   transform: scale(1.05);
 }
 
-/* 已完成的任务列表项添加删除线 */
+/* 已完成的任务列表项添加删除线（透明度与所见模式共用 --task-done-opacity，见 base.css） */
 .preview-body li.task-list-item:has(input.task-list-item-checkbox:checked) {
   text-decoration: line-through;
-  opacity: 0.65;
+  opacity: var(--task-done-opacity, 0.65);
   transition: opacity 0.2s ease;
 }
 

@@ -19,7 +19,6 @@ import { editorViewOptionsCtx } from '@milkdown/core'
 type ReleaseFn = () => void
 
 let _lockCount = 0
-let _restoreEditable: (() => void) | null = null
 
 /**
  * 获取 editor 实例的引用。由 wysiwyg/v2/index.ts 在创建 editor 时调用注入。
@@ -51,6 +50,11 @@ async function setEditorEditable(editable: boolean): Promise<void> {
 /**
  * 申请一个编辑锁。返回 release 函数,必须配对调用。
  * 重入安全:Nested locks stack,全部 release 后才真正解锁。
+ *
+ * 注意:editable=false 的切换是异步的(fire-and-forget),本函数返回时
+ * 编辑器可能仍处于可编辑状态,存在一个短暂的击键竞态窗口。
+ * 需要先确定锁定生效再执行后续逻辑(如缓存文档位置)的调用方,
+ * 请使用 acquireEditLockAsync()。
  */
 export function acquireEditLock(): ReleaseFn {
   _lockCount += 1
@@ -66,7 +70,27 @@ export function acquireEditLock(): ReleaseFn {
     if (_lockCount === 0) {
       // 全部释放:恢复可编辑
       void setEditorEditable(true)
-      _restoreEditable = null
+    }
+  }
+}
+
+/**
+ * 异步版本:等待 editable=false 实际生效后才返回 release 函数。
+ * 浮层类场景(先加锁再缓存 cachedFrom/cachedTo)应使用本函数,
+ * 消除加锁到锁定生效之间的击键竞态窗口。
+ */
+export async function acquireEditLockAsync(): Promise<ReleaseFn> {
+  _lockCount += 1
+  if (_lockCount === 1) {
+    await setEditorEditable(false)
+  }
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    _lockCount = Math.max(0, _lockCount - 1)
+    if (_lockCount === 0) {
+      void setEditorEditable(true)
     }
   }
 }
@@ -90,9 +114,5 @@ export async function withEditLock<T>(fn: (release: ReleaseFn) => T | Promise<T>
  */
 export function __resetEditLockForTest(): void {
   _lockCount = 0
-  if (_restoreEditable) {
-    try { _restoreEditable() } catch {}
-    _restoreEditable = null
-  }
   void setEditorEditable(true)
 }

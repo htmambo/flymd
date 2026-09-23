@@ -13,6 +13,20 @@ export function isWysiwygHtmlTableToMdEnabled(): boolean {
   return false
 }
 
+// 所见模式 HTML 表格"源码编辑"入口开关（hover 铅笔按钮 / 双击 / 全局 API）。
+// 默认开启：功能本身不改写文档，仅提供编辑入口；不需要的用户可在设置中关闭。
+export const WYSIWYG_HTML_TABLE_SRC_EDIT_KEY = 'flymd:wysiwyg:htmlTableSrcEdit'
+
+export function isWysiwygHtmlTableSrcEditEnabled(): boolean {
+  try {
+    const v = localStorage.getItem(WYSIWYG_HTML_TABLE_SRC_EDIT_KEY)
+    if (v == null) return true
+    const s = String(v).toLowerCase().trim()
+    if (s === '0' || s === 'false' || s === 'off' || s === 'no') return false
+  } catch {}
+  return true
+}
+
 function looksLikeGfmTable(md: string): boolean {
   const lines = String(md || '').trim().split('\n').filter(Boolean)
   if (lines.length < 2) return false

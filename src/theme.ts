@@ -723,6 +723,13 @@ function createPanel(): HTMLDivElement {
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="wysiwyg-html-table-src-edit-toggle" title="${t('theme.wysiwygHtmlTableSrcEdit.tip')}">
+          <span class="theme-toggle-text">${t('theme.wysiwygHtmlTableSrcEdit')}</span>
+          <div class="theme-toggle-switch">
+            <input type="checkbox" id="wysiwyg-html-table-src-edit-toggle" class="theme-toggle-input" />
+            <span class="theme-toggle-slider"></span>
+          </div>
+        </label>
         <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="paste-url-title-toggle" title="${t('theme.pasteUrlTitleFetch.tip')}">
           <span class="theme-toggle-text">${t('theme.pasteUrlTitleFetch')}</span>
           <div class="theme-toggle-switch">
@@ -1642,6 +1649,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     const defaultOutlineTabToggle = panel.querySelector('#default-outline-tab-toggle') as HTMLInputElement | null
     const symbolAutoCompletionToggle = panel.querySelector('#symbol-auto-completion-toggle') as HTMLInputElement | null
     const wysiwygHtmlTableToggle = panel.querySelector('#wysiwyg-html-table-toggle') as HTMLInputElement | null
+    const wysiwygHtmlTableSrcEditToggle = panel.querySelector('#wysiwyg-html-table-src-edit-toggle') as HTMLInputElement | null
     const pasteUrlTitleToggle = panel.querySelector('#paste-url-title-toggle') as HTMLInputElement | null
     const pasteRemoteImagesToggle = panel.querySelector('#paste-remote-images-toggle') as HTMLInputElement | null
     const libColorDepthToggle = panel.querySelector('#lib-color-depth-toggle') as HTMLInputElement | null
@@ -1693,6 +1701,24 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         localStorage.setItem(WYSIWYG_HTML_TABLE_TO_MD_KEY, enabled ? 'true' : 'false')
         const ev = new CustomEvent('flymd:wysiwyg:htmlTableToMd', { detail: { enabled } })
         window.dispatchEvent(ev)
+      } catch {}
+    }
+
+    // 所见模式 HTML 表格源码编辑入口（hover 铅笔按钮 / 双击）。默认开启。
+    // 入口在交互发生时直接读 localStorage，无需事件广播即可即时生效。
+    const WYSIWYG_HTML_TABLE_SRC_EDIT_KEY = 'flymd:wysiwyg:htmlTableSrcEdit'
+
+    const getWysiwygHtmlTableSrcEdit = (): boolean => {
+      try {
+        const v = localStorage.getItem(WYSIWYG_HTML_TABLE_SRC_EDIT_KEY)
+        if (v == null) return true
+        return v !== 'false'
+      } catch { return true }
+    }
+
+    const setWysiwygHtmlTableSrcEdit = (enabled: boolean) => {
+      try {
+        localStorage.setItem(WYSIWYG_HTML_TABLE_SRC_EDIT_KEY, enabled ? 'true' : 'false')
       } catch {}
     }
 
@@ -1782,6 +1808,14 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       wysiwygHtmlTableToggle.checked = getWysiwygHtmlTableToMd()
       wysiwygHtmlTableToggle.addEventListener('change', () => {
         setWysiwygHtmlTableToMd(wysiwygHtmlTableToggle.checked)
+      })
+    }
+
+    // 所见模式：HTML 表格源码编辑入口（hover 铅笔按钮 / 双击），即时生效
+    if (wysiwygHtmlTableSrcEditToggle) {
+      wysiwygHtmlTableSrcEditToggle.checked = getWysiwygHtmlTableSrcEdit()
+      wysiwygHtmlTableSrcEditToggle.addEventListener('change', () => {
+        setWysiwygHtmlTableSrcEdit(wysiwygHtmlTableSrcEditToggle.checked)
       })
     }
 

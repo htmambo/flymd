@@ -3,7 +3,7 @@
 
 import { history } from '@milkdown/plugin-history'
 import { isCodeContentClipped } from '../../ui/codeExpandClip'
-import { acquireEditLock, bindEditLockEditor } from './editLock'
+import { acquireEditLockAsync, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, commandsCtx, remarkStringifyOptionsCtx, parserCtx, prosePluginsCtx } from '@milkdown/core'
 import { TextSelection, type Command } from '@milkdown/prose/state'
@@ -31,7 +31,7 @@ import { mathInlineViewPlugin, mathBlockViewPlugin } from './plugins/math'
 import { htmlMediaPlugin } from './plugins/htmlMedia'
 import { calloutNode, calloutRemark, calloutViewPlugin } from './plugins/callout'
 import { remarkHtmlInlineTags, subMark, supMark, abbrMark, htmlInlineTagStringifyHandlers } from './plugins/htmlInlineTags'
-import { maybeConvertHtmlTableBlocksToGfm } from './plugins/htmlTable'
+import { maybeConvertHtmlTableBlocksToGfm, isWysiwygHtmlTableSrcEditEnabled } from './plugins/htmlTable'
 import { taskListTogglePlugin } from './plugins/taskList'
 import { docBoundaryEscapePlugin, trailingParagraphPlugin } from './plugins/docBoundaryEscape'
 import { clearExpandedCodeBlocks, codeBlockIndexFromDom, setCodeBlockExpandedByIndex, codeExpandDecorationPlugin, isCodeBlockExpandedByIndex } from './plugins/codeExpandState'
@@ -664,9 +664,17 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   // 仅对 HTML 块级表格（htmlMediaPlugin 渲染的 span[data-type="html"] > table）
   // 提供 HTML 源码编辑；GFM 表格本身即可见即可编辑，无需此入口。
   const tableHit = t?.closest?.('table');
-  if (tableHit && tableHit.closest?.(HTML_BLOCK_SELECTOR)) {
+  if (tableHit && tableHit.closest?.(HTML_BLOCK_SELECTOR) && isWysiwygHtmlTableSrcEditEnabled()) {
     ev.stopPropagation();
     try { enterTableSourceEdit(tableHit as HTMLElement) } catch {};
+    return;
+  }
+  // 其它 HTML 块（htmlMediaPlugin 渲染为转义文本的 span[data-type="html"]）
+  // 双击进入源码编辑；函数内部会再校验开关与块类型。
+  const htmlHit = t?.closest?.(HTML_BLOCK_SELECTOR);
+  if (htmlHit && isWysiwygHtmlTableSrcEditEnabled()) {
+    ev.stopPropagation();
+    try { enterHtmlBlockSourceEdit(htmlHit as HTMLElement) } catch {};
     return;
   }
 }, true) } catch {} 
@@ -2052,6 +2060,7 @@ function setupTableHoverButton(host: HTMLElement | null) {
     // GFM 表格本身即可见即可编辑,不提供 HTML 源码编辑入口。
     const onOver = (ev: Event) => {
       try {
+        if (!isWysiwygHtmlTableSrcEditEnabled()) { hide(); return }
         const t = ev.target as HTMLElement | null
         const tbl = t?.closest?.('table') as HTMLElement | null
         if (!tbl) { hide(); return }
@@ -2575,9 +2584,24 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
 }
 
 function enterLatexSourceEdit(hitEl: HTMLElement) {
+  // 先异步等待编辑锁生效(editable=false 落地),再进入浮层主体缓存文档位置,
+  // 消除加锁到锁定生效之间的击键竞态窗口(竞态会使 cachedFrom 偏移)
+  void (async () => {
+    let releaseEditLock: (() => void) | null = null
+    try {
+      const mathEl = (hitEl.closest("div[data-type='math_block']") as HTMLElement) || (hitEl.closest("span[data-type='math_inline']") as HTMLElement)
+      if (!mathEl) return
+      releaseEditLock = await acquireEditLockAsync()
+      enterLatexSourceEditLocked(mathEl, releaseEditLock)
+    } catch (e) {
+      try { releaseEditLock?.() } catch {}
+      try { console.error('[latex overlay]', e) } catch {}
+    }
+  })()
+}
+
+function enterLatexSourceEditLocked(mathEl: HTMLElement, releaseEditLock: () => void) {
   try {
-    const mathEl = (hitEl.closest("div[data-type='math_block']") as HTMLElement) || (hitEl.closest("span[data-type='math_inline']") as HTMLElement)
-    if (!mathEl) return
     const isNew = !!(mathEl as any).dataset?.flymdNewMath
     try { delete (mathEl as any).dataset?.flymdNewMath } catch {}
     const rawCode = (mathEl.dataset?.value || mathEl.textContent || '')
@@ -2743,8 +2767,8 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
     ph.style.pointerEvents = 'none'
     if (showPlaceholder) inner.appendChild(ph)
 
-    // B2: 在 try 入口处立即申请编辑锁,所有退出路径都通过 closeOverlay 释放
-    const releaseEditLock = acquireEditLock()
+    // B2: 编辑锁由 enterLatexSourceEdit 在进入本函数前异步申请并等待生效,
+    //     本函数内所有退出路径都通过 closeOverlay 释放
     // B6: 浮层打开期间,阻止 scheduleMathBlockReparse 重放文档
     _mathEditingActive = true
     let _overlayClosed = false
@@ -2868,11 +2892,24 @@ function enterLatexSourceEdit(hitEl: HTMLElement) {
 // 编辑期间冻结整个编辑器 (避免 PM 事务破坏 cached 位置);
 // Esc 取消,Ctrl/Cmd+Enter 或 focusout 自动应用。
 function enterMermaidSourceEdit(domEl: HTMLElement) {
-  try {
-    const wrapper = (domEl.closest('.mermaid-node-wrapper') as HTMLElement) || null
-    const ov = ensureOverlayHost()
-    if (!ov) return
+  // 先异步等待编辑锁生效,再进入浮层主体缓存文档位置,消除击键竞态窗口
+  void (async () => {
+    let releaseEditLock: (() => void) | null = null
+    try {
+      const wrapper = (domEl.closest('.mermaid-node-wrapper') as HTMLElement) || null
+      const ov = ensureOverlayHost()
+      if (!ov) return
+      releaseEditLock = await acquireEditLockAsync()
+      enterMermaidSourceEditLocked(domEl, wrapper, ov, releaseEditLock)
+    } catch (e) {
+      try { releaseEditLock?.() } catch {}
+      try { console.error('[mermaid overlay]', e) } catch {}
+    }
+  })()
+}
 
+function enterMermaidSourceEditLocked(domEl: HTMLElement, wrapper: HTMLElement | null, ov: HTMLElement, releaseEditLock: () => void) {
+  try {
     // 优先从 PM 文档直接拿 code_block 节点的源码 + 位置(避开 DOM 节点类型
     // 不匹配的问题:NodeView 的 preWrapper 不带 data-language 属性)
     const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
@@ -2912,8 +2949,8 @@ function enterMermaidSourceEdit(domEl: HTMLElement) {
       }
     }
 
-    // 冻结编辑器 (避免浮层打开期间 PM 文档被修改,导致 cachedFrom/cachedTo 失效)
-    const releaseEditLock = acquireEditLock()
+    // 编辑锁由 enterMermaidSourceEdit 在进入本函数前异步申请并等待生效
+    // (避免浮层打开期间 PM 文档被修改,导致 cachedFrom/cachedTo 失效)
     let _overlayClosed = false
 
     // 位置:放在图表下方,沿用 anchor 元素的位置/宽度
@@ -3143,11 +3180,14 @@ try { (window as any).__mdeditorEnterTableSourceEdit = enterTableSourceEdit } ca
 // PR-2 A1: 暴露给 math NodeView 的铅笔按钮
 try { (window as any).__mdeditorEnterLatexSourceEdit = enterLatexSourceEdit } catch {}
 
-// B8: HTML 表格源码编辑
-// 说明:htmlTable 插件在解析阶段已把 <table> HTML 转成 GFM Markdown 并交给 Milkdown 接管,
-//      原 HTML 源不再保留。MVP 方案:在打开浮层时,把当前渲染的 <table> DOM 序列化为 HTML,
-//      作为"原始源码"回填到 textarea;保存时把新 HTML 转成 Markdown 替换原 table 节点。
-//      若当前节点不支持转换(rowspan/colspan/嵌套),回退成序列化后的简化 HTML。
+// B8: HTML 源码编辑（表格 + 其它 HTML 块）
+// 说明:htmlMediaPlugin 为 markdown 中的 HTML 块渲染 span[data-type="html"] 容器:
+//      <table> 渲染为简化表格 DOM(createSafeTableElement 用 textContent 重建,丢属性),
+//      <img> 渲染为真实 <img>(走独立的图片源码编辑入口),注释 display:none,
+//      其它 HTML 渲染为转义文本。
+//      本浮层从 ProseMirror html 节点的 attrs.value 读取原始源码(保真,不经 DOM 序列化),
+//      应用时直接替换该节点的 value;复杂表格(rowspan/colspan/嵌套)保持 HTML 原样,
+//      不做 GFM 转换。GFM 表格本身可见即可编辑,不走此路径。
 function serializeTableEl(tableEl: HTMLElement): string {
   try {
     const clone = tableEl.cloneNode(true) as HTMLElement
@@ -3160,13 +3200,13 @@ function serializeTableEl(tableEl: HTMLElement): string {
   }
 }
 
-// 定位 HTML 块表格对应的 ProseMirror html 节点位置
-// 仅用于 HTML_BLOCK_SELECTOR > table 这种 HTML 块表格（由 htmlMediaPlugin 渲染）
-function findHtmlTableNodePos(tableEl: HTMLElement): { view: any; from: number; to: number } {
+// 定位 HTML 块对应的 ProseMirror html 节点位置
+// el 是 span[data-type="html"] 容器自身或其内部元素（由 htmlMediaPlugin 渲染）
+function findHtmlBlockNodePos(el: HTMLElement): { view: any; from: number; to: number } {
   const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
   if (!view) return { view: null, from: -1, to: -1 }
   let pos: number | null = null
-  try { pos = view.posAtDOM(tableEl, 0) } catch {}
+  try { pos = view.posAtDOM(el, 0) } catch {}
   if (pos === null || typeof pos !== 'number') return { view, from: -1, to: -1 }
   const state = view.state
   const $pos = state.doc.resolve(pos)
@@ -3179,24 +3219,34 @@ function findHtmlTableNodePos(tableEl: HTMLElement): { view: any; from: number; 
 }
 
 // 用新 HTML 源码替换 html 块节点的 value
-// 仅用于 HTML 块表格（GFM 表格不走这个路径，它本身即可见即可编辑）
-function updateHtmlTableNode(
-  tableEl: HTMLElement,
+// expectedValue 为打开浮层时读到的节点 value:apply 时先用它校验缓存位置仍指向
+// 同一个节点(文档在浮层期间被改动则按 DOM 重新定位),避免改错相邻 HTML 块。
+// GFM 表格不走这个路径，它本身即可见即可编辑。
+function updateHtmlBlockNode(
+  el: HTMLElement,
   newHtml: string,
   cachedFrom: number,
-  cachedTo: number
+  expectedValue: string
 ): { ok: boolean; view: any } {
   let view: any = null
   try {
     view = (_editor as any)?.ctx?.get?.(editorViewCtx)
     if (!view) return { ok: false, view: null }
+    const nodeValueAt = (pos: number): string | null => {
+      try {
+        const n = view.state.doc.nodeAt(pos)
+        if (n && n.type?.name === HTML_NODE_TYPE) return String((n.attrs as any)?.value ?? '')
+      } catch {}
+      return null
+    }
     let from = cachedFrom
-    // 缓存无效时重新定位（如编辑期间文档发生了其它变更）
-    // 注意：cachedTo 不直接使用，替换前从实际节点重新推导 actualTo，
-    // 防止文档变更导致 to 偏移进而误删相邻内容。
-    if (from < 0 || cachedTo < 0) {
-      const found = findHtmlTableNodePos(tableEl)
+    // 缓存位置上的节点与打开时不一致,说明文档已变更,改为按 DOM 重新定位
+    if (from >= 0 && expectedValue && nodeValueAt(from) !== expectedValue) from = -1
+    if (from < 0) {
+      const found = findHtmlBlockNodePos(el)
       from = found.from
+      // 重定位后再次校验节点身份,仍不一致则放弃,避免改错相邻 HTML 块
+      if (from >= 0 && expectedValue && nodeValueAt(from) !== expectedValue) from = -1
     }
     if (from < 0) return { ok: false, view }
 
@@ -3208,7 +3258,7 @@ function updateHtmlTableNode(
     const node = state.doc.nodeAt(from)
     if (!node || node.type?.name !== HTML_NODE_TYPE) return { ok: false, view }
 
-    // 从实际节点推导 to，避免缓存的 cachedTo 过期导致范围错误
+    // 从实际节点推导 to，避免缓存偏移导致范围错误
     const actualTo = from + node.nodeSize
 
     // 保留原有 attrs，只更新 value
@@ -3222,44 +3272,83 @@ function updateHtmlTableNode(
   }
 }
 
+// HTML 源码基础校验:text/html 解析是宽容的(不产生 parsererror),只能做存在性校验。
+// 返回错误文案;合法时返回 null。
+function validateHtmlSource(html: string, kind: 'table' | 'block'): string | null {
+  try {
+    const doc = new DOMParser().parseFromString(`<!doctype html><meta charset="utf-8">${html}`, 'text/html')
+    if (kind === 'table' && !doc.querySelector('table')) return '未找到 <table> 标签,请检查源码'
+    if (!doc.body || !doc.body.firstElementChild) return '未解析到有效的 HTML 内容'
+  } catch {
+    return 'HTML 解析失败,请检查源码'
+  }
+  return null
+}
+
 function enterTableSourceEdit(hitEl: HTMLElement) {
   try {
+    if (!isWysiwygHtmlTableSrcEditEnabled()) return
     const tableEl = (hitEl.closest('table') as HTMLElement) || null
     if (!tableEl) return
-    const ov = ensureOverlayHost()
-    if (!ov) return
+    void enterHtmlSourceEdit(tableEl, 'table')
+  } catch (e) {
+    try { console.error('[html-table overlay]', e) } catch {}
+  }
+}
 
-    // 缓存位置:避免 overlay 内 DOM 变化后 posAtDOM 失效
-    // 注：apply 时若缓存失效（文档已变更）会自动重新定位
-    let cachedFrom = -1, cachedTo = -1
+// 非表格 HTML 块（渲染为转义文本的 span[data-type="html"]）的源码编辑入口
+function enterHtmlBlockSourceEdit(hitEl: HTMLElement) {
+  try {
+    if (!isWysiwygHtmlTableSrcEditEnabled()) return
+    const span = (hitEl.closest(HTML_BLOCK_SELECTOR) as HTMLElement) || null
+    if (!span) return
+    // 表格/图片块有各自的编辑入口
+    if (span.querySelector('table') || span.querySelector('img')) return
+    void enterHtmlSourceEdit(span, 'block')
+  } catch (e) {
+    try { console.error('[html-block overlay]', e) } catch {}
+  }
+}
+
+async function enterHtmlSourceEdit(el: HTMLElement, kind: 'table' | 'block') {
+  // 先异步等待编辑锁生效(editable=false 落地),再缓存文档位置,
+  // 消除加锁到锁定生效之间的击键竞态窗口(竞态会使 cachedFrom 偏移)
+  let releaseEditLock: (() => void) | null = null
+  try {
+    releaseEditLock = await acquireEditLockAsync()
+  } catch (e) {
+    try { console.error('[html-source overlay]', e) } catch {}
+    return
+  }
+  try {
+    const ov = ensureOverlayHost()
+    if (!ov) { try { releaseEditLock() } catch {}; return }
+
+    // 缓存位置 + 打开时的节点 value(作为 apply 时的节点身份校验基准)
+    let cachedFrom = -1
+    let originalNodeValue = ''
     try {
-      const found = findHtmlTableNodePos(tableEl)
+      const found = findHtmlBlockNodePos(el)
       cachedFrom = found.from
-      cachedTo = found.to
+      if (cachedFrom >= 0 && found.view) {
+        const node = found.view.state.doc.nodeAt(cachedFrom)
+        if (node && node.type?.name === HTML_NODE_TYPE) {
+          const v = (node.attrs as any)?.value
+          if (typeof v === 'string') originalNodeValue = v
+        }
+      }
     } catch {}
 
-    // 取值：从 html 节点的 value 属性取原始 HTML 源码（而非 DOM 序列化，
-    // 因为 htmlMediaPlugin 渲染出的 DOM 是简化版，可能丢失原始结构）
-    let sourceHtml = ''
-    if (cachedFrom >= 0) {
-      try {
-        const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
-        if (view) {
-          // cachedFrom 是 html 节点起始位置（$pos.before(d)），nodeAt(from) 直接命中
-          const node = view.state.doc.nodeAt(cachedFrom)
-          if (node && node.type?.name === HTML_NODE_TYPE) {
-            const v = (node.attrs as any)?.value
-            if (typeof v === 'string') sourceHtml = v
-          }
-        }
-      } catch {}
-    }
-    // 兜底：拿不到节点 value 时用 DOM 序列化
-    if (!sourceHtml) {
-      sourceHtml = serializeTableEl(tableEl)
+    // 取值：优先 html 节点的 value 属性（保真）；
+    // 兜底：拿不到节点 value 时用 DOM 序列化（简化渲染结果，会丢属性，hint 中明示）
+    let sourceHtml = originalNodeValue
+    let usedDomFallback = false
+    if (!sourceHtml && kind === 'table') {
+      sourceHtml = serializeTableEl(el)
+      usedDomFallback = !!sourceHtml
     }
     const hostRc = (_root as HTMLElement).getBoundingClientRect()
-    const rc = tableEl.getBoundingClientRect()
+    const rc = el.getBoundingClientRect()
     const hostWidth = hostRc.width || 0
     const marginX = 16
     const baseWidth = rc.width || 0
@@ -3291,7 +3380,8 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
     const hint = document.createElement('div')
     hint.style.fontSize = '12px'
     hint.style.opacity = '0.7'
-    hint.textContent = '编辑 HTML 表格源码(Ctrl+Enter 应用,Esc 取消)'
+    hint.textContent = (kind === 'table' ? '编辑 HTML 表格源码' : '编辑 HTML 源码') + '(Ctrl+Enter 应用,Esc 取消)'
+    if (usedDomFallback) hint.textContent += ' — 未取到原始源码,保存将丢失表格属性'
     inner.appendChild(hint)
 
     const ta = document.createElement('textarea')
@@ -3305,30 +3395,62 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
     ta.style.boxSizing = 'border-box'
     inner.appendChild(ta)
 
+    const btnRow = document.createElement('div')
+    btnRow.style.display = 'flex'
+    btnRow.style.justifyContent = 'flex-end'
+    btnRow.style.columnGap = '8px'
+    const cancelBtn = document.createElement('button')
+    cancelBtn.type = 'button'
+    cancelBtn.textContent = '取消'
+    const applyBtn = document.createElement('button')
+    applyBtn.type = 'button'
+    applyBtn.textContent = '应用'
+    btnRow.appendChild(cancelBtn)
+    btnRow.appendChild(applyBtn)
+    inner.appendChild(btnRow)
+
     wrap.appendChild(inner)
     ov.appendChild(wrap)
 
     const errHandle = attachOverlayError(wrap)
-    const releaseEditLock = acquireEditLock()
     let _closed = false
     const closeOverlay = () => {
       if (_closed) return
       _closed = true
       try { ov.removeChild(wrap) } catch {}
-      try { releaseEditLock() } catch {}
+      try { releaseEditLock?.() } catch {}
+    }
+    const refocusView = () => {
+      try {
+        const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        if (view) setTimeout(() => { try { view.focus() } catch {} }, 50)
+      } catch {}
     }
 
     const apply = () => {
       const nextHtml = String(ta.value || '')
-      if (!nextHtml.trim()) {
-        errHandle.setError('表格源码不能为空')
+      const trimmed = nextHtml.trim()
+      if (!trimmed) {
+        errHandle.setError(kind === 'table' ? '表格源码不能为空' : '源码不能为空')
         try { ta.focus() } catch {}
         return
       }
+      // 无改动:直接关闭,不派发事务、不置脏标记
+      if (trimmed === sourceHtml.trim()) {
+        errHandle.clear()
+        closeOverlay()
+        refocusView()
+        return
+      }
+      const invalid = validateHtmlSource(trimmed, kind)
+      if (invalid) {
+        errHandle.setError(invalid)
+        return
+      }
       try {
-        const result = updateHtmlTableNode(tableEl, nextHtml, cachedFrom, cachedTo)
+        const result = updateHtmlBlockNode(el, nextHtml, cachedFrom, originalNodeValue)
         if (!result.ok) {
-          errHandle.setError('无法应用:仅支持简单 HTML 表格(无 rowspan/colspan/嵌套)')
+          errHandle.setError('无法应用:未能定位到原始 HTML 节点,请关闭后重试')
           return
         }
         errHandle.clear()
@@ -3339,12 +3461,21 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
       }
     }
 
+    cancelBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      closeOverlay()
+      refocusView()
+    })
+    applyBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      apply()
+    })
+
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
         ev.preventDefault()
         closeOverlay()
-        const view: any = (_editor as any)?.ctx?.get?.(editorViewCtx)
-        if (view) setTimeout(() => { try { view.focus() } catch {} }, 50)
+        refocusView()
         return
       }
       if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
@@ -3362,7 +3493,9 @@ function enterTableSourceEdit(hitEl: HTMLElement) {
 
     setTimeout(() => { try { ta.focus(); ta.select() } catch {} }, 0)
   } catch (e) {
-    try { console.error('[html-table overlay]', e) } catch {}
+    // 异常兜底:释放锁(release 函数幂等,closeOverlay 已释放时重复调用无害)
+    try { releaseEditLock?.() } catch {}
+    try { console.error('[html-source overlay]', e) } catch {}
   }
 }
 
