@@ -4837,6 +4837,11 @@ async function openRecentSetAsTabs(paths: string[], active: string | null): Prom
   if (active) {
     try { const m = await import('./tabs/integration'); await m.activateTabByPathIfOpen(active) } catch {}
   }
+  // 统一收尾高亮：批量打开期间逐文件触发的文件树高亮同步是异步的
+  // （revealAndSelect 内部有目录展开 await），并发竞争可能留下旧路径高亮；
+  // 全部打开 + 激活完成后，以最终激活文档为准再同步一次
+  // （revealAndSelect 的序号护栏保证本次调用为最终态，不被旧调用覆盖）
+  try { await (window as any).flymdRevealInFileTree?.(currentFilePath || null) } catch {}
   // 统一收尾：最近文件面板刷一次；最终激活文档的预览渲染补一次
   // （scheduleRenderPreview 自带 150ms 去抖，与 activateTabByPathIfOpen →
   // restoreTabState 触发的 refreshPreview 合并为一次实际渲染）
@@ -4928,6 +4933,9 @@ async function activatePersistedLibrary(id: string): Promise<void> {
       await closeToBlank()
       try { if (tabsMod) await tabsMod.restoreDirtyDraftsFromSession() } catch {}
     }
+    // 切库最终高亮：同启动流程，草稿抢救/最终激活期间的异步事件可能清掉或
+    // 移走高亮，统一在全部完成后以最终激活文档为准收尾一次
+    try { await (window as any).flymdRevealInFileTree?.(currentFilePath || null) } catch {}
   } catch (e) {
     console.warn('切库后打开最近文件失败:', e)
   }
@@ -5173,8 +5181,14 @@ try {
         console.error('[文件树] 手动刷新失败:', e)
       }
     }
-    // 多标签切换时：同步库侧栏的选中高亮到当前文档
-    ;(window as any).flymdRevealInFileTree = async (path: string | null) => {
+    // 多标签切换时：同步库侧栏的选中高亮到当前文档。
+    // 串行队列 + 合并：高亮只关心最终状态，排队中的旧路径直接丢弃。
+    // 背景：启动批量打开时，旧路径的同步请求可能堵在 fileTree.init 的 await 后面，
+    // 等进入 revealAndSelect 时反而拿到更新的序号、覆盖掉正确高亮
+    // （激活文档与高亮文件不匹配的根因），因此保序必须做在这一层。
+    let _revealRunning = false
+    let _revealPending: Array<{ path: string | null; resolve: () => void }> = []
+    const doRevealInFileTree = async (path: string | null) => {
       try {
         const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
         if (treeEl && !fileTreeReady) {
@@ -5191,6 +5205,28 @@ try {
           await fileTree.revealAndSelect(path)
         }
       } catch {}
+    }
+    const drainRevealQueue = async () => {
+      _revealRunning = true
+      try {
+        while (_revealPending.length) {
+          // 合并：只执行最后入队的路径，之前的直接放行
+          const last = _revealPending.pop()!
+          const skipped = _revealPending
+          _revealPending = []
+          for (const s of skipped) { try { s.resolve() } catch {} }
+          await doRevealInFileTree(last.path)
+          try { last.resolve() } catch {}
+        }
+      } finally {
+        _revealRunning = false
+      }
+    }
+    ;(window as any).flymdRevealInFileTree = (path: string | null): Promise<void> => {
+      return new Promise<void>((resolve) => {
+        _revealPending.push({ path, resolve })
+        if (!_revealRunning) void drainRevealQueue()
+      })
     }
     // 模式切换快捷逻辑（等价于 Ctrl+E）
     ;(window as any).flymdToggleModeShortcut = () => handleToggleModeShortcut()
@@ -9469,6 +9505,12 @@ function bindEvents() {
           if (active) {
             try { if (tabsMod) await tabsMod.activateTabByPathIfOpen(active) } catch {}
           }
+          // 启动现场最终高亮：批量打开、草稿抢救（openFile 会发 tab-switched）、
+          // 最终激活（目标已激活时 activateTabByPathIfOpen 不发事件）期间的
+          // 文件树高亮同步均为异步事件驱动，相互时序不可控；
+          // 统一在全部完成之后，以最终激活文档为准收尾一次
+          // （revealAndSelect 的序号护栏保证本次为最终态，不被旧调用覆盖）
+          try { await (window as any).flymdRevealInFileTree?.(currentFilePath || null) } catch {}
         }
       } catch (e) {
         console.warn('启动自动打开最近文件失败:', e)

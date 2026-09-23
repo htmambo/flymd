@@ -510,11 +510,19 @@ function buildDirChain(root: string, targetDir: string): string[] {
   return out
 }
 
+// revealAndSelect 调用序号：启动批量打开/快速切换时会有多个 reveal 并发，
+// 每个调用内部有目录展开 await，早发起的调用可能晚完成并用旧路径覆盖新高亮
+// （激活文档与高亮文件不匹配的根因）。用单调序号让过期调用在写状态前退出。
+let _revealSeq = 0
+
 async function revealAndSelect(path: string | null): Promise<void> {
+  const seq = ++_revealSeq
+  const isStale = () => seq !== _revealSeq
   // 任何情况下都先清掉旧高亮，避免“假选中”
   clearDomSelection()
 
   const root = await state.opts?.getRoot?.()
+  if (isStale()) return
   if (!root || !state.container) {
     state.selected = null
     state.selectedIsDir = false
@@ -547,19 +555,46 @@ async function revealAndSelect(path: string | null): Promise<void> {
     const chain = buildDirChain(root, base(p))
     for (const dir of chain) {
       await ensureDirExpanded(root, dir)
+      if (isStale()) return
     }
   } catch {}
 
   // 尝试命中并选中（若仍找不到，至少不会残留旧高亮）
+  if (isStale()) return
   const hit = findNodeByPath(p)
   if (hit) {
     try {
       saveSelection(p, false, hit)
-      try { hit.scrollIntoView({ block: 'nearest' }) } catch {}
+      scrollRowToTopIfNeeded(hit)
     } catch {}
   } else {
     state.opts?.onStateChange?.()
   }
+}
+
+// 激活行滚动定位：
+// 1) 完全可见且不处于可见区底部 30% 时不滚动（避免每次切换都跳动）；
+// 2) 部分可见（含被吸顶头部遮挡）或位于底部 30% 区域时，滚动到可见区顶部。
+// 注意 .library 内有吸顶的 .lib-header（library.css，position: sticky），
+// scrollIntoView(block:'start') 会把行藏到头部下方（看起来像滚出了文件树顶部），
+// 因此直接按头部下边缘手算 scrollTop，且只动 .library 容器，不连带滚动外层祖先。
+// （树内容不足一屏或目标已是最末几行时 scrollTop 会触顶钳制，属正常。）
+function scrollRowToTopIfNeeded(row: HTMLElement): void {
+  try {
+    const scroller = row.closest('.library') as HTMLElement | null
+    if (!scroller) { try { row.scrollIntoView({ block: 'nearest' }) } catch {}; return }
+    const r = row.getBoundingClientRect()
+    const s = scroller.getBoundingClientRect()
+    const header = scroller.querySelector('.lib-header') as HTMLElement | null
+    const headerH = header ? header.getBoundingClientRect().height : 0
+    const visibleTop = s.top + headerH
+    const visibleH = Math.max(0, s.bottom - visibleTop)
+    // 底部 30% 区域的上边界：行的下边缘越过它就需要上移
+    const bottomZoneTop = s.bottom - visibleH * 0.3
+    if (r.top >= visibleTop && r.bottom <= bottomZoneTop) return
+    // 目标：行的顶部对齐到吸顶头部下边缘，留 8px 间距
+    scroller.scrollTop += r.top - visibleTop - 8
+  } catch {}
 }
 
 function toMtimeMs(meta: any): number {

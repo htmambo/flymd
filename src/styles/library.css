@@ -704,6 +704,8 @@ body.focus-mode .lib-float-toggle.show { display: flex; }
   user-select: none;
   transition: background var(--transition-fast), color var(--transition-fast);
   color: var(--muted);
+  /* 激活高亮滚动到顶部时留出少量间距（见 fileTree.ts scrollRowToTopIfNeeded） */
+  scroll-margin-top: 8px;
 }
 .library .lib-node:hover {
   background: var(--hover-bg);
