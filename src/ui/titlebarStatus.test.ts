@@ -63,28 +63,36 @@ function makeDeps(overrides: any = {}) {
 describe('refreshTitle', () => {
   beforeEach(() => { document.title = '' })
 
-  it('renders file name + dirty marker in DOM title and label', () => {
+  it('renders file name + dirty marker in DOM title, dir path in label', () => {
     const deps = makeDeps({ getCurrentFilePath: () => '/path/to/note.md', getDirty: () => true })
     const api = createTitlebarStatus(deps)
     api.refreshTitle()
-    expect(deps.filenameLabel.textContent).toBe('note.md *')
+    expect(deps.filenameLabel.textContent).toBe('/path/to')
     expect(document.title).toBe('note.md *')
     expect(deps.filenameLabel.title).toBe('/path/to/note.md')
   })
 
-  it('falls back to "untitled" when no current file', () => {
+  it('falls back to "untitled" in DOM title and empty label when no current file', () => {
     const deps = makeDeps({ t: (k: string) => (k === 'filename.untitled' ? '未命名' : k) })
     const api = createTitlebarStatus(deps)
     api.refreshTitle()
-    expect(deps.filenameLabel.textContent).toBe('未命名')
+    expect(deps.filenameLabel.textContent).toBe('')
     expect(document.title).toBe('未命名')
   })
 
-  it('uses basename even on windows paths', () => {
+  it('renders dir path on windows paths', () => {
     const deps = makeDeps({ getCurrentFilePath: () => 'C:\\Users\\me\\doc.md' })
     const api = createTitlebarStatus(deps)
     api.refreshTitle()
-    expect(deps.filenameLabel.textContent).toBe('doc.md')
+    expect(deps.filenameLabel.textContent).toBe('C:\\Users\\me')
+    expect(document.title).toBe('doc.md')
+  })
+
+  it('keeps root slash for root-level files', () => {
+    const deps = makeDeps({ getCurrentFilePath: () => '/note.md' })
+    const api = createTitlebarStatus(deps)
+    api.refreshTitle()
+    expect(deps.filenameLabel.textContent).toBe('/')
   })
 
   it('caches last label and skips re-write when unchanged', () => {

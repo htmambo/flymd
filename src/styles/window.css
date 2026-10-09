@@ -23,7 +23,7 @@
 }
 
 .tabbar-row .filename {
-  display: none; /* 隐藏文件名显示，标签页已包含文件名 */
+  display: none; /* 隐藏文件名显示，标签页已包含文件名；目录路径改由左下角 .filepath-badge 显示 */
 }
 
 /* tabbar-row 内的标签栏容器 */

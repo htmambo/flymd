@@ -11,7 +11,7 @@ export interface TitlebarStatusDeps {
   getCurrentFilePath: () => string | null
   /** 是否脏 */
   getDirty: () => boolean
-  /** 顶栏文件名显示元素 */
+  /** 文件路径显示元素(左下角悬浮徽章,显示目录部分,tooltip 为完整路径;文件名由标签页显示) */
   filenameLabel: HTMLElement
   /** 底部状态栏显示元素 */
   status: HTMLElement
@@ -54,6 +54,7 @@ const OS_TITLE_FALLBACK = '飞速MarkDown'
 
 export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusApi {
   let lastTitleLabel = ''
+  let lastDirLabel = ''
   let lastTitleTooltip = ''
   let lastOsTitle = ''
 
@@ -63,11 +64,20 @@ export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusAp
       ? (full.split(/[/\\]/).pop() || deps.t('filename.untitled'))
       : deps.t('filename.untitled')
     const label = name + (deps.getDirty() ? ' *' : '')
+    // 路径元素只显示目录部分(文件名已由标签页显示);无路径时留空
+    let dir = ''
+    if (full) {
+      const idx = Math.max(full.lastIndexOf('/'), full.lastIndexOf('\\'))
+      dir = idx > 0 ? full.slice(0, idx) : idx === 0 ? full.slice(0, 1) : ''
+    }
     const titleTip = full || name
     if (lastTitleLabel !== label) {
-      deps.filenameLabel.textContent = label
       document.title = label
       lastTitleLabel = label
+    }
+    if (lastDirLabel !== dir) {
+      deps.filenameLabel.textContent = dir
+      lastDirLabel = dir
     }
     if (lastTitleTooltip !== titleTip) {
       try { deps.filenameLabel.title = titleTip } catch {}

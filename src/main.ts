@@ -76,6 +76,7 @@ import {
   copyTextToClipboard,
   getImageLinkForCopy,
 } from './utils/richClipboard'
+import { copyTextToClipboard as copyTextToClipboardRobust } from './utils/clipboard'
 import { saveImageToLocalAndGetPathCore, toggleUploaderEnabledFromMenuCore } from './core/imagePaste'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
 import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition, getActiveLibrary } from './utils/library'
@@ -1407,6 +1408,7 @@ app.innerHTML = `
       <textarea id="editor" class="editor" spellcheck="false" placeholder="${t('editor.placeholder')}"></textarea>
       <div id="preview" class="preview hidden"></div>
       <div class="statusbar" id="status">${fmtStatus(1,1)}</div>
+      <div class="filepath-badge" id="filepath-badge"></div>
       <div class="notification-container" id="notification-container"></div>
       <div class="status-zoom" id="status-zoom"><span id="zoom-label">100%</span> <button id="zoom-reset" title="重置缩放">重置</button></div>
     </div>
@@ -1454,7 +1456,15 @@ try { windowResizeApi.init() } catch {}
 
 const editor = document.getElementById('editor') as HTMLTextAreaElement
 const preview = document.getElementById('preview') as HTMLDivElement
-const filenameLabel = document.getElementById('filename') as HTMLDivElement
+const filepathBadge = document.getElementById('filepath-badge') as HTMLDivElement
+// 点击路径徽章：复制当前文件完整路径
+filepathBadge.addEventListener('click', () => {
+  void (async () => {
+    if (!currentFilePath) return
+    const ok = await copyTextToClipboardRobust(currentFilePath)
+    pluginNotice(ok ? '已复制路径' : '复制失败', ok ? 'ok' : 'err', 1800)
+  })()
+})
 let _previewLinkEventsBound = false
 
 async function openPreviewLocalDoc(filePath: string, openInNewTab: boolean): Promise<void> {
@@ -1755,7 +1765,7 @@ wysiwygAutoNewlinesApi = createWysiwygAutoNewlines({
 titlebarStatusApi = createTitlebarStatus({
   getCurrentFilePath: () => currentFilePath,
   getDirty: () => dirty,
-  filenameLabel,
+  filenameLabel: filepathBadge,
   status,
   editor,
   preview,
