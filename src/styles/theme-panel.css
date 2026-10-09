@@ -13,10 +13,33 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  z-index: 40;
+  z-index: 9999;
   padding: 0;
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,0.28) rgba(0,0,0,0.05);
+}
+
+/* 遮罩层：盖住整个窗口（含文件树/编辑区），阻断下层交互；
+   同时避免 Linux(WebKitGTK) 覆盖式滚动条穿透到面板上方 */
+.theme-panel-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 9998;
+}
+
+.theme-panel-mask.hidden { display: none; }
+
+/* 面板打开期间隐藏文件树滚动条（兜底：某些平台滚动条绘制层级不受 z-index 约束） */
+body.theme-panel-open .library::-webkit-scrollbar,
+body.theme-panel-open .library *::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+body.theme-panel-open .library,
+body.theme-panel-open .library * {
+  scrollbar-color: transparent transparent !important;
 }
 
 @keyframes theme-panel-slidein {
@@ -501,14 +524,23 @@
 }
 
 .theme-fonts select {
+  /* 禁用原生外观：Linux(WebKitGTK)/macOS 上原生 select 会按系统主题绘制，
+     导致强制亮色主题下仍是深色控件、文字不可读 */
+  -webkit-appearance: none;
+  appearance: none;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
   border-radius: var(--radius-lg);
-  padding: 6px 10px;
+  padding: 6px 28px 6px 10px;
   font-size: 12px;
   transition: all var(--transition-normal);
   cursor: pointer;
+  /* 自绘下拉箭头（中性灰，亮/暗主题均可读） */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
 }
 
 .theme-fonts select:focus {

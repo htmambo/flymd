@@ -975,6 +975,26 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       container.appendChild(panel)
     }
 
+    // 遮罩层：面板打开时盖住整个窗口（含文件树），阻断下层交互与滚动条穿透；
+    // 用 MutationObserver 跟随 panel 的 hidden 状态，覆盖所有打开/关闭路径。
+    // 点击遮罩会命中下方已有的"点击外部关闭"document 监听，无需单独绑定。
+    let mask = document.getElementById('theme-panel-mask') as HTMLDivElement | null
+    if (!mask) {
+      mask = document.createElement('div')
+      mask.id = 'theme-panel-mask'
+      mask.className = 'theme-panel-mask hidden'
+      container.appendChild(mask)
+    }
+    const syncMask = () => {
+      try {
+        const hidden = panel!.classList.contains('hidden')
+        mask!.classList.toggle('hidden', hidden)
+        document.body.classList.toggle('theme-panel-open', !hidden)
+      } catch {}
+    }
+    try { new MutationObserver(syncMask).observe(panel, { attributes: true, attributeFilter: ['class'] }) } catch {}
+    syncMask()
+
     const prefs = loadThemePrefs()
     let lastSaved = { ...prefs }
     fillSwatches(panel, prefs)

@@ -286,3 +286,8 @@ textarea:focus {
     scroll-behavior: auto !important;
   }
 }
+
+/* 应用强制亮/暗主题时，原生控件（select/输入框/滚动条等）跟随应用主题而非系统配色。
+   :root 的 light dark 表示"跟随系统"，此处按 body 主题类收窄。 */
+body.light-mode { color-scheme: light; }
+body.dark-mode { color-scheme: dark; }
