@@ -5,9 +5,57 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
+
+# 门禁（typecheck / 测试 / fmt / 构建）先跑，失败则不进入耗时的跨平台打包。
+permissions:
+  contents: read
 
 jobs:
+  # 轻量门禁：PR / 推主干时跑，避免为一次改动付出三平台完整打包的代价。
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # jsdom@30 要求 ^22.22.2 || ^24.15.0 || >=26.0.0
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        components: rustfmt
+
+      - name: cargo fmt --check
+        working-directory: src-tauri
+        run: cargo fmt --check
+
   build:
+    # 门禁先行：check 失败就不再进行耗时的跨平台打包
+    needs: check
     strategy:
       fail-fast: false
       matrix:
@@ -41,24 +89,14 @@ jobs:
           cache: 'pnpm'
 
       # 与仓库的打包脚本保持一致：一律以 pnpm-lock.yaml 为准
+      # typecheck / 测试 / fmt 已由 needs: check 的门禁 job 覆盖
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm exec tsc --noEmit
-
-      - name: Unit tests
-        run: pnpm test
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: cargo fmt --check
-        if: matrix.os != 'Windows'
-        working-directory: src-tauri
-        run: cargo fmt --check
 
       # Windows 特定依赖
       - name: Install Windows bundlers (NSIS + WiX)

@@ -444,10 +444,19 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
       const mermaid = await loadMermaid()
       const _mmdLoadMs = Math.round(performance.now() - _mmdT0)
       if (_mmdLoadMs >= 300) { try { logInfo('[启动耗时] Mermaid模块加载', { 耗时ms: _mmdLoadMs }) } catch {} }
-      if (!mermaidReady) {
-        mermaid.initialize(getMermaidConfig());
-        mermaidReady = true
-      }
+      // 每次渲染都重新 initialize：主题配置随应用主题/缩放变化，需要跟着更新。
+      // （原先这段逻辑只写在 renderPreview 里那份已删除的内联副本中，
+      //   由于它执行时占位符早已被本函数替换完毕，实际从未生效。）
+      // 所见模式下静默 mermaid 的 parseError 回调，避免输入时的控制台噪音。
+      try {
+        if (wysiwyg) {
+          try { (mermaid as any).parseError = () => {} } catch {}
+          try { if ((mermaid as any).mermaidAPI) (mermaid as any).mermaidAPI.parseError = () => {} } catch {}
+        }
+      } catch {}
+      mermaid.initialize(getMermaidConfig());
+      mermaidReady = true
+      try { decorateCodeBlocks(root) } catch {}
       for (let i = 0; i < nodes.length; i++) {
         const el = nodes[i]
         const code = el.textContent || ''
@@ -455,6 +464,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
         const desiredId = `${hash}-${mermaidSvgCacheVersion}-${i}`
         try {
           let svgMarkup = getCachedMermaidSvg(code, desiredId)
+          const cacheHit = !!svgMarkup
           if (!svgMarkup) {
             const renderId = `${hash}-${Date.now()}-${i}`
             const { svg } = await mermaid.render(renderId, code)
@@ -466,6 +476,8 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
           const svgEl = wrap.firstElementChild as SVGElement | null
           if (svgEl) {
             try { normalizeMermaidSvg(svgEl) } catch {}
+            try { svgEl.setAttribute('data-mmd-hash', hash) } catch {}
+            try { svgEl.setAttribute('data-mmd-cache', cacheHit ? 'hit' : 'miss') } catch {}
             if (!svgEl.id) svgEl.id = desiredId
             const fig = document.createElement('div')
             fig.className = 'mmd-figure'
@@ -528,39 +540,60 @@ let _outlineLastSignature = ''
 // 所见模式：用于滚动同步的“源位锚点”表
 // 旧所见模式已移除：不再维护锚点表
 
+// 判定「光标是否位于未闭合的 ```mermaid 围栏内」与具体图表无关，但一轮渲染里
+// 每张 mermaid 都会调用 hashMermaidCode。原实现每次都从文档开头扫到光标，
+// N 张图 = N 次全文扫描（O(n·m)）。按 (所见模式, 光标, 文本) 记忆化后，
+// 一轮渲染最多只扫一次。
+let _mermaidSkipCacheKey = ''
+let _mermaidSkipCacheVal = false
+
+function isCaretInsideOpenMermaidFence(): boolean {
+  if (!wysiwyg) return false
+  let key = ''
+  try { key = `1:${editor.selectionStart >>> 0}:${editor.value}` } catch {}
+  if (key && key === _mermaidSkipCacheKey) return _mermaidSkipCacheVal
+  const val = computeCaretInsideOpenMermaidFence()
+  _mermaidSkipCacheKey = key
+  _mermaidSkipCacheVal = val
+  return val
+}
+
+function computeCaretInsideOpenMermaidFence(): boolean {
+  try {
+    if (!wysiwyg) return false
+    const text = editor.value
+    const caret = editor.selectionStart >>> 0
+    const lines = text.split('\n')
+    const caretLine = (() => { try { return text.slice(0, caret).split('\n').length - 1 } catch { return -1 } })()
+    let inside = false
+    let fenceCh = ''
+    let fenceLang = ''
+    for (let i = 0; i <= Math.min(Math.max(0, caretLine), lines.length - 1); i++) {
+      const ln = lines[i]
+      const m = ln.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+      if (m) {
+        const ch = m[1][0]
+        if (!inside) {
+          inside = true
+          fenceCh = ch
+          fenceLang = (m[2] || '').trim().split(/\s+/)[0]?.toLowerCase() || ''
+        } else if (ch === fenceCh) {
+          inside = false
+          fenceCh = ''
+          fenceLang = ''
+        }
+      }
+    }
+    return !!(inside && fenceLang === 'mermaid')
+  } catch {
+    return false
+  }
+}
+
 function hashMermaidCode(code: string): string {
   try {
     // WYSIWYG 情况下，在编辑未闭合的 ```mermaid 围栏内时，跳过 Mermaid 渲染以避免每次输入导致整屏重排/闪烁
-    const _skipMermaid = (() => {
-      if (!wysiwyg) return false
-      try {
-        const text = editor.value
-        const caret = editor.selectionStart >>> 0
-        const lines = text.split('\n')
-        const caretLine = (() => { try { return text.slice(0, caret).split('\n').length - 1 } catch { return -1 } })()
-        let inside = false
-        let fenceCh = ''
-        let fenceLang = ''
-        for (let i = 0; i <= Math.min(Math.max(0, caretLine), lines.length - 1); i++) {
-          const ln = lines[i]
-          const m = ln.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
-          if (m) {
-            const ch = m[1][0]
-            if (!inside) {
-              inside = true
-              fenceCh = ch
-              fenceLang = (m[2] || '').trim().split(/\s+/)[0]?.toLowerCase() || ''
-            } else if (ch === fenceCh) {
-              inside = false
-              fenceCh = ''
-              fenceLang = ''
-            }
-          }
-        }
-        return !!(inside && fenceLang === 'mermaid')
-      } catch { return false }
-    })()
-    if (_skipMermaid) { throw new Error('SKIP_MERMAID_RENDER_IN_WYSIWYG') }
+    if (isCaretInsideOpenMermaidFence()) { throw new Error('SKIP_MERMAID_RENDER_IN_WYSIWYG') }
     if (!code) return 'mmd-empty'
     let hash = 2166136261 >>> 0 // FNV-1a 32 位初始值
     for (let i = 0; i < code.length; i++) {
@@ -655,7 +688,6 @@ function notifyModeChange(): void {
 let wysiwygLineEl: HTMLDivElement | null = null
 // 点状光标元素与度量缓存
 let wysiwygCaretEl: HTMLDivElement | null = null
-let wysiwygStatusEl: HTMLDivElement | null = null
 // _wysiwygCaretLineIndex / _wysiwygCaretVisualColumn / _caretCharWidth / _caretFontKey
 // 已闭包到 src/modes/wysiwygCaret.ts 工厂内,main.ts 不再持有。
 let selectedFolderPath: string | null = null
@@ -1332,28 +1364,23 @@ async function confirmNative(message: string, title = '确认') : Promise<boolea
 
 function showError(msg: string, err?: unknown) {
   void appendLog('ERROR', msg, err)
-  // 确保 status 元素存在后才更新
-  const statusEl = document.getElementById('status')
-  if (statusEl) {
-    statusEl.textContent = `错误: ${msg}`
-  } else {
+  // 组装一次文本、查询一次元素、写入一次。
+  // 此前这里先写 `错误: msg`，紧接着又被一个 IIFE 用 `错误: msg - detail`
+  // 无条件覆盖 —— 两次 getElementById + 两次 textContent 赋值都白做。
+  let text = `错误: ${msg}`
+  try {
+    const detail = (err instanceof Error)
+      ? err.message
+      : (typeof err === 'string' ? err : (err ? JSON.stringify(err) : ''))
+    if (detail) text += ` - ${detail}`
+  } catch {}
+  try {
+    const statusEl = document.getElementById('status')
+    if (statusEl) statusEl.textContent = text
+    else console.error('错误:', msg, err)
+  } catch {
     console.error('错误:', msg, err)
   }
-  ;(() => {
-    try {
-      const statusEl2 = document.getElementById('status')
-      if (statusEl2) {
-        let __text = `错误: ${msg}`
-        try {
-          const __detail = (err instanceof Error)
-            ? err.message
-            : (typeof err === 'string' ? err : (err ? JSON.stringify(err) : ''))
-          if (__detail) __text += ` - ${__detail}`
-        } catch {}
-        statusEl2.textContent = __text
-      }
-    } catch {}
-  })()
 }
 
 function guard<T extends (...args: any[]) => any>(fn: T) {
@@ -1778,7 +1805,6 @@ titlebarStatusApi = createTitlebarStatus({
 })
 
 // 所见模式：输入即渲染 + 覆盖式同窗显示
-function syncScrollEditorToPreview() { /* overlay removed */ }
 
 function scheduleWysiwygRender() {
   try {
@@ -1977,7 +2003,6 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
         // 根据“库是否固定”应用布局：WYSIWYG V2 在固定库时仍占满全宽
         try { applyLibraryLayout() } catch {}
         // 移除旧滚轮处理器
-        try { if (_wheelHandlerRef) { container?.removeEventListener('wheel', _wheelHandlerRef as any); _wheelHandlerRef = null } } catch {}
         // 取消右下角提示信息，避免遮挡与视觉噪声
         // 确保富文本视图获得焦点
         setTimeout(() => {
@@ -2017,10 +2042,8 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       // 使用点状光标替代系统竖线光标
       try { if (container) container.classList.add('no-caret') } catch {}
       try { preview.classList.remove('hidden') } catch {}
-      try { if (wysiwygStatusEl) wysiwygStatusEl.classList.add('show') } catch {}
       await renderPreview()
       try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
-      syncScrollEditorToPreview()
       wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start()
     } else {
       if (wysiwygV2Active) {
@@ -2034,7 +2057,6 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       try { updateChromeColorsForMode(mode === 'preview' ? 'preview' : 'edit') } catch {}
       if (mode !== 'preview') { try { preview.classList.add('hidden') } catch {} } else { try { preview.classList.remove('hidden') } catch {} }
       try { if (container) container.classList.remove('no-caret') } catch {}
-      try { if (wysiwygStatusEl) wysiwygStatusEl.classList.remove('show') } catch {}
       // 退出所见后确保编辑器可编辑并聚焦
       try { (editor as HTMLTextAreaElement).disabled = false; (editor as HTMLTextAreaElement).style.pointerEvents = 'auto'; (editor as HTMLTextAreaElement).focus() } catch {}
       if (wysiwygLineEl) wysiwygLineEl.classList.remove('show')
@@ -2124,7 +2146,6 @@ try { applyUiZoom() } catch {}
 // 初始化阅读/所见宽度：读取已保存宽度并应用到预览/所见容器
 try { applyPreviewWidth() } catch {}
 
-let _wheelHandlerRef: ((e: WheelEvent)=>void) | null = null
   if (containerEl) {
   // 修复在所见模式中滚轮无法滚动编辑区的问题：
   // 在容器层捕获 wheel 事件，直接驱动 textarea 的滚动并同步预览
@@ -3066,104 +3087,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       } catch {}
     })
   } catch {}
-
-  // Mermaid 渲染：标准化为 <div class="mermaid"> 后逐个渲染为 SVG
-  try {
-    // 情况1：<pre><code class="language-mermaid">...</code></pre>
-    const codeBlocks = preview.querySelectorAll('pre > code.language-mermaid')
-    codeBlocks.forEach((code) => {
-      try {
-        const pre = code.parentElement as HTMLElement
-        const text = code.textContent || ''
-        const div = document.createElement('div')
-        div.className = 'mermaid'
-        div.textContent = text
-        pre.replaceWith(div)
-      } catch {}
-    })
-
-    // 情况2：<pre class="mermaid">...</pre>
-    const preMermaid = preview.querySelectorAll('pre.mermaid')
-    preMermaid.forEach((pre) => {
-      try {
-        const text = pre.textContent || ''
-        const div = document.createElement('div')
-        div.className = 'mermaid'
-        div.textContent = text
-        pre.replaceWith(div)
-      } catch {}
-    })
-
-    const nodes = Array.from(preview.querySelectorAll('.mermaid')) as HTMLElement[]
-    if (nodes.length > 0) {
-      const { loadMermaid } = await import('./core/mermaidLoader')
-      const mermaid = await loadMermaid()
-      // 所见模式下，进一步静默 mermaid 的 parseError 回调，避免控制台噪音
-      try {
-        if (wysiwyg) {
-          try { (mermaid as any).parseError = () => {} } catch {}
-          try { if ((mermaid as any).mermaidAPI) (mermaid as any).mermaidAPI.parseError = () => {} } catch {}
-        }
-      } catch {}
-      if (!mermaidReady) {
-        // 初始化 Mermaid；所见模式下降低日志级别，避免错误信息干扰输入体验
-        mermaid.initialize(getMermaidConfig())
-        mermaidReady = true
-        try { decorateCodeBlocks(preview) } catch {}
-      } else {
-        // 已初始化时，动态调整主题（切换所见/预览模式或夜间模式时生效）
-        try {
-          mermaid.initialize(getMermaidConfig())
-        } catch {}
-      }
-      for (let i = 0; i < nodes.length; i++) {
-        const el = nodes[i]
-        const code = el.textContent || ''
-        const hash = hashMermaidCode(code)
-        const desiredId = `${hash}-${mermaidSvgCacheVersion}-${i}`
-        try {
-          let svgMarkup = getCachedMermaidSvg(code, desiredId)
-          let cacheHit = false
-          if (svgMarkup) {
-            cacheHit = true
-          } else {
-            const renderId = `${hash}-${Date.now()}-${i}`
-            const { svg } = await mermaid.render(renderId, code)
-            cacheMermaidSvg(code, svg, renderId)
-            svgMarkup = svg.split(renderId).join(desiredId)
-          }
-          const wrap = document.createElement('div')
-          wrap.innerHTML = svgMarkup || ''
-          const svgEl = wrap.firstElementChild as SVGElement | null
-          if (svgEl) { try { normalizeMermaidSvg(svgEl) } catch {}
-            svgEl.setAttribute('data-mmd-hash', hash)
-            svgEl.setAttribute('data-mmd-cache', cacheHit ? 'hit' : 'miss')
-            if (!svgEl.id) svgEl.id = desiredId
-            const fig = document.createElement('div')
-            fig.className = 'mmd-figure'
-            // 记录 Mermaid 源码：导出 PDF 时按需重建为 <div class="mermaid">text</div> 后用 light theme 重新渲染，
-            // 解决 dark mode 下导出 PDF 仍是黑底的问题。源码长度通常 < 1KB，data 属性开销可忽略。
-            try { fig.dataset.source = code } catch {}
-            fig.appendChild(svgEl)
-            try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
-            el.replaceWith(fig)
-            try { postAttachMermaidSvgAdjust(svgEl) } catch {}
-          } else {
-            throw new Error('生成的 SVG 节点为空')
-          }
-        } catch (err) {
-          // 所见模式：完全静默；预览模式保留错误提示
-          if (!wysiwyg) {
-            console.error('Mermaid 单图渲染失败：', err)
-            el.innerHTML = `<div style=\"color: red; border: 1px solid red; padding: 10px;\">Mermaid 渲染错误: ${err}</div>`
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // 所见模式：完全静默；预览模式保留错误日志
-    if (!wysiwyg) console.error('Mermaid 渲染失败：', e)
-  }
 
   // 阅读/预览模式：在 Mermaid 渲染完成后统一依据当前全局缩放重算一次 SVG 宽度
   // 等价于用户手动点击一次工具条上的“R”，但不会修改缩放值本身，避免每次打开都需要手动复位
@@ -4269,57 +4192,9 @@ async function saveAs() {
     if (ext === 'pdf' || ext === 'docx' || ext === 'wps') {
       try {
         if (ext === 'pdf') {
-          const cancelSource = { cancelled: false }
-          const { openProgressOverlay } = await import('./core/progressOverlay')
-          const overlay = openProgressOverlay({
-            title: '正在导出 PDF',
-            sub: '准备中…',
-            onCancel: () => { cancelSource.cancelled = true },
-          })
-          try {
-            overlay.appendLog('输出：' + String(target))
-            status.textContent = '正在导出 PDF...';
-            // 导出应当按打印语义渲染：不带所见模式的模拟光标/交互标记
-          overlay.setSub('正在渲染预览…')
-          await renderPreview({ forPrint: true });
-          overlay.appendLog('预览渲染完成')
-            const el = preview.querySelector('.preview-body') as HTMLElement | null;
-            if (!el) throw new Error('未找到预览内容容器');
-            const { exportPdf } = await import('./exporters/pdf');
-            const fmt = (v: any) => {
-              try { return typeof v === 'string' ? v : JSON.stringify(v) } catch { return String(v) }
-            }
-            const bytes = await exportPdf(el, {
-              sourceFilePath: currentFilePath || undefined,
-              cancelSource,
-              onLog: (msg: string, data?: any) => overlay.appendLog(data != null ? (msg + ' ' + fmt(data)) : msg),
-              onProgress: (p: any) => {
-                try {
-                  const msg = String(p?.message || '').trim()
-                  if (msg) overlay.setSub(msg)
-                  const done = Number(p?.done)
-                  const total = Number(p?.total)
-                  if (Number.isFinite(done) && Number.isFinite(total) && total > 0) overlay.setProgress(done, total)
-                } catch {}
-              },
-            });
-            overlay.setSub('正在写入文件…')
-            await writeFile(target as any, bytes as any);
-            overlay.setTitle('导出完成')
-            overlay.setSub('已写入：' + String(target))
-            setTimeout(() => { try { overlay.close() } catch {} }, 800)
-          } catch (e: any) {
-            if (e && typeof e === 'object' && (e as any)._flymdCancelled === true) {
-              overlay.markCancelled()
-              status.textContent = '已取消导出'
-              setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
-              return
-            }
-            const msg = (e && (e.message || e.toString?.())) ? String(e.message || e.toString()) : String(e || '')
-            overlay.fail('导出失败', msg)
-            showError('导出失败', e)
-            return
-          }
+          // 与 exportCurrentDocToPdf 共用同一份实现（此前这里是整段复制，
+          // 两份已各自漂移）。后者额外维护 status 文案与完成提示。
+          await exportCurrentDocToPdf(target)
         } else {
           status.textContent = '正在导出 ' + ext.toUpperCase() + '...';
           // DOCX/WPS 同样按打印语义渲染，避免把所见模式的模拟光标导出进去
@@ -4831,6 +4706,33 @@ async function getLibraryRoot(): Promise<string | null> {
   try { return await getActiveLibraryRoot() } catch { return null }
 }
 
+// fileTree.init 的选项在历史上被复制到 9 个调用点，且已经漂移：
+// 其中两处（重新加载/切换库路径）的 onOpenNewFile 漏掉了「切回编辑模式 +
+// 隐藏预览 + 聚焦编辑器」，导致从这两处新建文件后界面停在阅读模式。
+// 统一由这里产出，避免再次分叉。
+type FileTreeOpts = Parameters<typeof fileTree.init>[1]
+function makeFileTreeOpts(overrides?: Partial<FileTreeOpts>): FileTreeOpts {
+  return {
+    getRoot: getLibraryRoot,
+    onOpenFile: async (p: string) => { await openFile2(p) },
+    onOpenNewFile: async (p: string) => {
+      await openFile2(p)
+      mode = 'edit'
+      preview.classList.add('hidden')
+      try { (editor as HTMLTextAreaElement).focus() } catch {}
+    },
+    onMoved: async (src: string, dst: string) => {
+      try {
+        if (currentFilePath === src) {
+          currentFilePath = dst as any
+          titlebarStatusApi?.refreshTitle()
+        }
+      } catch {}
+    },
+    ...(overrides || {}),
+  }
+}
+
 async function setLibraryRoot(p: string) {
   // 兼容旧代码：设置库路径即插入/更新库并设为激活。
   // upsertLibrary 会把库置为激活但不清已打开的文件，因此随后补完整切库流程：
@@ -5023,12 +4925,7 @@ try {
       try {
         const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
         if (treeEl && !fileTreeReady) {
-          await fileTree.init(treeEl, {
-            getRoot: getLibraryRoot,
-            onOpenFile: async (p: string) => { await openFile2(p) },
-            onOpenNewFile: async (p: string) => { await openFile2(p); mode = 'edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-            onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} },
-          })
+          await fileTree.init(treeEl, makeFileTreeOpts())
           fileTreeReady = true
         }
         // init 失败/未初始化时，revealAndSelect 会自行兜底，不要在这里抛异常
@@ -5606,9 +5503,10 @@ async function persistLibraryVisible() {
         item.addEventListener('mouseleave', () => { item.style.background = 'transparent' })
         item.addEventListener('click', () => {
           try { void setOutlineLayout(mode) } catch {}
-          try {
-            if (menu.parentElement) menu.parentElement.removeChild(menu)
-          } catch {}
+          // 必须走 close()：它会一并摘掉 onDocClick/onDocCtx 这两个 capture 阶段的
+          // document 监听器。直接 removeChild(menu) 会让它们残留在文档上，
+          // 每切换一次布局就泄漏一对。
+          close()
         })
         return item
       }
@@ -6020,24 +5918,7 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
     } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
-      await fileTree.init(treeEl, {
-        getRoot: getLibraryRoot,
-        onOpenFile: async (p: string) => { await openFile2(p) },
-        onOpenNewFile: async (p: string) => {
-          await openFile2(p)
-          mode = 'edit'
-          preview.classList.add('hidden')
-          try { (editor as HTMLTextAreaElement).focus() } catch {}
-        },
-        onMoved: async (src: string, dst2: string) => {
-          try {
-            if (currentFilePath === src) {
-              currentFilePath = dst2 as any
-              titlebarStatusApi?.refreshTitle()
-            }
-          } catch {}
-        }
-      })
+      await fileTree.init(treeEl, makeFileTreeOpts())
       fileTreeReady = true
     } else if (treeEl) {
       await fileTree.refresh()
@@ -6181,12 +6062,7 @@ async function refreshLibraryUiAndTree(refreshTree = true) {
     try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
-      await fileTree.init(treeEl, {
-        getRoot: getLibraryRoot,
-        onOpenFile: async (p: string) => { await openFile2(p) },
-        onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} }
-      })
+      await fileTree.init(treeEl, makeFileTreeOpts())
       fileTreeReady = true
     } else if (treeEl) {
       await fileTree.refresh()
@@ -7419,28 +7295,14 @@ function bindEvents() {
     ensureTreeInitialized: async () => {
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
       if (treeEl && !fileTreeReady) {
-        await fileTree.init(treeEl, {
-          getRoot: getLibraryRoot,
-          onOpenFile: async (p: string) => { await openFile2(p) },
-          onOpenNewFile: async (p: string) => { await openFile2(p) },
-          onMoved: async (src: string, dst: string) => {
-            try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {}
-          },
-        })
+        await fileTree.init(treeEl, makeFileTreeOpts())
         fileTreeReady = true
       }
     },
     refreshTree: async () => {
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
       if (treeEl && !fileTreeReady) {
-        await fileTree.init(treeEl, {
-          getRoot: getLibraryRoot,
-          onOpenFile: async (p: string) => { await openFile2(p) },
-          onOpenNewFile: async (p: string) => { await openFile2(p) },
-          onMoved: async (src: string, dst: string) => {
-            try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {}
-          },
-        })
+        await fileTree.init(treeEl, makeFileTreeOpts())
         fileTreeReady = true
       } else if (treeEl) {
         await fileTree.refresh()
@@ -7780,7 +7642,7 @@ function bindEvents() {
       await openFile2(p)
       mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {}
       const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
-      if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (q: string) => { await openFile2(q) }, onOpenNewFile: async (q: string) => { await openFile2(q); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() }
+      if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, makeFileTreeOpts()); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() }
       try { const tree = document.getElementById('lib-tree') as HTMLDivElement | null; const nodes = Array.from(tree?.querySelectorAll('.lib-node.lib-dir') || []) as HTMLElement[]; const target = nodes.find(n => (n as any).dataset?.path === dir); if (target) target.dispatchEvent(new MouseEvent('click', { bubbles: true })) } catch {}
       return
     } catch (e) { showError('新建文件失败', e) }
@@ -7806,12 +7668,7 @@ function bindEvents() {
     try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {}
     const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null
     if (treeEl && !fileTreeReady) {
-      await fileTree.init(treeEl, {
-        getRoot: getLibraryRoot,
-        onOpenFile: async (p: string) => { await openFile2(p) },
-        onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} },
-        onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} }
-      })
+      await fileTree.init(treeEl, makeFileTreeOpts())
       fileTreeReady = true
     } else if (treeEl) {
       await fileTree.refresh()
@@ -8660,7 +8517,7 @@ function bindEvents() {
     const chooseBtn = document.getElementById('lib-choose') as HTMLButtonElement | null
     const refreshBtn = document.getElementById('lib-refresh') as HTMLButtonElement | null
     if (chooseBtn) chooseBtn.addEventListener('click', guard(async () => { await showLibraryMenu() }))
-  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} }, onMoved: async (src: string, dst: string) => { try { if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
+  if (refreshBtn) refreshBtn.addEventListener('click', guard(async () => { try { const s = await getLibrarySort(store); (fileTree as any).setSort(s as any) } catch {} const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, makeFileTreeOpts()); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } }))
   } catch {}
   // 监听 Tauri 文件拖放（用于直接打开 .md/.markdown/.txt 文件）
   ;(async () => {
