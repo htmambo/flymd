@@ -32,6 +32,29 @@ async function readBlobBytes(b: Blob, limit?: number): Promise<Uint8Array> {
   return buf.subarray(0, limit)
 }
 
+// 校验 GIF 文件头："GIF87a" / "GIF89a"
+function isGifSignature(bytes: Uint8Array): boolean {
+  try {
+    if (bytes.length < 6) return false
+    return bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 &&
+      bytes[3] === 0x38 && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61
+  } catch { return false }
+}
+
+// 检测 GIF 是否为动图：NETSCAPE2.0/ANIMEXTS1.0 循环扩展，或存在多个图像描述符(0x2C)
+function isAnimatedGifBytes(bytes: Uint8Array): boolean {
+  try {
+    const str = new TextDecoder('latin1', { fatal: false }).decode(bytes)
+    if (str.includes('NETSCAPE2.0') || str.includes('ANIMEXTS1.0')) return true
+  } catch {}
+  // 简易扫描 0x2C（图像描述符）计数
+  let count = 0
+  for (let i = 0; i < bytes.length; i++) {
+    if (bytes[i] === 0x2c) { count++; if (count >= 2) return true }
+  }
+  return false
+}
+
 // 检测 PNG 是否为 APNG：存在 acTL 块
 function isApngBytes(bytes: Uint8Array): boolean {
   try {
@@ -91,6 +114,18 @@ export async function transcodeToWebpIfNeeded(input: Blob, origName: string, qua
     // APNG：跳过
     if (skipAnimated && type.includes('image/png')) {
       try { const head = await readBlobBytes(input, 512 * 1024); if (isApngBytes(head)) return { blob: input, type: 'image/png', fileName: origName, changed: false } } catch {}
+    }
+    // 动图 GIF 的兜底：上面按 type/ext 的判断仍会漏掉一批情况 ——
+    // 来源给了错误 MIME（如 xxx.png 却是 image/gif）或两者都不可靠时，动图会被
+    // 转成静态 WebP，动画就此丢失。这里在「即将转码」这一步补一次字节级检测。
+    // 只读前 64KB（Blob.slice 是惰性的，不整文件 arrayBuffer），先验签名再判多帧。
+    if (skipAnimated) {
+      try {
+        const head = new Uint8Array(await input.slice(0, 64 * 1024).arrayBuffer())
+        if (isGifSignature(head) && isAnimatedGifBytes(head)) {
+          return { blob: input, type: 'image/gif', fileName: origName, changed: false }
+        }
+      } catch {}
     }
     // 其他位图或 SVG：尝试转码
     const webp = await rasterizeToWebp(input, quality)

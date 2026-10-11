@@ -264,6 +264,10 @@ let _extMarketCategory = ''
 let _extLastMarketItems: InstallableItem[] = []
 // 室内缓存：可更新状态，避免频繁网络请求阻塞 UI
 let _extLastUpdateMap: Record<string, PluginUpdateState> = {}
+// 已安装列表的内存快照。仅在「读取存储抛错」时兜底 —— 读到空对象是
+// 合法状态（用户确实没装任何扩展），必须与读取失败区分开，否则一次瞬时
+// 存储故障就会让已安装列表整块变空。
+let _extLastInstalledMap: Record<string, InstalledPlugin> | null = null
 let _extMarketInstalledOnly = false // 是否仅显示已安装（隐藏市场区块）
 let _extUpdatesOnly = false  // 是否仅显示可更新扩展（已安装区块过滤）
 let _extGlobalOrder: Record<string, number> = {} // 扩展卡片统一排序顺序
@@ -333,13 +337,17 @@ export async function loadInstallablePlugins(force = false): Promise<Installable
 
 // 统一获取/写入已安装扩展映射（只依赖宿主提供的 Store）
 async function getInstalledPluginsFromStore(): Promise<Record<string, InstalledPlugin>> {
+  // host 尚未注入属于「还没初始化」，返回空是正确语义，不动用快照
+  if (!host) return {}
   try {
-    if (!host) return {}
     const store = host.getStore()
     const map = await loadInstalledPlugins(store)
+    // 读到空对象是合法状态（用户确实没装扩展），不能与读取失败混同
+    _extLastInstalledMap = map
     return map
   } catch {
-    return {}
+    // 存储瞬时故障不该让已安装列表整块消失，回退到上一次的快照
+    return _extLastInstalledMap || {}
   }
 }
 
@@ -348,6 +356,8 @@ async function setInstalledPluginsToStore(map: Record<string, InstalledPlugin>):
     if (!host) return
     const store = host.getStore()
     await saveInstalledPlugins(store, map)
+    // 安装/卸载都走这里，成功后同步快照，避免卸载的插件在存储读取失败时复活
+    _extLastInstalledMap = map
   } catch {}
 }
 
