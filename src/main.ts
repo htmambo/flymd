@@ -4134,6 +4134,11 @@ async function saveAs() {
     currentFilePath = target
     dirty = false
     titlebarStatusApi?.refreshTitle()
+    // 通知标签系统文件已保存。
+    // saveFile 也有这一步，但另存为此前漏了：监听器（tabs/integration 的
+    // hookFileSavedEvent）会据此在路径变化时更新标签路径并清除脏标记。
+    // 缺失导致另存为之后，标签仍指向旧路径且一直显示为未保存。
+    window.dispatchEvent(new CustomEvent('flymd-file-saved'))
     // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register + markSelfWrite
     try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
     try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
