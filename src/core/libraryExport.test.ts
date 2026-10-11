@@ -25,7 +25,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   BaseDirectory: { AppData: 1, AppLocalData: 2, AppConfig: 3 },
 }))
 
-import { collectConfigBackupFiles, bytesToBase64 } from './configBackup'
+import { collectConfigBackupFiles } from './configBackup'
 import { exportLibraryConfig, hasLibraryCredentials } from './libraryExport'
 
 describe('PR-6: collectConfigBackupFiles with includeLibraries', () => {

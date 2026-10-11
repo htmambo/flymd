@@ -166,7 +166,6 @@ import type {
 import { initPluginsMenu, addToPluginsMenu, removeFromPluginsMenu, togglePluginDropdown } from './pluginMenu'
 import {
   registerPluginRibbonButton,
-  unregisterPluginRibbonButton,
   type PluginRibbonIconType,
 } from './pluginRibbonManager'
 import { NotificationManager } from '../core/uiNotifications'

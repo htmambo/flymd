@@ -2459,16 +2459,13 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           const localChanged = localHash !== lastHash
 
           let remoteChanged = false
-          let remoteChangeReason = ''
           if (last.remoteEtag && remote.etag) {
             // 优先使用 ETag 判断远端变化
             remoteChanged = last.remoteEtag !== remote.etag
-            if (remoteChanged) remoteChangeReason = 'etag-diff'
           } else if (last.remoteMtime && remote.mtime) {
             // 其次使用远端 mtime（考虑 clockSkewMs 容错）
             const clockSkew = Math.max(Math.abs(cfg.clockSkewMs || 0), 1000)
             remoteChanged = Math.abs(last.remoteMtime - remote.mtime) > clockSkew
-            if (remoteChanged) remoteChangeReason = 'mtime-diff'
           } else {
             // 无法可靠判断远端是否变化：视为潜在争议，改为直接询问用户选择本地或远端版本
             await syncLog('[safe-mode-conflict] ' + k + ' forceSafePull: 缺少可靠远端元数据（no etag/mtime），将询问用户选择本地或远端版本')
@@ -3263,7 +3260,6 @@ export async function openWebdavSyncDialog(): Promise<void> {
 
   const form = overlay.querySelector('#sync-form') as HTMLFormElement
   const btnClose = overlay.querySelector('#sync-close') as HTMLButtonElement
-  const btnSave = overlay.querySelector('#sync-save') as HTMLButtonElement
   const btnTest = overlay.querySelector('#sync-test') as HTMLButtonElement
   const btnOpenLog = overlay.querySelector('#sync-openlog') as HTMLButtonElement
   const elEnabled = overlay.querySelector('#sync-enabled') as HTMLInputElement

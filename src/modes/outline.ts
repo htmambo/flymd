@@ -75,7 +75,6 @@ export interface OutlineApi {
 
 export function createOutline(deps: OutlineDeps): OutlineApi {
   // 闭包到工厂的模块级缓存
-  let _outlineScrollBound = false
   let _outlineScrollBoundPreview = false
   let _outlineScrollBoundWysiwyg = false
   let _outlineActiveId = ''
@@ -115,7 +114,6 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
     const wysi = document.getElementById('md-wysiwyg-root') as HTMLElement | null
     const wysiScroll = (document.querySelector('#md-wysiwyg-root .scrollView') as HTMLElement | null) || wysi
     if (wysiScroll && !_outlineScrollBoundWysiwyg) { wysiScroll.addEventListener('scroll', onOutlineScroll, { passive: true }); _outlineScrollBoundWysiwyg = true }
-    _outlineScrollBound = _outlineScrollBoundPreview || _outlineScrollBoundWysiwyg
   }
 
   function onOutlineScroll() {

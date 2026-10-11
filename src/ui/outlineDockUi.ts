@@ -5,7 +5,6 @@
 // - 左侧自动避让“库侧栏抽屉”（库未固定但当前可见时）
 // - 右侧自动避让“库侧栏抽屉”（库未固定但当前可见时）与 dock-right-gap（AI/插件面板）
 
-import { ribbonIcons } from '../icons'
 import { getOutlineHasContent, type OutlineLayoutMode } from './outlineAutoHide'
 
 type StoreLike = {
@@ -72,15 +71,6 @@ function ensureEdgeEl(container: HTMLDivElement | null): HTMLDivElement | null {
   } catch {
     return null
   }
-}
-
-function syncPinButtonUi(pinBtn: HTMLButtonElement | null): void {
-  try {
-    if (!pinBtn || !_deps) return
-    // 跟库一致：图标/文案表示“点击后的动作”
-    pinBtn.innerHTML = _outlineDocked ? ribbonIcons.pinOff : ribbonIcons.pin
-    pinBtn.title = _outlineDocked ? (_deps.t('outline.pin.auto') || '自动隐藏') : (_deps.t('outline.pin.fixed') || '固定')
-  } catch {}
 }
 
 function updateOutlineOffsets(container: HTMLDivElement | null, library: HTMLDivElement | null): void {

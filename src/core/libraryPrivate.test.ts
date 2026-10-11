@@ -2,7 +2,7 @@
 // 覆盖 libraryPrivate 框架的读 / 写 / 防抖 / flush / 缓存失效 / 路径 / schema
 // 详见 docs/Task/Active/2026-09-11-library-private-v2-pr3-libraryprivate.md
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Stub 库作用域：libStub.scope.root 模拟"当前有库"
 const libStub = vi.hoisted(() => ({

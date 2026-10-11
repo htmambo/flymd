@@ -1075,7 +1075,6 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     function loadFontDb(): CustomFont[] { return loadThemeFontDb() }
     function saveFontDb(list: CustomFont[]) { try { localStorage.setItem(THEME_FONT_DB_KEY, JSON.stringify(list)) } catch {} }
     function sanitizeId(s: string): string { return s.replace(/[^a-zA-Z0-9_-]+/g, '-') }
-    function getFormat(ext: string): string { return getThemeFontFormat(ext) }
     async function ensureFontsDir() { try { await mkdir(THEME_FONTS_DIR as any, { baseDir: BaseDirectory.AppLocalData, recursive: true } as any) } catch {} }
     async function injectFontFace(f: CustomFont): Promise<void> {
       await injectThemeFontFace(f)

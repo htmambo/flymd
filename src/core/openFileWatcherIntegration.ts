@@ -11,7 +11,6 @@
 
 import { dispatchPathDeleted } from './pathEvents'
 import { logDebug, logWarn } from './logger'
-import { t } from '../i18n'
 import type { OpenFileWatcher, WatchToken } from './openFileWatcher'
 import type { FileWatchConflictChoice, FileWatchDiffResult } from '../dialog'
 

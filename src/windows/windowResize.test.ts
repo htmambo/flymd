@@ -8,7 +8,7 @@
 // 5) init() 创建 8 个 handle,挂到 body
 // 6) stop() 移除所有 listener + container
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createWindowResize } from './windowResize'
 
 function makeDeps(overrides: any = {}) {

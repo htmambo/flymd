@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { getRecentFiles, pushRecentFile, RECENT_MAX, getLibraryCurrentFile, setLibraryCurrentFile, flushLibraryCurrentFile } from './recentFiles'
+import { getRecentFiles, pushRecentFile, getLibraryCurrentFile, setLibraryCurrentFile, flushLibraryCurrentFile } from './recentFiles'
 
 // 库作用域/config 存根：库相关用例通过 libStub.scope.root 模拟"当前有库"
 const libStub = vi.hoisted(() => ({

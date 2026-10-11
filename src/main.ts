@@ -5,7 +5,6 @@ import './imePatch'
 */
 // 性能标记：应用启动
 performance.mark('flymd-app-start')
-const _startTime = performance.now()
 import './style.css'
 import './mobile.css'  // 移动端样式
 import { initThemeUI, applySavedTheme, updateChromeColorsForMode } from './theme'
@@ -41,11 +40,10 @@ import { open, save, ask } from '@tauri-apps/plugin-dialog'
 import { showThreeButtonDialog, showFileWatchConflictDialog, showFileWatchPrefsDialog, showFileWatchDiffDialog, type FileWatchPrefs } from './dialog'
 import { createOpenFileWatcher } from './core/openFileWatcher'
 import { attachExternalChangeWatcher } from './core/openFileWatcherIntegration'
-import { readTextFile, writeTextFile, readDir, stat, readFile, mkdir  , rename, remove, writeFile, exists, copyFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, writeTextFile, stat, readFile, writeFile, exists } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
-import { open as openFileHandle, BaseDirectory } from '@tauri-apps/plugin-fs'
 // Tauri v2 插件 opener 的导出为 openUrl / openPath，不再是 open
-import { openPath, openUrl } from '@tauri-apps/plugin-opener'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
@@ -79,7 +77,7 @@ import {
 import { copyTextToClipboard as copyTextToClipboardRobust } from './utils/clipboard'
 import { saveImageToLocalAndGetPathCore, toggleUploaderEnabledFromMenuCore } from './core/imagePaste'
 // 方案A：多库管理（统一 libraries/activeLibraryId）
-import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, removeLibrary as removeLib, renameLibrary as renameLib, getLibSwitcherPosition, getActiveLibrary } from './utils/library'
+import { getLibraries, getActiveLibraryId, getActiveLibraryRoot, setActiveLibraryId as setActiveLibId, upsertLibrary, getLibSwitcherPosition, getActiveLibrary } from './utils/library'
 import { type MetadataLabelMap } from './core/metadataLabels'
 import { injectPreviewMeta } from './ui/previewMeta'
 import { createDocPositionStore } from './core/docPosition'
@@ -91,7 +89,7 @@ import { decorateCodeBlocks } from './decorate'
 import { ribbonIcons } from './icons'
 import { APP_VERSION } from './core/appInfo'
 import { singleFlight } from './core/singleFlight'
-import type { UpdateAssetInfo, CheckUpdateResp, UpdateExtra } from './core/updateTypes'
+import type { UpdateAssetInfo, CheckUpdateResp } from './core/updateTypes'
 // htmlToMarkdown 改为按需动态导入（仅在粘贴 HTML 时使用）
 import {
   initWebdavSync,
@@ -106,16 +104,12 @@ import {
 } from './extensions/webdavSync'
 
 // 平台适配层（Android 支持）
-import { initPlatformIntegration, mobileSaveFile, isMobilePlatform } from './platform-integration'
+import { initPlatformIntegration } from './platform-integration'
 import { createImageUploader } from './core/imageUpload'
 import { resolveImageTarget } from './core/imageTarget'
 import { hasDownloadableMarkdownImages, rewriteHtmlImagesByDownload, rewriteMarkdownImagesByDownload } from './core/htmlPasteImages'
-import { createPluginMarket, compareInstallableItems, FALLBACK_INSTALLABLES } from './extensions/market'
-import type { InstallableItem } from './extensions/market'
-import { listDirOnce } from './core/libraryFs'
-import { normSep, isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
+import { isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
 import { deleteFileSafe, newFileSafe } from './core/libraryFileOps'
-import { initNetworkProxyFetchShim } from './core/networkProxyFetchShim'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 
 // 顶层 window 几何工厂(被 startScaleFactor / ensureMinWindowSize / centerWindow 调用)
@@ -126,8 +120,6 @@ const windowsCompositorPokeApi = createWindowsCompositorPoke({ isTauriRuntime, g
 const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximizedState, getWindowScaleFactorSafe: windowPlacementApi.getWindowScaleFactorSafe, isTauriRuntime })
 // 顶栏标题/状态栏/滚动位置同步层(DOM 引用延后到查询完成后再注入,这里先占位)
 let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
-// WYSIWYG 模式自动换行(代码围栏 / 行内数学 $...$ 闭合)
-let wysiwygAutoNewlinesApi: WysiwygAutoNewlinesApi | null = null
 // 平台 init(platform class + window drag)
 let platformInitApi: PlatformInitApi | null = null
 // 编辑器插入 / 包装
@@ -153,7 +145,6 @@ const pluginRuntimeProxy = new Proxy({} as PluginRuntimeHandles, {
     return value
   },
 }) as PluginRuntimeHandles
-import { createCustomTitleBar, removeCustomTitleBar, applyWindowDecorationsCore } from './modes/focusMode'
 import {
   toggleFocusMode,
   getFocusMode,
@@ -168,14 +159,8 @@ import {
 import {
   type StickyNoteColor,
   type StickyNoteReminderMap,
-  type StickyNotePrefs,
-  STICKY_NOTE_PREFS_FILE,
   STICKY_NOTE_DEFAULT_OPACITY,
   STICKY_NOTE_DEFAULT_COLOR,
-  STICKY_NOTE_VALID_COLORS,
-  loadStickyNotePrefsCore,
-  saveStickyNotePrefsCore,
-  type StickyNotePrefsDeps,
   applyStickyNoteAppearance,
   type StickyNoteModeDeps,
   type StickyNoteModeResult,
@@ -186,8 +171,6 @@ import {
 import {
   createStickyNotePrefsHost,
   type StickyNotePrefsHost,
-  createStickyNoteWindowHost,
-  type StickyNoteWindowHost,
 } from './modes/stickyNoteHost'
 import {
   createStickyNoteUi,
@@ -197,7 +180,7 @@ import { createStickyAutoSaver } from './modes/stickyAutoSave'
 import { createStickyTodoActions } from './modes/stickyTodoActions'
 import { createWysiwygCaret } from './modes/wysiwygCaret'
 import { createOutline } from './modes/outline'
-import { createWysiwygAutoNewlines, type WysiwygAutoNewlinesApi } from './modes/wysiwygAutoNewlines'
+import { createWysiwygAutoNewlines } from './modes/wysiwygAutoNewlines'
 import { createPlatformInit, type PlatformInitApi } from './modes/platformInit'
 import { createEditorInsert, type EditorInsertApi } from './core/editorInsert'
 import { createKatexCache, type KatexCacheApi } from './modes/katexCache'
@@ -210,17 +193,9 @@ import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
 } from './modes/focusModeUi'
-import type {
-  PluginManifest,
-  InstalledPlugin,
-  PluginUpdateState,
-} from './extensions/runtime'
 import type { PluginRuntimeHandles } from './extensions/pluginRuntimeHost'
 import {
   initPluginsMenu,
-  addToPluginsMenu,
-  removeFromPluginsMenu,
-  togglePluginDropdown,
   setPluginsMenuManagerOpener,
   getPluginsMenuItemsSnapshot,
   getPluginDropdownItems,
@@ -249,7 +224,6 @@ import { showTopMenu, type TopMenuItemSpec } from './ui/topMenu'
 import { createMainTopMenus } from './ui/mainTopMenus'
 import { initCodeCopyEvents } from './ui/codeCopyEvents'
 import {
-  removeContextMenu,
   showContextMenu,
   type ContextMenuContext,
   type ContextMenuItemConfig,
@@ -275,13 +249,11 @@ import { getMermaidConfig } from './core/mermaidConfig'
 import { CONFIG_BACKUP_FILE_EXT, formatBackupTimestamp } from './core/configBackup'
 import { pluginNotice } from './core/pluginNotice'
 import { shouldSanitizePreview } from './core/sanitize'
-import { isLikelyLocalPath } from './core/pathUtils'
 // 应用版本号（用于窗口标题/关于弹窗）
 
 // UI 缩放与预览宽度（已拆分到 core/uiZoom.ts）
-import { getUiZoom, setUiZoom, applyUiZoom, zoomIn, zoomOut, zoomReset, getPreviewWidth, setPreviewWidth, applyPreviewWidth, resetPreviewWidth, PREVIEW_WIDTH_STEP } from './core/uiZoom'
-import { showZoomBubble, showWidthBubble, NotificationManager, showModeChangeNotification, updateSyncStatus } from './core/uiNotifications'
-import type { NotificationType } from './core/uiNotifications'
+import { applyUiZoom, zoomIn, zoomOut, zoomReset, getPreviewWidth, setPreviewWidth, applyPreviewWidth, PREVIEW_WIDTH_STEP } from './core/uiZoom'
+import { showZoomBubble, showWidthBubble, NotificationManager, showModeChangeNotification } from './core/uiNotifications'
 import { initAutoSave, type AutoSaveHandles } from './core/autoSave'
 
 // 滚动条自动隐藏
@@ -295,8 +267,6 @@ type Mode = 'edit' | 'preview'
 let md: MarkdownIt | null = null
 let sanitizeHtml: ((html: string, cfg?: any) => string) | null = null
 let katexCssLoaded = false
-let hljsLoaded = false
-let mermaidReady = false
 
 // KaTeX 渲染在大文档（特别是大量公式）场景下非常容易把 UI 线程卡死。
 // 这里用时间切片把长任务切开：功能不变，但不会“切阅读模式像死机”。
@@ -455,7 +425,6 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
         }
       } catch {}
       mermaid.initialize(getMermaidConfig());
-      mermaidReady = true
       try { decorateCodeBlocks(root) } catch {}
       for (let i = 0; i < nodes.length; i++) {
         const el = nodes[i]
@@ -518,7 +487,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
 
 
 // Mermaid 工具（已拆分到 core/mermaid.ts）
-import { isMermaidCacheDisabled, getMermaidScale, setMermaidScaleClamped, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCache, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache, MERMAID_SCALE_MIN, MERMAID_SCALE_MAX, MERMAID_SCALE_STEP } from './core/mermaid'
+import { isMermaidCacheDisabled, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache } from './core/mermaid'
 import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from './plugins/strongBoundaryCompat'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
 let _currentPdfSrcUrl: string | null = null
@@ -533,8 +502,6 @@ type PdfViewCacheEntry = {
 }
 const _pdfViewCache = new Map<string, PdfViewCacheEntry>()
 const PDF_VIEW_CACHE_MAX = 4
-let _previewMdHost: HTMLDivElement | null = null
-let _previewPdfHost: HTMLDivElement | null = null
 // 大纲缓存（Markdown/WYSIWYG）：避免重复重建 DOM
 let _outlineLastSignature = ''
 // 所见模式：用于滚动同步的“源位锚点”表
@@ -672,8 +639,6 @@ let _suppressTempLibrarySync = false
 // 模式切换时的滚动位置缓存（百分比 0-1）
 let lastScrollPercent = 0
 let _wysiwygRaf = 0
-// 仅在按回车时触发渲染（可选开关，默认关闭）
-let wysiwygEnterToRenderOnly = false
 // 所见模式：针对行内 $ 与 代码围栏 ``` 的“闭合后需回车再渲染”延迟标记
 let wysiwygHoldInlineDollarUntilEnter = false
 let wysiwygHoldFenceUntilEnter = false
@@ -690,8 +655,12 @@ let wysiwygLineEl: HTMLDivElement | null = null
 let wysiwygCaretEl: HTMLDivElement | null = null
 // _wysiwygCaretLineIndex / _wysiwygCaretVisualColumn / _caretCharWidth / _caretFontKey
 // 已闭包到 src/modes/wysiwygCaret.ts 工厂内,main.ts 不再持有。
-let selectedFolderPath: string | null = null
-let selectedNodeEl: HTMLElement | null = null
+// 注：库树的选中态由 fileTree.ts 自己的 state.selected 维护，main.ts 不再持有副本。
+// 「新建文档」改为向 fileTree 查询（getSelectedDir 会在选中项是文件时回退到其父目录），
+// 此前此处读的是一个恒为 null 的变量，导致在文件树里选中的文件夹被完全忽略。
+function getSelectedFolderPath(): string | null {
+  try { return fileTree.getSelectedDir() } catch { return null }
+}
 // 库面板停靠状态：true=固定在左侧并收缩编辑区；false=覆盖式抽屉
   let libraryDocked = true
   let librarySide: LibrarySide = 'left'
@@ -756,14 +725,6 @@ deferredStartupApi = createDeferredStartup({
 let _libEdgeEl: HTMLDivElement | null = null
 let _libFloatToggleEl: HTMLButtonElement | null = null
 // 4 个 localStorage 工具(read/writeLibraryDockedFrom/ToLocalStorage + Side)由 utils/libraryPrefs 提供
-function selectLibraryNode(el: HTMLElement | null, path: string | null, isDir: boolean) {
-  try {
-    if (selectedNodeEl) selectedNodeEl.classList.remove('selected')
-    selectedNodeEl = el as any
-    if (selectedNodeEl) selectedNodeEl.classList.add('selected')
-    selectedFolderPath = (isDir && path) ? path : selectedFolderPath
-  } catch {}
-}
 
 let currentFilePath: string | null = null
 // YAML Front Matter 当前缓存，仅用于渲染/所见模式，源码始终保留完整文本
@@ -804,10 +765,10 @@ let _lastPasteCombo: 'normal' | 'plain' | null = null
 let store: Store | null = null
 let uploaderEnabledSnapshot = false
 // 配置备份（已拆分到 core/configBackup.ts）
-import { CONFIG_BACKUP_VERSION, PLUGINS_DIR, SETTINGS_FILE_NAME, BACKUP_PREFIX_APPDATA, BACKUP_PREFIX_APPLOCAL, APP_LOCAL_EXCLUDE_ROOTS, normalizeBackupPath, bytesToBase64, base64ToBytes, getSettingsBaseDir, collectConfigBackupFiles, resolveBackupPath, ensureParentDirsForBackup, clearDirectory, clearAppLocalDataForRestore, type ConfigBackupEntry, type ConfigBackupPayload, type BackupPathInfo } from './core/configBackup'
+import { CONFIG_BACKUP_VERSION, PLUGINS_DIR, SETTINGS_FILE_NAME, BACKUP_PREFIX_APPDATA, BACKUP_PREFIX_APPLOCAL, normalizeBackupPath, base64ToBytes, getSettingsBaseDir, collectConfigBackupFiles, resolveBackupPath, ensureParentDirsForBackup, clearDirectory, clearAppLocalDataForRestore, type ConfigBackupPayload } from './core/configBackup'
 import { load as yamlLoad } from 'js-yaml'
 // 便携模式（已拆分到 core/portable.ts）
-import { PORTABLE_BACKUP_FILENAME, getPortableBaseDir, getPortableDirAbsolute, joinPortableFile, exportPortableBackupSilent, readPortableBackupPayload } from './core/portable'
+import { exportPortableBackupSilent, readPortableBackupPayload } from './core/portable'
 
 async function isPortableModeEnabled(): Promise<boolean> {
   try {
@@ -1324,13 +1285,7 @@ import { isOfficePreviewCachePath } from './core/officePreviewPath'
 // 视觉列号工具(calcVisualColumn/offsetForVisualColumn/advanceVisualColumn)
 // 已抽离到 src/utils/visualColumn.ts,仅 src/modes/wysiwygCaret.ts 复用,main.ts 无引用。
 import { splitYamlFrontMatter, parseFrontMatterMeta } from './core/frontMatter'
-import {
-  decodePreviewHrefPath,
-  stripPreviewHrefSuffix,
-  normalizePreviewFsPath,
-  fileUrlToPreviewPath,
-  resolvePreviewLocalDocPath,
-} from './utils/previewPath'
+import { resolvePreviewLocalDocPath } from './utils/previewPath'
 import { scanTaskList, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
 import { onCalloutFoldClick, onCalloutCopyClick } from './plugins/calloutPreviewEvents'
 import {
@@ -1343,9 +1298,7 @@ import { getRecentFiles as getRecent, pushRecentFile as pushRecent, getLibraryCu
 import {
   clearOutlineHeadsCache,
   cssEscapeCompat,
-  buildOutlineHeadsCacheFromCtx,
   ensureOutlineHeadsCacheFromCtx,
-  type OutlineMode,
 } from './ui/outlineHeadsCache'
 import { confirmDialog } from './ui/confirmDialog'
 import { initCodeWrap } from './core/codeWrap'
@@ -1560,8 +1513,6 @@ function ensurePreviewHosts(): { mdHost: HTMLDivElement; pdfHost: HTMLDivElement
     const mdExisting = preview.querySelector('#preview-md-host') as HTMLDivElement | null
     const pdfExisting = preview.querySelector('#preview-pdf-host') as HTMLDivElement | null
     if (mdExisting && pdfExisting) {
-      _previewMdHost = mdExisting
-      _previewPdfHost = pdfExisting
       return { mdHost: mdExisting, pdfHost: pdfExisting }
     }
 
@@ -1590,8 +1541,6 @@ function ensurePreviewHosts(): { mdHost: HTMLDivElement; pdfHost: HTMLDivElement
       if (!pdfExisting) preview.appendChild(pdfHost)
     }
 
-    _previewMdHost = mdHost
-    _previewPdfHost = pdfHost
     return { mdHost, pdfHost }
   } catch {
     // 极端兜底：不破坏现有行为
@@ -1599,8 +1548,6 @@ function ensurePreviewHosts(): { mdHost: HTMLDivElement; pdfHost: HTMLDivElement
     mdHost.id = 'preview-md-host'
     const pdfHost = document.createElement('div')
     pdfHost.id = 'preview-pdf-host'
-    _previewMdHost = mdHost
-    _previewPdfHost = pdfHost
     return { mdHost, pdfHost }
   }
 }
@@ -1772,7 +1719,9 @@ const outlineApi = createOutline({
 })
 
 // WYSIWYG 自动换行(代码围栏 / 行内数学)工厂实例化
-wysiwygAutoNewlinesApi = createWysiwygAutoNewlines({
+// 注：返回的 handle 原本存在 wysiwygAutoNewlinesApi，但该变量从未被读取，故只保留
+// 实例化调用本身（内部会注册事件监听，不能删）。
+createWysiwygAutoNewlines({
   getWysiwyg: () => wysiwyg,
   getEditor: () => editor,
   getDirty: () => dirty,
@@ -2646,7 +2595,6 @@ async function ensureHljsCore(): Promise<any> {
 async function ensureRenderer() {
   if (md) return
   await ensureHljsCore()
-  hljsLoaded = true
   const { default: MarkdownItCtor } = await import('markdown-it')
   md = new MarkdownItCtor({
     html: true,
@@ -2781,7 +2729,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     if (wysiwyg && mode !== 'preview' && !opts?.forPrint) {
       const st = editor.selectionStart >>> 0
       const before = raw.slice(0, st)
-      const after = raw.slice(st)
       const lineStart = before.lastIndexOf('\n') + 1
       const curLine = before.slice(lineStart)
       const fenceRE = /^ {0,3}(```+|~~~+)/
@@ -3590,67 +3537,6 @@ async function handleToggleModeShortcut() {
   setTimeout(() => updateFocusSidebarBg(), 100)
 }
 
-// 打开文件
-async function openFile(preset?: string) {
-  try {
-    // 切换前不再在未选择目标时询问，改在明确了目标文件后判断是否需要保存
-
-    if (!preset) {
-      // 检查 Tauri API 是否可用
-      if (typeof open !== 'function') {
-        alert('文件打开功能需要在 Tauri 应用中使用')
-        return
-      }
-    }
-
-    // 兼容 macOS 场景：部分环境下 multiple:false 仍可能返回数组；若为数组取首个
-     let selected: any = preset ?? (await open({ multiple: false, filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'txt'] }] }))
-    if (!selected) return
-    if (Array.isArray(selected)) {
-      if (selected.length < 1) return
-      selected = selected[0]
-    }
-    const selectedPath = (typeof selected === 'string')
-      ? selected
-      : ((selected as any)?.path ?? (selected as any)?.filePath ?? String(selected))
-
-    logInfo('���ļ�', { path: selectedPath })
-    // 读取文件内容：优先使用 fs 插件；若因路径权限受限（forbidden path）则回退到自定义后端命令
-    let content: string
-    try {
-      content = await readTextFileAnySafe(selectedPath as any)
-    } catch (e: any) {
-      const msg = (e && (e.message || e.toString?.())) ? String(e.message || e.toString()) : ''
-      if (/forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg)) {
-        try {
-          content = await invoke<string>('read_text_file_any', { path: selectedPath })
-        } catch (e2) {
-          throw e2
-        }
-      } else {
-        throw e
-      }
-    }
-    editor.value = content
-    currentFilePath = selectedPath
-    dirty = false
-    titlebarStatusApi?.refreshTitle()
-    titlebarStatusApi?.refreshStatus()
-    await switchToPreviewAfterOpen()
-    // 打开后恢复上次阅读/编辑位置
-    await restoreDocPosIfAny(selectedPath as any)
-    await pushRecent(store, currentFilePath as any)
-    await renderRecentPanel(false)
-    logInfo('�ļ����سɹ�', { path: selectedPath, size: content.length })
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
-    if (msg.includes('invoke') || msg.includes('Tauri')) {
-      alert('此功能需要在 Tauri 桌面应用中使用\n当前运行在浏览器环境')
-    }
-    showError('打开文件失败', error)
-  }
-}
-
 async function showPdfPreview(filePathRaw: string, opts?: { updateRecent?: boolean; forceReload?: boolean }) {
   const filePath = normalizePath(filePathRaw || '')
   if (!filePath) return
@@ -3938,8 +3824,7 @@ async function openFile2(preset?: unknown, opts?: { quiet?: boolean }) {
     try {
       content = await readTextFileAnySafe(selectedPath as any)
     } catch (e: any) {
-      const msg = (e && (e.message || (e.toString?.()))) ? String(e.message || e.toString()) : ''
-      const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+      const isForbidden = isForbiddenPathError(e)
       if (isForbidden && typeof invoke === 'function') {
         // 使用后端无范围限制的读取作为兜底
         content = await invoke<string>('read_text_file_any', { path: selectedPath })
@@ -4051,8 +3936,7 @@ async function saveFile() {
     try {
       await writeTextFileAnySafe(currentFilePath, editor.value)
     } catch (e: any) {
-      const msg = (e && (e.message || (e.toString?.()))) ? String(e.message || e.toString()) : ''
-      const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+      const isForbidden = isForbiddenPathError(e)
       if (isForbidden && typeof invoke === 'function') {
         await invoke('write_text_file_any', { path: currentFilePath, content: editor.value })
       } else {
@@ -4239,8 +4123,7 @@ async function saveAs() {
       try { extWatcherIntegration?.beginSelfWriteCurrent(target) } catch {}
       await writeTextFileAnySafe(target, editor.value)
     } catch (e: any) {
-      const msg = (e && (e.message || (e.toString?.()))) ? String(e.message || e.toString()) : ''
-      const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+      const isForbidden = isForbiddenPathError(e)
       if (isForbidden && typeof invoke === 'function') {
         await invoke('write_text_file_any', { path: target, content: editor.value })
       } else {
@@ -5066,7 +4949,7 @@ try {
       try { await renderKatexPlaceholders(container, true) } catch {}
     }
     // 重新渲染容器内的 Mermaid 节点（PDF 导出用）：
-    // 关键：必须无视主题缓存（cache key 不含 theme）与 mermaidReady 一次性初始化，
+    // 关键：必须无视主题缓存（cache key 不含 theme）与一次性初始化，
     // 否则在 dark mode 应用导出的 PDF 仍会拿到暗色 SVG（classDiagram 黑底/黑字不可见）。
     // 策略：先清缓存，再强制 mermaid.initialize(light)，最后逐节点重新渲染。
     ;(window as any).flymdReRenderMermaidIn = async (container: HTMLElement): Promise<void> => {
@@ -5088,7 +4971,6 @@ try {
         try { invalidateMermaidSvgCache('pdf-export: force light theme') } catch {}
         // 强制把 Mermaid 重置为未初始化状态，并用 light config 重新初始化。
         // 这样 mermaid.render 内部颜色会按 light theme 生成，避免 classDiagram 黑底黑字。
-        mermaidReady = false
         const { loadMermaid } = await import('./core/mermaidLoader')
         const mermaid = await loadMermaid()
         const lightCfg = (() => {
@@ -5097,7 +4979,7 @@ try {
         // 覆盖 theme：忽略 body.dark-mode / prefers-color-scheme（用户在系统暗色环境下也想要亮色 PDF）
         try { lightCfg.theme = 'default' } catch {}
         try { if (lightCfg.themeVariables) delete lightCfg.themeVariables } catch {}
-        try { mermaid.initialize(lightCfg); mermaidReady = true } catch (e) { try { console.error('[PDF导出] Mermaid light 初始化失败', e) } catch {} }
+        try { mermaid.initialize(lightCfg) } catch (e) { try { console.error('[PDF导出] Mermaid light 初始化失败', e) } catch {} }
         // 逐节点重新渲染
         const nodes = Array.from(container.querySelectorAll('.mermaid')) as HTMLElement[]
         for (let i = 0; i < nodes.length; i++) {
@@ -5661,8 +5543,6 @@ const stickyNotePrefsHost: StickyNotePrefsHost = createStickyNotePrefsHost({
 
 const loadStickyNotePrefs = stickyNotePrefsHost.loadStickyNotePrefs
 const saveStickyNotePrefs = stickyNotePrefsHost.saveStickyNotePrefs
-const setStickyNoteOpacity = stickyNotePrefsHost.setStickyNoteOpacity
-const setStickyNoteColor = stickyNotePrefsHost.setStickyNoteColor
 const toggleStickyOpacitySlider = stickyNotePrefsHost.toggleStickyOpacitySlider
 const toggleStickyColorPicker = stickyNotePrefsHost.toggleStickyColorPicker
 
@@ -5690,8 +5570,6 @@ window.addEventListener('flymd:theme:changed', () => updateFocusSidebarBg())
 // 监听夜间模式切换事件，重置 mermaid 并刷新预览
 window.addEventListener('flymd:darkmode:changed', async () => {
   try {
-    // 重置 mermaid 初始化状态，下次渲染时会使用新的主题配置
-    mermaidReady = false
     // 清除 mermaid SVG 缓存，避免使用旧主题的缓存
     try { invalidateMermaidSvgCache() } catch {}
     // 根据当前模式刷新预览
@@ -5763,17 +5641,7 @@ const stickyNoteUi: StickyNoteUiHandles = createStickyNoteUi({
 })
 
 const {
-  getStickyLockIcon,
-  getStickyTopIcon,
-  getStickyOpacityIcon,
-  getStickyColorIcon,
-  getStickyEditIcon,
   maybeAutoReturnStickyPreview,
-  addStickyTodoLine,
-  toggleStickyEditMode,
-  toggleStickyWindowLock,
-  toggleStickyWindowOnTop,
-  adjustStickyWindowHeight,
   scheduleAdjustStickyHeight,
   createStickyNoteControls,
 } = stickyNoteUi
@@ -6482,7 +6350,6 @@ function bindEvents() {
           // 正向缩进：若当前段落行首已是缩进，则不重复；否则插入一组
           try {
             if (sel && sel.rangeCount > 0) {
-              const r = sel.getRangeAt(0)
               const block = (tgt.closest('p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre') as HTMLElement) || (rootEl as HTMLElement)
               const already = (() => { try { const fc = block?.firstChild; return !!(fc && fc.nodeType === 3 && getLeadingTabIndentLength((fc as Text).data || '') > 0) } catch { return false } })()
               if (already) return
@@ -6780,7 +6647,7 @@ function bindEvents() {
       const val = String(editor.value || '')
       const hay = norm(val)
       const needle = norm(term)
-      const { s, e } = getSel()
+      const { e } = getSel()
       const startPos = fromCaret ? Math.max(e, 0) : 0
       let idx = hay.indexOf(needle, startPos)
       if (idx < 0 && startPos > 0) idx = hay.indexOf(needle, 0) // 循环查找
@@ -6857,7 +6724,6 @@ function bindEvents() {
       if (wysiwyg) { try { wysiwygV2ReplaceAllInDoc(term, rep, !!_findCase?.checked) } catch {} ; return }
       const ta = editor as HTMLTextAreaElement
       const val = String(ta.value || '')
-      const hay = norm(val)
       const needle = norm(term)
       if (!needle) return
       let i = 0, changed = val, count = 0
@@ -7587,9 +7453,7 @@ function bindEvents() {
   }), { capture: true })
   if (btnNew) btnNew.addEventListener('click', guard(async () => {
     try {
-      const lib = document.getElementById('library') as HTMLDivElement | null
-      const libVisible = lib && !lib.classList.contains('hidden')
-      let dir = selectedFolderPath || null
+      let dir = getSelectedFolderPath()
       if (!dir) {
         if (currentFilePath) dir = currentFilePath.replace(/[\\/][^\\/]*$/, '')
         if (!dir) dir = await getLibraryRoot()
@@ -9256,12 +9120,6 @@ function bindEvents() {
 })()
 
 // 获取用户图片目录：优先使用 Tauri API，失败则基于 homeDir 猜测 Pictures
-// ========= 粘贴/拖拽异步上传占位支持 =========
-// 兼容入口：保留旧函数名，内部委托给核心模块
-function startAsyncUploadFromFile(file: File, fname: string): Promise<void> {
-  return _imageUploader.startAsyncUploadFromFile(file, fname)
-}
-
 // 获取用户图片目录：优先使用 Tauri API，失败则基于 homeDir 猜测 Pictures
 async function getUserPicturesDir(): Promise<string | null> {
   try {
@@ -9282,11 +9140,8 @@ async function getUserPicturesDir(): Promise<string | null> {
   return null
 }
 
-function startAsyncUploadFromBlob(blob: Blob, fname: string, mime: string): Promise<void> {
-  // NOTE: Blob 版本目前只被内部调用，保持向后兼容但委托给核心上传模块
-  return _imageUploader.startAsyncUploadFromBlob(blob, fname, mime)
-}
-// ========= END =========
+// 注：旧的 startAsyncUploadFromFile / startAsyncUploadFromBlob 兼容入口（委托给
+// _imageUploader）已随占位上传支持移除；调用方统一直接走 _imageUploader.*。
 
 // ========== 扩展/插件：运行时与 UI ==========
 
@@ -9357,12 +9212,8 @@ setCommandPaletteProvider(async () => {
   }
 })
 
-// 兼容旧代码：保留空实现，防止第三方脚本直接调用 showExtensionsOverlay
-async function showExtensionsOverlay(show: boolean): Promise<void> {
-  try {
-    await panelShowExtensionsOverlay(show)
-  } catch {}
-}
+// 注：这里曾是给第三方脚本兜底的 showExtensionsOverlay 空实现，但它从未挂到 window 上，
+// 实际无任何调用方，故删除；真正的实现仍在 extensionsPanel 的同名导出。
 
 // 将所见模式开关暴露到全局，便于在 WYSIWYG V2 覆盖层中通过双击切换至源码模式
 try { (window as any).flymdSetWysiwygEnabled = async (enable: boolean) => { try { await setWysiwygEnabled(enable) } catch (e) { console.error('flymdSetWysiwygEnabled 调用失败', e) } } } catch {}
@@ -9550,13 +9401,24 @@ async function applyExternalContentToEditor(content: string): Promise<void> {
  *
  * 错误信息识别复用 main.ts 其它路径的同一套正则(保持一致)。
  */
+// 判断错误是否为 Tauri fs 插件的路径权限限制（沙箱 scope 未覆盖该路径）。
+// 这类错误可以退回到后端 *_any 命令（无 scope 限制）重试一次。
+// 此前这段正则被复制在 5 处（读/写/reload/外部 diff），任何一处漏改都会
+// 让对应路径的降级行为与其他处不一致。
+function isForbiddenPathError(e: unknown): boolean {
+  try {
+    const msg = (e && (e as any).message || (e as any)?.toString?.()) ? String((e as any).message || (e as any).toString()) : ''
+    return /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
+  } catch {
+    return false
+  }
+}
+
 async function readTextFileWithFallback(path: string): Promise<string> {
   try {
     return await readTextFileAnySafe(path as any)
   } catch (e: any) {
-    const msg = (e && (e.message || (e?.toString?.()))) ? String(e.message || e.toString()) : ''
-    const isForbidden = /forbidden\s*path/i.test(msg) || /not\s*allowed/i.test(msg) || /EACCES|EPERM|Access\s*Denied/i.test(msg)
-    if (isForbidden && typeof invoke === 'function') {
+    if (isForbiddenPathError(e) && typeof invoke === 'function') {
       return await invoke<string>('read_text_file_any', { path })
     }
     throw e

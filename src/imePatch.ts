@@ -69,18 +69,6 @@ import { getSymbolAutoCompletionEnabled } from './core/symbolAutoCompletion'
         } catch { return false }
       }
     }
-    function deleteUndoable(ta: HTMLTextAreaElement): boolean {
-      try { ta.focus(); document.execCommand('delete'); return true } catch {
-        const s = ta.selectionStart >>> 0, e = ta.selectionEnd >>> 0
-        if (s !== e) {
-          ta.setRangeText('', s, e, 'end')
-          ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }))
-          return true
-        }
-        return false
-      }
-    }
-
     // IME composing guard
     const isComposingEv = (ev: any): boolean => {
       try { return !!(ev && (ev.isComposing || (ev.data && (ev.inputType || '').includes('Composition')))) } catch { return false }

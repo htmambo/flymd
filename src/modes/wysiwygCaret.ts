@@ -46,9 +46,8 @@ export interface WysiwygCaretApi {
 }
 
 export function createWysiwygCaret(deps: WysiwygCaretDeps): WysiwygCaretApi {
-  // 模块级缓存 — 原 main.ts 的 _wysiwygCaretLineIndex / _wysiwygCaretVisualColumn
+  // 模块级缓存 — 原 main.ts 的 _wysiwygCaretVisualColumn
   // / _caretCharWidth / _caretFontKey 全部闭包到这里。
-  let _wysiwygCaretLineIndex = 0
   let _wysiwygCaretVisualColumn = 0
   let _caretCharWidth = 0
   let _caretFontKey = ''
@@ -87,7 +86,6 @@ export function createWysiwygCaret(deps: WysiwygCaretDeps): WysiwygCaretApi {
       const st = editor.selectionStart >>> 0
       const before = editor.value.slice(0, st)
       const lineIdx = before.split('\n').length - 1
-      _wysiwygCaretLineIndex = lineIdx
       const style = window.getComputedStyle(editor)
       let lh = parseFloat(style.lineHeight || '')
       if (!lh || Number.isNaN(lh)) {

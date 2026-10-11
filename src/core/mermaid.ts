@@ -94,7 +94,7 @@ export async function exportMermaidViaDialog(svgEl: SVGElement): Promise<void> {
       filters: [ { name: 'SVG', extensions: ['svg'] } ] as any
     } as any)
     if (!path) return
-    const lower = String(path).toLowerCase()
+    // 保存对话框只提供 SVG 过滤器，因此格式固定为 svg
     const fmt: 'svg' | 'png' = 'svg'
 
     if (fmt === 'svg') {

@@ -10,7 +10,14 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "strict": true
+    "strict": true,
+    // 未使用的局部变量/导入直接报错。此前缺少这一项，使得废弃的依赖
+    // （html-to-docx、@milkdown/crepe 等）和大量死代码能长期存活而不被发现。
+    // 注意：main.ts 里大量 (window as any).x = ... 是有意暴露给插件的桥接，
+    // 不受影响；noUnusedLocals 只管模块内的局部绑定。
+    "noUnusedLocals": true,
+    // 暂不开 noUnusedParameters：回调签名里常有为位置对齐而保留的参数。
+    "noUnusedParameters": false
   },
   "include": ["src"]
 }

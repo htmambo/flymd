@@ -8,7 +8,6 @@ import { attachOverlayError } from './overlayError'
 import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx, editorViewCtx, commandsCtx, remarkStringifyOptionsCtx, parserCtx, prosePluginsCtx } from '@milkdown/core'
 import { TextSelection, type Command } from '@milkdown/prose/state'
 import { DOMParser as ProseDOMParser } from '@milkdown/prose/model'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { readFile } from '@tauri-apps/plugin-fs'
 // 用于外部（main.ts）在所见模式下插入 Markdown（文件拖放时复用普通模式逻辑）
 import { replaceAll, getMarkdown } from '@milkdown/utils'
@@ -50,15 +49,12 @@ let _onChange: ((md: string) => void) | null = null
 let _suppressInitialUpdate = false
 let _lastMd = ''
 let _imgObserver: MutationObserver | null = null
-let _overlayTimer: number | null = null
 let _overlayHost: HTMLDivElement | null = null
-let _activeMermaidPre: HTMLElement | null = null
-// 鼠标与光标分别记录，避免事件互相"顶掉"导致不渲染
-// 优先级：光标所在（selection）优先于鼠标悬停（mouse）
-let _activeMermaidPreBySelection: HTMLElement | null = null
-let _activeMermaidPreByMouse: HTMLElement | null = null
-// MutationObserver 用于监听 ProseMirror 清除我们插入的元素
-let _mermaidObserver: MutationObserver | null = null
+// 注：曾计划用 MutationObserver 监听 ProseMirror 清除我们插入的元素，
+// 但该观察器从未被创建/挂载，按需渲染改为全局渲染，故此处不再保留声明。
+// 同时移除的还有 _activeMermaidPre / _activeMermaidPreBySelection / _activeMermaidPreByMouse：
+// 它们只被已删除的 onPmSelectionChange / onPmMouseMove 读写（“光标优先于鼠标”的按需渲染策略），
+// 在 mousemove / selectionchange 监听被注释掉后已无写入方与读取方。
 // 所见模式代码块复制按钮覆盖层
 const _codeCopyWraps = new Map<HTMLElement, HTMLDivElement>()
 let _codeCopyRaf: number | null = null
@@ -304,10 +300,6 @@ function fromFileUri(u: string): string | null {
     return p
   } catch { return null }
 }
-function isTauriRuntime(): boolean {
-  try { return typeof (window as any).__TAURI__ !== 'undefined' } catch { return false }
-}
-
 function extractBaseUrlFromHtml(html: string): string | undefined {
   try {
     const m = String(html || '').match(/<base\s+href=["']([^"']+)["']/i)
@@ -2173,43 +2165,9 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
   }
 }
 
-
-function onPmMouseMove(ev: MouseEvent) {
-  try {
-    const t = ev.target as HTMLElement | null
-    const pre = t?.closest?.('pre') as HTMLElement | null
-    const hit = (() => {
-      if (!pre) return null
-      const codeEl = pre.querySelector('code') as HTMLElement | null
-      const langFromClass = codeEl ? /\\blanguage-([\\w-]+)\\b/.exec(codeEl.className || '')?.[1] : ''
-      const langFromAttr = (pre.getAttribute('data-language') || pre.getAttribute('data-lang') || '').toLowerCase()
-      const lang = (langFromAttr || langFromClass || '').toLowerCase()
-      return lang === 'mermaid' ? pre : null
-    })()
-    // 鼠标只是辅助手段：仅在没有光标命中的情况下生效
-    _activeMermaidPreByMouse = hit
-    const next = _activeMermaidPreBySelection || _activeMermaidPreByMouse
-    if (next !== _activeMermaidPre) { _activeMermaidPre = next; scheduleMermaidRender() }
-  } catch {}
-}
-
-function onPmSelectionChange() {
-  try {
-    const sel = window.getSelection()
-    const n = sel?.focusNode as (Node & { parentElement?: HTMLElement }) | null
-    const el = (n && (n as any).nodeType === 1 ? (n as any as HTMLElement) : n?.parentElement) as HTMLElement | null
-    const pre = el?.closest?.('pre') as HTMLElement | null
-    const codeEl = pre?.querySelector?.('code') as HTMLElement | null
-    const langFromClass = codeEl ? /\\blanguage-([\\w-]+)\\b/.exec(codeEl.className || '')?.[1] : ''
-    const langFromAttr = pre ? (pre.getAttribute('data-language') || pre.getAttribute('data-lang') || '').toLowerCase() : ''
-    const lang = (langFromAttr || langFromClass || '').toLowerCase()
-    const hit = (lang === 'mermaid' ? pre : null) as HTMLElement | null
-    // 光标优先级最高：直接覆盖选择源，再与鼠标源合并计算
-    _activeMermaidPreBySelection = hit
-    const next = _activeMermaidPreBySelection || _activeMermaidPreByMouse
-    if (next !== _activeMermaidPre) { _activeMermaidPre = next; scheduleMermaidRender() }
-  } catch {}
-}
+// 注：onPmMouseMove / onPmSelectionChange 曾用于「鼠标/光标触发 Mermaid 按需渲染」，
+// 但其监听注册处已被注释（见 setupWysiwygDom 内的 mousemove / selectionchange 注释行），
+// 改为全局渲染。函数体无其它调用点，故随之删除；如需恢复按需渲染需连同监听一起恢复。
 
 // ===== Latex 源码编辑：在 KaTeX 上方叠加一个 textarea 进行就地编辑，保存后仅更新该数学节点 =====
 
@@ -3673,9 +3631,6 @@ export async function wysiwygV2ApplyLink(href: string, labelOrTitle?: string, ma
     const view = ctx.get(editorViewCtx)
     const commands = ctx.get(commandsCtx)
     const { state } = view
-    const { empty } = state.selection as any
-    const hadRange = !empty
-
     // 兼容：如果传入了第三个参数，则视为旧签名 (href, title)
     const hasTitle = typeof maybeTitle === 'string'
     const title = hasTitle ? (labelOrTitle as string | undefined) : (maybeTitle as string | undefined)

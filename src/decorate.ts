@@ -110,8 +110,6 @@ export function decorateCodeBlocks(preview: HTMLElement) {
             code.insertBefore(probe, code.firstChild)
             const preRect = pre.getBoundingClientRect()
             const probeRect = probe.getBoundingClientRect()
-            const csPre2 = getComputedStyle(pre)
-            const pt2 = parseFloat(csPre2.paddingTop || '0')
             const yFirst = (probeRect.top - preRect.top) + pre.scrollTop  // 代码第一行相对 pre 顶部位置
             const current = parseFloat(lnWrap.style.paddingTop || '0')
             const delta = Math.round(yFirst - current)

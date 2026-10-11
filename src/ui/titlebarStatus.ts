@@ -50,7 +50,6 @@ export interface TitlebarStatusApi {
 }
 
 const APP_TITLE_SUFFIX = ' - 飞速MarkDown'
-const OS_TITLE_FALLBACK = '飞速MarkDown'
 
 export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusApi {
   let lastTitleLabel = ''

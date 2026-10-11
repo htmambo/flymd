@@ -23,10 +23,6 @@ let initialized = false
 let initPromise: Promise<void> | null = null
 const undoManager = new TextareaUndoManager()
 
-// 标签切换时暂停轮询检测（避免冲突）
-let pauseWatcher = false
-let pauseWatcherTimeout: ReturnType<typeof setTimeout> | null = null
-
 // 暂停 dirty 同步（切换标签时避免误触发）
 let pauseDirtySync = false
 let pauseDirtySyncTimeout: ReturnType<typeof setTimeout> | null = null
@@ -34,12 +30,6 @@ let pauseDirtySyncTimeout: ReturnType<typeof setTimeout> | null = null
 // 会话自动保存：用于兜底非正常退出（如 macOS Cmd+Q 不触发前端 onCloseRequested）
 let sessionAutoSaveTimer: ReturnType<typeof setTimeout> | null = null
 const SESSION_AUTO_SAVE_INTERVAL_MS = 5000
-
-function pausePathWatcher(duration = 1000): void {
-  pauseWatcher = true
-  if (pauseWatcherTimeout) clearTimeout(pauseWatcherTimeout)
-  pauseWatcherTimeout = setTimeout(() => { pauseWatcher = false }, duration)
-}
 
 function pauseDirtySyncFor(duration = 800): void {
   pauseDirtySync = true
@@ -321,8 +311,7 @@ async function saveAllDirtyTabs(): Promise<boolean> {
   const dirtyTabs = collectDirtyTabs()
   if (dirtyTabs.length === 0) return true
 
-  // 切换标签期间暂停轮询/同步，避免 restoreTabState 触发误判
-  pausePathWatcher(5000)
+  // 切换标签期间暂停同步，避免 restoreTabState 触发误判
   pauseDirtySyncFor(5000)
 
   for (const tab of dirtyTabs) {
@@ -930,8 +919,6 @@ function createHooks(): TabManagerHooks {
 
     reloadFile: async (filePath: string) => {
       // 重新加载文件（用于 PDF 等特殊文件）
-      // 暂停轮询检测，避免冲突
-      pausePathWatcher(1500)
       const isPdf = String(filePath || '').toLowerCase().endsWith('.pdf')
       if (isPdf && typeof flymd.flymdShowPdfPreview === 'function') {
         // 切回 PDF 标签时复用已加载的 iframe，避免反复重载
@@ -1027,8 +1014,6 @@ function hookOpenFile(): void {
     if (shouldOpenNewTab) {
       // 先创建新空白标签（这会保存当前标签状态）
       createdTabId = tabManager.createNewTab().id
-      // 暂停轮询检测，避免冲突
-      pausePathWatcher(1500)
     }
 
     // 调用原始打开逻辑（标记为内部调用，避免 openFile2 反向再代理回 flymdOpenFile 造成递归）
@@ -1245,98 +1230,6 @@ function setupDirtySync(): void {
 
     lastMainDirty = mainDirty
   }, 200)
-}
-
-/**
- * 启动文件路径同步监听
- * 处理直接调用 openFile2 而绕过钩子的情况
- */
-function startPathSyncWatcher(): void {
-  const flymd = getFlymd()
-  let lastKnownPath: string | null = null
-  let lastKnownContent: string = ''  // 缓存路径变化前的内容
-
-  // 每 100ms 检查一次当前文件路径是否变化
-  setInterval(() => {
-    // 如果暂停了，直接返回
-    if (pauseWatcher) return
-
-    const currentPath = flymd.flymdGetCurrentFilePath?.() ?? null
-    const currentContent = flymd.flymdGetEditorContent?.() ?? ''
-    const currentTab = tabManager.getActiveTab()
-
-    // 如果路径没有变化，更新缓存的内容
-    if (currentPath === lastKnownPath) {
-      lastKnownContent = currentContent
-      return
-    }
-
-    // 路径变化了 - 检测是否是 PDF 文件
-    const isPdf = currentPath?.toLowerCase().endsWith('.pdf') ?? false
-
-    // 检查是否已有该路径的标签
-    const existingTab = currentPath ? tabManager.findTabByPath(currentPath) : null
-
-    // 内容是否相对上一次轮询发生变化，用于区分“只是改名/路径变了”与“真正加载了新文档”
-    const contentChanged = currentContent !== lastKnownContent
-
-    if (existingTab) {
-      // 已有该文件的标签：说明外部（如直接调用 openFile2）切换到了一个已存在的文档
-      // 此时编辑器内容已经是目标文件，不能再用 switchToTab → saveCurrentTabState 的顺序，
-      // 否则会把新内容写回“旧标签”。改为通过专门的 adoptExternalSwitch 入口，只更新目标标签。
-      if (existingTab.id !== currentTab?.id && currentPath) {
-        tabManager.adoptExternalSwitchToPath(currentPath, isPdf)
-        if (contentChanged) {
-          // 外部切换到已存在标签且加载了新内容：以当前内容重置撤销基线
-          undoManager.resetCurrentStackBaseline()
-        }
-      } else if (currentTab && currentTab.id === existingTab.id) {
-        // 同一个标签路径变化（极少见），只需同步 PDF 标记
-        currentTab.isPdf = isPdf
-      }
-    } else if (currentPath && currentTab) {
-      // 新文件，检查是否按住 Ctrl
-      const isCurrentTabEmpty = !currentTab.filePath && !currentTab.dirty && !currentTab.content.trim()
-
-      if (!isCurrentTabEmpty) {
-        // 当前标签已有内容：创建新标签，再恢复原标签内容，避免覆盖
-        const originalTabId = currentTab.id
-        const originalContent = lastKnownContent
-        const originalPath = currentTab.filePath
-
-        // 创建新标签并设置为当前文件
-        const { tab: newTab } = tabManager.openFile(currentPath, currentContent)
-        newTab.isPdf = isPdf
-
-        if (contentChanged) {
-          // 新文件 + 新标签：以当前内容重置撤销基线
-          undoManager.resetCurrentStackBaseline()
-        }
-
-        // 恢复原标签的内容（openFile 内部的 saveCurrentTabState 会覆盖，所以要在之后恢复）
-        const originalTab = tabManager.findTabById(originalTabId)
-        if (originalTab) {
-          originalTab.content = originalContent
-          originalTab.filePath = originalPath
-          originalTab.dirty = false
-        }
-      } else {
-        // 默认行为：在当前标签打开（覆盖当前文档）
-        tabManager.updateCurrentTabPath(currentPath)
-        tabManager.updateTabContent(currentTab.id, currentContent)
-        currentTab.isPdf = isPdf
-
-         if (contentChanged) {
-           // 复用当前空白标签打开新文件：以当前内容重置撤销基线
-           undoManager.resetCurrentStackBaseline()
-         }
-      }
-    }
-
-    // 更新路径和内容缓存
-    lastKnownPath = currentPath
-    lastKnownContent = currentContent
-  }, 100)
 }
 
 /**

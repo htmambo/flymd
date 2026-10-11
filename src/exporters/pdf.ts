@@ -269,29 +269,6 @@ async function inlineImagesForPdf(root: ParentNode, opt?: {
   return { objectUrls, total: targets.length, inlined, failed }
 }
 
-function normalizeSvgSize(svgEl: SVGElement, targetWidth: number) {
-  try {
-    const vb = svgEl.getAttribute('viewBox')
-    let w = 0, h = 0
-    if (vb) {
-      const p = vb.split(/\s+/).map(Number)
-      if (p.length === 4) { w = p[2]; h = p[3] }
-    }
-    const hasWH = Number(svgEl.getAttribute('width')) || Number(svgEl.getAttribute('height'))
-    if ((!w || !h) && hasWH) {
-      w = Number(svgEl.getAttribute('width')) || 800
-      h = Number(svgEl.getAttribute('height')) || 600
-    }
-    if (!w || !h) { w = 800; h = 600 }
-    const ratio = targetWidth / w
-    const targetHeight = Math.max(1, Math.round(h * ratio))
-    svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet')
-    svgEl.setAttribute('width', String(targetWidth))
-    svgEl.setAttribute('height', String(targetHeight))
-    try { (svgEl.style as any).maxWidth = '100%'; (svgEl.style as any).height = 'auto' } catch {}
-  } catch {}
-}
-
 function clampInt(n: number, min: number, max: number): number {
   const v = Number.isFinite(n) ? Math.trunc(n) : 0
   if (v < min) return min

@@ -262,8 +262,7 @@ let _extInstallInput: HTMLInputElement | null = null
 let _extMarketSearchText = ''
 let _extMarketCategory = ''
 let _extLastMarketItems: InstallableItem[] = []
-// 室内缓存：已安装映射与可更新状态，避免频繁网络请求阻塞 UI
-let _extLastInstalledMap: Record<string, InstalledPlugin> = {}
+// 室内缓存：可更新状态，避免频繁网络请求阻塞 UI
 let _extLastUpdateMap: Record<string, PluginUpdateState> = {}
 let _extMarketInstalledOnly = false // 是否仅显示已安装（隐藏市场区块）
 let _extUpdatesOnly = false  // 是否仅显示可更新扩展（已安装区块过滤）
@@ -338,10 +337,8 @@ async function getInstalledPluginsFromStore(): Promise<Record<string, InstalledP
     if (!host) return {}
     const store = host.getStore()
     const map = await loadInstalledPlugins(store)
-    _extLastInstalledMap = map || {}
     return map
   } catch {
-    _extLastInstalledMap = {}
     return {}
   }
 }
@@ -351,7 +348,6 @@ async function setInstalledPluginsToStore(map: Record<string, InstalledPlugin>):
     if (!host) return
     const store = host.getStore()
     await saveInstalledPlugins(store, map)
-    _extLastInstalledMap = map || {}
   } catch {}
 }
 
@@ -460,7 +456,6 @@ export async function refreshInstalledExtensionsUI(): Promise<void> {
 	      installedMap = {}
 	    }
 	    try { await backfillInstalledAuthors(installedMap) } catch {}
-	    _extLastInstalledMap = installedMap
 
 	    const updateMap: Record<string, PluginUpdateState> = _extLastUpdateMap || {}
     let effEnableMap: Record<string, boolean> = {}
@@ -1203,7 +1198,6 @@ export async function refreshExtensionsUI(): Promise<void> {
     } catch { updateMap = {} }
   }
 
-  _extLastInstalledMap = installedMap
   _extLastUpdateMap = updateMap
 
   let effEnableMap: Record<string, boolean> = {}

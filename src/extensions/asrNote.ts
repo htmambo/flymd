@@ -303,7 +303,6 @@ async function showAsrBillingDialog(token: string): Promise<void> {
 
     const balMs = Number(status?.billing?.balance_ms || 0) || 0
     const balMinStr = String(status?.billing?.balance_min || '').trim()
-    const wsUrl = String(status?.billing?.ws?.url || '').trim()
     const payUrl = String(status?.billing?.pay?.url || '').trim()
 
     const balMinDisplay = (() => {
@@ -466,7 +465,6 @@ function updateMenu(): void {
       return
     }
 
-    const deps = _deps
     const note = _active
     const running = !!(note && note.running && !note.ending)
     const paused = !!(note && note.paused)

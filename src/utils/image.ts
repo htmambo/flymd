@@ -32,22 +32,6 @@ async function readBlobBytes(b: Blob, limit?: number): Promise<Uint8Array> {
   return buf.subarray(0, limit)
 }
 
-// 检测 GIF 是否为动图：
-// - 先查找 NETSCAPE2.0/ANIMEXTS1.0 应用扩展；
-// - 若未命中，统计 Image Descriptor(0x2C) 出现次数 >= 2 也视为动图。
-function isAnimatedGifBytes(bytes: Uint8Array): boolean {
-  try {
-    const str = new TextDecoder('ascii', { fatal: false }).decode(bytes)
-    if (str.includes('NETSCAPE2.0') || str.includes('ANIMEXTS1.0')) return true
-  } catch {}
-  // 简易扫描 0x2C（图像描述符）计数
-  let count = 0
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0x2C) { count++; if (count >= 2) return true }
-  }
-  return false
-}
-
 // 检测 PNG 是否为 APNG：存在 acTL 块
 function isApngBytes(bytes: Uint8Array): boolean {
   try {

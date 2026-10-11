@@ -810,8 +810,6 @@ async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, dept
   } catch { return false }
 }
 
-function makeTg(): HTMLElement { const s = document.createElementNS('http://www.w3.org/2000/svg','svg'); s.setAttribute('viewBox','0 0 24 24'); s.classList.add('lib-tg'); const p=document.createElementNS('http://www.w3.org/2000/svg','path'); p.setAttribute('d','M9 6l6 6-6 6'); s.appendChild(p); return s as any }
-
 // 闭合文件夹图标（收起状态）
 function makeFolderSvg(): SVGElement {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')

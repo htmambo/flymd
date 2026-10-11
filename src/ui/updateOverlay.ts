@@ -2,8 +2,8 @@
 // 从 main.ts 拆分：负责 update-overlay 的 DOM 构建与交互（检查更新细节展示等）
 
 import { openPath } from '@tauri-apps/plugin-opener'
-import type { CheckUpdateResp, UpdateAssetInfo, UpdateExtra } from '../core/updateTypes'
-import { openInBrowser, upMsg } from '../core/updateUtils'
+import type { CheckUpdateResp, UpdateExtra } from '../core/updateTypes'
+import { openInBrowser } from '../core/updateUtils'
 
 // 创建或获取更新对话框容器
 export function ensureUpdateOverlay(): HTMLDivElement {

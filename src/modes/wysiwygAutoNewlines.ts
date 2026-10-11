@@ -107,7 +107,6 @@ export function createWysiwygAutoNewlines(deps: Deps): WysiwygAutoNewlinesApi {
 
       // 当前整行（用于检测行内 $ 奇偶）
       const lineStart = before.lastIndexOf('\n') + 1
-      const lineEnd = (() => { const i = v.indexOf('\n', lineStart); return i < 0 ? v.length : i })()
       const upto = v.slice(lineStart, pos) // 行首到光标（含刚输入的 $）
 
       // 统计“未被转义、且不是 $$ 的单个 $”数量

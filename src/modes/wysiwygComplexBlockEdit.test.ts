@@ -12,7 +12,7 @@
 //  9. 同一 release 函数多次调用不重复扣减
 //  ≥ 9 用例
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   acquireEditLock,
   withEditLock,

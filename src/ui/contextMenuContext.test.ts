@@ -195,7 +195,7 @@ describe('buildContextMenuContext', () => {
     })
 
     it('ignores collapsed DOM selection', () => {
-      const { root, text } = makePreviewWithText()
+      const { root } = makePreviewWithText()
       setFakeSelection({
         isCollapsed: true,
         rangeCount: 0,

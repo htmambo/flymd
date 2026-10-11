@@ -55,13 +55,6 @@ afterEach(() => {
   document.body.className = ''
 })
 
-function flushRaf() {
-  // advance one rAF tick
-  return new Promise<void>((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-  })
-}
-
 describe('createWindowsCompositorPoke', () => {
   it('does not start on non-Windows platform', () => {
     const win = makeWinDom(); win.navigator.platform = 'MacIntel'

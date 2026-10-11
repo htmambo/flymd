@@ -53,6 +53,19 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --check
 
+      # Tauri webview 里的 JS 报错只有带 sourcemap 才定位得到文件/行号，
+      # 而正式构建默认不带。产出一份带 map 的构建供排查用户现场问题，
+      # 只作为工件上传，不进入分发包。
+      - name: Build with sourcemap (for debugging user reports)
+        run: BUILD_SOURCEMAP=1 pnpm build
+
+      - name: Upload sourcemap build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-with-sourcemap
+          path: dist
+          retention-days: 14
+
   build:
     # 门禁先行：check 失败就不再进行耗时的跨平台打包
     needs: check

@@ -24,7 +24,7 @@
 import { rename, remove } from '@tauri-apps/plugin-fs'
 import { getLibraryScope, invalidateLibraryConfigCache, LIBRARY_CHANGED_EVENT } from './libraryConfig'
 import { ensureDir, readTextFileAnySafe, statFileAnySafe } from './fsSafe'
-import { writeFileLockedSafe, readModifyWriteLockedSafe } from './fsSafe'
+import { readModifyWriteLockedSafe } from './fsSafe'
 
 /** 通道 C 数据 schema 版本。v2 时按段迁移。 */
 export const LIBRARY_PRIVATE_SCHEMA_VERSION = 1

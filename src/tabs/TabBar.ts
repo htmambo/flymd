@@ -34,7 +34,6 @@ export class TabBar {
 
   // 拖拽状态
   private draggedTabId: string | null = null
-  private dragOverTabId: string | null = null
   private contextMenuEl: HTMLDivElement | null = null
   private contextMenuTargetTabId: string | null = null
   private contextMenuVisible = false
@@ -266,20 +265,6 @@ export class TabBar {
       return x < -margin || y < -margin || x > window.innerWidth + margin || y > window.innerHeight + margin
     }
 
-    const isOutsideWindowScreen = (x: number, y: number, margin: number) => {
-      try {
-        const left = (window as any).screenX
-        const top = (window as any).screenY
-        const w = (window as any).outerWidth
-        const h = (window as any).outerHeight
-        if (![left, top, w, h, x, y].every((n) => Number.isFinite(n))) return false
-        const right = left + w
-        const bottom = top + h
-        return x < left - margin || y < top - margin || x > right + margin || y > bottom + margin
-      } catch {}
-      return false
-    }
-
     const isOutsideWindow = (e: PointerEvent, margin: number) => {
       // 只用 client 坐标判定：在 Tauri 下 window.screenX/outerWidth 的一致性不可靠，容易误判导致幽灵窗口不消失
       return isOutsideWindowClient(e.clientX, e.clientY, margin)
@@ -315,7 +300,6 @@ export class TabBar {
       tabEl.classList.remove('dragging')
       clearDragIndicators()
       this.draggedTabId = null
-      this.dragOverTabId = null
       try { document.body.style.userSelect = '' } catch {}
       try { document.body.style.cursor = '' } catch {}
       dragState = null
@@ -380,7 +364,6 @@ export class TabBar {
           dragState.insertAfter = true
           last.classList.remove('drag-over-left')
           last.classList.add('drag-over-right')
-          this.dragOverTabId = last.dataset.tabId || null
           return
         }
       }
@@ -406,7 +389,6 @@ export class TabBar {
 
       targetTab.classList.toggle('drag-over-left', !insertAfter)
       targetTab.classList.toggle('drag-over-right', insertAfter)
-      this.dragOverTabId = targetTab.dataset.tabId || null
     }
 
     const handlePointerUp = (e: PointerEvent) => {

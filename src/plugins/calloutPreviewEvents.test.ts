@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { onCalloutFoldClick, onCalloutCopyClick } from './calloutPreviewEvents'
 
 function makeCallout(opts: { folded?: boolean } = {}) {
@@ -89,7 +89,7 @@ describe('onCalloutCopyClick', () => {
     ;(navigator as any).clipboard = { writeText }
   })
   it('joins direct child paragraphs with blank line and trims', async () => {
-    const { callout, copyIcon } = makeCallout()
+    const { copyIcon } = makeCallout()
     let called = ''
     ;(navigator as any).clipboard = { writeText: (s: string) => { called = s; return Promise.resolve() } }
     onCalloutCopyClick({ target: copyIcon } as any)

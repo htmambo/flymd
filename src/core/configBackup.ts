@@ -3,7 +3,7 @@
  * 从 main.ts 拆分，包含配置文件的收集、备份、恢复等功能
  */
 
-import { readDir, readFile, writeFile, mkdir, remove, exists } from '@tauri-apps/plugin-fs'
+import { readDir, readFile, mkdir, remove, exists } from '@tauri-apps/plugin-fs'
 import { BaseDirectory } from '@tauri-apps/plugin-fs'
 
 // 备份相关常量

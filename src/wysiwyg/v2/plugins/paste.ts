@@ -1,12 +1,14 @@
 // 粘贴上传适配：将图片粘贴/拖拽转为文档中的 image 节点
 import type { Uploader } from '@milkdown/kit/plugin/upload'
-import type { Node as ProseNode, Schema } from '@milkdown/prose/model'
+import type { Node as ProseNode } from '@milkdown/prose/model'
 import type { AnyUploaderConfig } from '../../../uploader/types'
 import { uploadImageToCloud } from '../../../uploader/upload'
 import { transcodeToWebpIfNeeded } from '../../../utils/image'
 import { toDocRelativeImagePathIfInImages } from '../../../utils/localImageSrcResolve'
 // 本地保存：在未启用图床或开启“总是保存到本地”时，将粘贴/拖拽的图片写入 images/ 或默认粘贴目录
-// 文件保存交给外层（main.ts）以避免在插件侧直接依赖 Tauri 插件
+// 文件保存交给外层（main.ts）以避免在插件侧直接依赖 Tauri 插件。
+// 注：随之移除的 getDefaultPasteDir / pathJoin / needAngle 是随该本地保存路径一起搬走的辅助函数，
+// 插件侧已无调用点；如需把本地保存逻辑搬回插件侧，需连同 Tauri 依赖一起恢复。
 
 function redactUploaderCfg(upCfg: AnyUploaderConfig | null): any {
   if (!upCfg) return null
@@ -45,11 +47,6 @@ async function getPreferRelativeLocalImages(): Promise<boolean> {
 async function getCurrentPath(): Promise<string | null> {
   try { const fn = (window as any).flymdGetCurrentFilePath; return typeof fn === 'function' ? (await fn()) : null } catch { return null }
 }
-async function getDefaultPasteDir(): Promise<string | null> {
-  try { const fn = (window as any).flymdGetDefaultPasteDir; return typeof fn === 'function' ? (await fn()) : null } catch { return null }
-}
-function pathJoin(a: string, b: string): string { const sep = a.includes('\\') ? '\\' : '/'; return a.replace(/[\\/]+$/, '') + sep + b.replace(/^[\\/]+/, '') }
-function needAngle(url: string): boolean { return /[\s()]/.test(url) || /^[a-zA-Z]:/.test(url) || /\\/.test(url) }
 function toFileUri(p: string): string {
   try {
     const s = String(p || '').trim()

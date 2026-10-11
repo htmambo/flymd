@@ -301,8 +301,8 @@ async function svgToPngDataUrl(svgEl: SVGElement): Promise<string> {
 
       try {
         // 尝试使用html2canvas（通过html2pdf.js获取）
-        const html2pdfMod: any = await import('html2pdf.js/dist/html2pdf.bundle.min.js')
-        const html2pdf: any = (html2pdfMod && (html2pdfMod.default || html2pdfMod)) || html2pdfMod
+        // 这里只做副作用导入：html2pdf.js 会把 html2canvas 注册到 window 上
+        await import('html2pdf.js/dist/html2pdf.bundle.min.js')
 
         console.log('[DOCX导出] 使用html2canvas渲染SVG')
 
