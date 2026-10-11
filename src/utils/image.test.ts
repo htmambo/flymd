@@ -91,4 +91,28 @@ describe('transcodeToWebpIfNeeded — 动图保护', () => {
     const r = await transcodeToWebpIfNeeded(blob, 'blob', 0.85, { skipAnimated: false })
     expect(r.type).not.toBe('image/gif')
   })
+
+  // 头部读取必须真的只读前 N 字节。旧实现是「arrayBuffer 读整个文件再
+  // subarray 截断」，limit 形同虚设，大图会白读整份进内存。
+  it('只读取 Blob 的前若干字节，不整文件读入', async () => {
+    const big = new Uint8Array(5 * 1024 * 1024)
+    big.set(ANIMATED_GIF, 0)
+    let slicedAt: number | null = null
+    const blob = {
+      size: big.length,
+      // MIME 不可靠，否则会在前面的类型判断处就提前返回，走不到字节检测
+      type: 'application/octet-stream',
+      slice(start: number) {
+        slicedAt = start
+        const end = Math.min(start + 64 * 1024, big.length)
+        return { arrayBuffer: async () => big.slice(start, end).buffer }
+      },
+      arrayBuffer: async () => { throw new Error('不应整文件 arrayBuffer') },
+    } as unknown as Blob
+
+    const r = await transcodeToWebpIfNeeded(blob, 'blob', 0.85, { skipAnimated: true })
+    expect(slicedAt).toBe(0) // 走的是限量读取
+    expect(r.changed).toBe(false)
+    expect(r.type).toBe('image/gif')
+  })
 })

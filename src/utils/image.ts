@@ -25,11 +25,12 @@ function toWebpName(name: string): string {
   } catch { return (name || 'image') + '.webp' }
 }
 
-// 读取 Blob 为 ArrayBuffer
+// 读取 Blob 为 ArrayBuffer，可只取前 limit 字节。
+// 用 Blob.slice 而非「先 arrayBuffer 再 subarray」：后者会把整个文件读进
+// 内存再截断，limit 参数形同虚设（大图的 APNG 检测会白读整份文件）。
 async function readBlobBytes(b: Blob, limit?: number): Promise<Uint8Array> {
-  const buf = new Uint8Array(await b.arrayBuffer())
-  if (!limit || buf.length <= limit) return buf
-  return buf.subarray(0, limit)
+  const src = limit != null && limit > 0 ? b.slice(0, limit) : b
+  return new Uint8Array(await src.arrayBuffer())
 }
 
 // 校验 GIF 文件头："GIF87a" / "GIF89a"
@@ -121,7 +122,7 @@ export async function transcodeToWebpIfNeeded(input: Blob, origName: string, qua
     // 只读前 64KB（Blob.slice 是惰性的，不整文件 arrayBuffer），先验签名再判多帧。
     if (skipAnimated) {
       try {
-        const head = new Uint8Array(await input.slice(0, 64 * 1024).arrayBuffer())
+        const head = await readBlobBytes(input, 64 * 1024)
         if (isGifSignature(head) && isAnimatedGifBytes(head)) {
           return { blob: input, type: 'image/gif', fileName: origName, changed: false }
         }
