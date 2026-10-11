@@ -106,7 +106,7 @@ import {
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
 import { createImageUploader } from './core/imageUpload'
-import { resolveImageTarget } from './core/imageTarget'
+import { resolveImageTarget, type ImageTargetDeps } from './core/imageTarget'
 import { hasDownloadableMarkdownImages, rewriteHtmlImagesByDownload, rewriteMarkdownImagesByDownload } from './core/htmlPasteImages'
 import { isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
 import { deleteFileSafe, newFileSafe } from './core/libraryFileOps'
@@ -4667,6 +4667,33 @@ async function getUploaderRawConfig(): Promise<AnyUploaderConfig | null> {
   } catch { return null }
 }
 
+// ImageTargetDeps 的统一构造。此前这 10 个字段被复制在 4 个调用点
+// （插件 API 桥接 ×2、网页富文本粘贴 ×2），任何一处漏改都会让对应路径的
+// 图片落盘行为与其他处不一致。
+function makeImageTargetDeps(overrides?: Partial<ImageTargetDeps>): ImageTargetDeps {
+  return {
+    getCurrentFilePath: () => currentFilePath,
+    isTauriRuntime: () => isTauriRuntime(),
+    ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
+    exists: async (p: string) => !!(await exists(p as any)),
+    getDefaultPasteDir: () => getDefaultPasteDir(),
+    getUserPicturesDir: () => getUserPicturesDir(),
+    getAlwaysSaveLocalImages: () => getAlwaysSaveLocalImages(),
+    getUploaderConfig: () => getUploaderConfig(),
+    getTranscodePrefs: () => getTranscodePrefs(),
+    writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
+    transcodeToWebpIfNeeded: (blob: Blob, fname: string, quality: number, o: { skipAnimated: boolean }) => transcodeToWebpIfNeeded(blob, fname, quality, o),
+    ...(overrides || {}),
+  }
+}
+
+// 网页粘贴 / forceLocal 场景专用：强制本地保存并禁用图床。
+// 这是有意与默认行为不同，故显式命名为常量而不是散落在调用点里。
+const FORCE_LOCAL_IMAGE_DEPS: Partial<ImageTargetDeps> = {
+  getAlwaysSaveLocalImages: async () => true,
+  getUploaderConfig: async () => null,
+}
+
 // 将获取上传配置的方法暴露到全局，供所见 V2 的上传插件使用
 try {
   if (typeof window !== 'undefined') {
@@ -4684,38 +4711,14 @@ try {
     ;(window as any).flymdPreferRelativeLocalImages = () => getPreferRelativeLocalImages()
     ;(window as any).flymdSaveImageToLocalAndGetPath = (file: File, name: string, force?: boolean) => saveImageToLocalAndGetPath(file, name, force)
     ;(window as any).flymdResolveImageTarget = (blob: Blob, name: string, mime?: string, opts?: any) => resolveImageTarget(
-      {
-        getCurrentFilePath: () => currentFilePath,
-        isTauriRuntime: () => isTauriRuntime(),
-        ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
-        exists: async (p: string) => !!(await exists(p as any)),
-        getDefaultPasteDir: () => getDefaultPasteDir(),
-        getUserPicturesDir: () => getUserPicturesDir(),
-        getAlwaysSaveLocalImages: () => getAlwaysSaveLocalImages(),
-        getUploaderConfig: () => getUploaderConfig(),
-        getTranscodePrefs: () => getTranscodePrefs(),
-        writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
-        transcodeToWebpIfNeeded: (b, fname, quality, o) => transcodeToWebpIfNeeded(b, fname, quality, o),
-      },
+      makeImageTargetDeps(),
       blob,
       name,
       mime,
       { forceLocal: !!opts?.forceLocal, preferRelative: true },
     )
     ;(window as any).flymdRewriteHtmlImages = (html: string, opts?: any) => rewriteHtmlImagesByDownload(
-      {
-        getCurrentFilePath: () => currentFilePath,
-        isTauriRuntime: () => isTauriRuntime(),
-        ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
-        exists: async (p: string) => !!(await exists(p as any)),
-        getDefaultPasteDir: () => getDefaultPasteDir(),
-        getUserPicturesDir: () => getUserPicturesDir(),
-        getAlwaysSaveLocalImages: async () => true,
-        getUploaderConfig: async () => null,
-        getTranscodePrefs: () => getTranscodePrefs(),
-        writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
-        transcodeToWebpIfNeeded: (b, fname, quality, o) => transcodeToWebpIfNeeded(b, fname, quality, o),
-      },
+      makeImageTargetDeps(FORCE_LOCAL_IMAGE_DEPS),
       html,
       {
         ...(opts || {}),
@@ -4723,19 +4726,7 @@ try {
       },
     )
     ;(window as any).flymdRewriteMarkdownImages = (markdown: string, opts?: any) => rewriteMarkdownImagesByDownload(
-      {
-        getCurrentFilePath: () => currentFilePath,
-        isTauriRuntime: () => isTauriRuntime(),
-        ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
-        exists: async (p: string) => !!(await exists(p as any)),
-        getDefaultPasteDir: () => getDefaultPasteDir(),
-        getUserPicturesDir: () => getUserPicturesDir(),
-        getAlwaysSaveLocalImages: async () => true,
-        getUploaderConfig: async () => null,
-        getTranscodePrefs: () => getTranscodePrefs(),
-        writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
-        transcodeToWebpIfNeeded: (b, fname, quality, o) => transcodeToWebpIfNeeded(b, fname, quality, o),
-      },
+      makeImageTargetDeps(FORCE_LOCAL_IMAGE_DEPS),
       markdown,
       {
         ...(opts || {}),
@@ -7782,19 +7773,7 @@ function bindEvents() {
               let noticeId = ''
               try {
                 const r = await rewriteHtmlImagesByDownload(
-                  {
-                    getCurrentFilePath: () => currentFilePath,
-                    isTauriRuntime: () => isTauriRuntime(),
-                    ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
-                    exists: async (p: string) => !!(await exists(p as any)),
-                    getDefaultPasteDir: () => getDefaultPasteDir(),
-                    getUserPicturesDir: () => getUserPicturesDir(),
-                    getAlwaysSaveLocalImages: async () => true,
-                    getUploaderConfig: async () => null,
-                    getTranscodePrefs: () => getTranscodePrefs(),
-                    writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
-                    transcodeToWebpIfNeeded: (blob, fname, quality, opts) => transcodeToWebpIfNeeded(blob, fname, quality, opts),
-                  },
+                  makeImageTargetDeps(FORCE_LOCAL_IMAGE_DEPS),
                   safe,
                   {
                     baseUrl,
@@ -7843,19 +7822,7 @@ function bindEvents() {
         let noticeId = ''
         try {
           const r = await rewriteMarkdownImagesByDownload(
-            {
-              getCurrentFilePath: () => currentFilePath,
-              isTauriRuntime: () => isTauriRuntime(),
-              ensureDir: async (dir: string) => { try { await ensureDir(dir) } catch {} },
-              exists: async (p: string) => !!(await exists(p as any)),
-              getDefaultPasteDir: () => getDefaultPasteDir(),
-              getUserPicturesDir: () => getUserPicturesDir(),
-              getAlwaysSaveLocalImages: async () => true,
-              getUploaderConfig: async () => null,
-              getTranscodePrefs: () => getTranscodePrefs(),
-              writeBinaryFile: async (path: string, bytes: Uint8Array) => { await writeFile(path as any, bytes as any) },
-              transcodeToWebpIfNeeded: (blob, fname, quality, opts) => transcodeToWebpIfNeeded(blob, fname, quality, opts),
-            },
+            makeImageTargetDeps(FORCE_LOCAL_IMAGE_DEPS),
             plainText,
             {
               forceLocal: true,
