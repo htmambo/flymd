@@ -425,7 +425,10 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
         }
       } catch {}
       mermaid.initialize(getMermaidConfig());
-      try { decorateCodeBlocks(root) } catch {}
+      // 不要在这里 decorateCodeBlocks：renderPreview 传入的 root 是尚未挂载的
+      // buf，而该装饰依赖 getComputedStyle / getBoundingClientRect 做像素测量，
+      // 在游离节点上全返回 0。更糟的是它会把 pre 标记为 data-codebox=1，
+      // 导致挂载后 mdHost 上的那次正确调用被守卫跳过，行号内边距就永久错了。
       for (let i = 0; i < nodes.length; i++) {
         const el = nodes[i]
         const code = el.textContent || ''
