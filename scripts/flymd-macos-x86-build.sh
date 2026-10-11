@@ -192,14 +192,13 @@ if [ ! -d "node_modules" ]; then
     info "检测到 pnpm-lock.yaml，使用 pnpm"
     pnpm install --frozen-lockfile
   else
-    info "使用 npm ci"
-    npm ci
+    err "需要 pnpm（仓库以 pnpm-lock.yaml 为准，已不再维护 package-lock.json）"
   fi
 else
   info "node_modules 已存在，跳过安装"
 fi
 
-# 依赖 npm ci 已锁定的 @tauri-apps/cli（devDependencies），不再执行 npm install -D 以避免污染 package-lock.json
+# 依赖 pnpm-lock.yaml 已锁定的 @tauri-apps/cli（devDependencies），不再额外安装以避免污染 lockfile
 # 如需升级 CLI 版本，请开发者手动在本地调整 package.json 后重新提交
 
 # ── 2. 生成图标 ─────────────────────────────────────────────────────────────

@@ -98,8 +98,8 @@ if [[ ! -d node_modules ]] || [[ "$CLEAN_BUILD" -eq 1 ]]; then
     echo "    detected pnpm-lock.yaml, using pnpm"
     pnpm install --frozen-lockfile
   else
-    echo "    using npm"
-    npm ci
+    echo "    error: 需要 pnpm（仓库以 pnpm-lock.yaml 为准，已不再维护 package-lock.json）" >&2
+    exit 1
   fi
 fi
 

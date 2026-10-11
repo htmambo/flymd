@@ -302,6 +302,9 @@ let mermaidReady = false
 // 这里用时间切片把长任务切开：功能不变，但不会“切阅读模式像死机”。
 let _katexMod: any | null = null
 let _renderPreviewSeq = 0
+// 图片加载后把所见模式模拟光标下移若干行，保证落在图片之后的正文里。
+// 每次渲染最多生效一次，故每次 renderPreview 开头重置。
+let _nudgedCaretForThisRender = false
 const DEBUG_RENDER = false
 
 // 大文档渲染期间，任何“后台工作”（KaTeX、索引等）都不该抢 UI。
@@ -522,8 +525,6 @@ let _previewMdHost: HTMLDivElement | null = null
 let _previewPdfHost: HTMLDivElement | null = null
 // 大纲缓存（Markdown/WYSIWYG）：避免重复重建 DOM
 let _outlineLastSignature = ''
-// PDF 目录缓存：按文件路径缓存解析结果与 mtime，用于自动失效
-const _pdfOutlineCache = new Map<string, { mtime: number; items: Array<{ level: number; title: string; page: number }> }>()
 // 所见模式：用于滚动同步的“源位锚点”表
 // 旧所见模式已移除：不再维护锚点表
 
@@ -885,10 +886,6 @@ async function getAppLocalDataDirCached(): Promise<string | null> {
   _appLocalDataDirCached = null
   return _appLocalDataDirCached
 }
-const builtinPlugins: InstalledPlugin[] = [
-  { id: 'uploader-s3', name: '图床管理', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: '粘贴/拖拽图片自动上传，支持 S3/R2 或 ImgLa，使用设置中的凭据。' },
-  { id: 'webdav-sync', name: 'WebDAV 同步', version: 'builtin', enabled: undefined, dir: '', main: '', builtin: true, description: 'F5/启动/关闭前同步，基于修改时间覆盖' }
-]
 
 async function readUploaderEnabledState(): Promise<boolean> {
   try {
@@ -1699,7 +1696,7 @@ function onTaskCheckboxChange(ev: Event) {
     const nextCh = el.checked ? 'x' : ' '
     lines[m.line] = before + nextCh + after
     ;(editor as HTMLTextAreaElement).value = lines.join('\n')
-    try { (window as any).dirty = true } catch {}
+    dirty = true
     try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
     // 立即更新删除线样式（无需等待 renderPreview）
     try {
@@ -1816,161 +1813,6 @@ async function sanitizePreviewHtml(html: string): Promise<string> {
   } catch {
     return html
   }
-}
-
-// 轻渲染：仅生成安全的 HTML，不执行 Mermaid/代码高亮等重块
-async function renderPreviewLight() {
-  try { if ((currentFilePath || '').toLowerCase().endsWith('.pdf')) return } catch {}
-  try { setPreviewKind('md') } catch {}
-  const { mdHost } = ensurePreviewHosts()
-  await ensureRenderer()
-  let raw = editor.value
-  try {
-    if (wysiwyg && mode !== 'preview') {
-      const st = editor.selectionStart >>> 0
-      const before = raw.slice(0, st)
-      const after = raw.slice(st)
-      const lineStart = before.lastIndexOf('\n') + 1
-      const curLine = before.slice(lineStart)
-      const fenceRE = /^ {0,3}(```+|~~~+)/
-      const preText = raw.slice(0, lineStart)
-      const preLines = preText.split('\n')
-      let insideFence = false
-      let fenceCh = ''
-      for (const ln of preLines) {
-        const m = ln.match(fenceRE)
-        if (m) {
-          const ch = m[1][0]
-          if (!insideFence) { insideFence = true; fenceCh = ch }
-          else if (ch === fenceCh) { insideFence = false; fenceCh = '' }
-        }
-      }
-      const isFenceLine = fenceRE.test(curLine)
-      let injectAt = st
-      if (st === lineStart) {
-        const mBQ = curLine.match(/^ {0,3}> ?/)
-        const mH = curLine.match(/^ {0,3}#{1,6} +/)
-        const mUL = curLine.match(/^ {0,3}[-*+] +/)
-        const mOL = curLine.match(/^ {0,3}\d+\. +/)
-        const prefixLen = (mBQ?.[0]?.length || mH?.[0]?.length || mUL?.[0]?.length || mOL?.[0]?.length || 0)
-        if (prefixLen > 0) injectAt = lineStart + prefixLen
-      }
-      if (isFenceLine) {
-        const m = curLine.match(fenceRE)
-        if (m) {
-          const ch = m[1][0]
-          if (!insideFence) { injectAt = lineStart + m[0].length }
-          else if (ch === fenceCh) { injectAt = -1 }
-        }
-      }
-      if (injectAt >= 0) {
-        const dotStr = insideFence && !isFenceLine ? '_' : '<span class="caret-dot">_</span>'
-        raw = raw.slice(0, injectAt) + dotStr + raw.slice(injectAt)
-      }
-      try {
-        const lines = raw.split('\n')
-        // 对未闭合 fenced 与单 $ 进行最小阻断，避免即时渲染抖动
-        let openFenceIdx = -1
-        let openFenceChar = ''
-        for (let i = 0; i < lines.length; i++) {
-          const m = lines[i].match(/^ {0,3}(`{3,}|~{3,})/)
-          if (m) {
-            const ch = m[1][0]
-            if (openFenceIdx < 0) { openFenceIdx = i; openFenceChar = ch }
-            else if (ch === openFenceChar) { openFenceIdx = -1; openFenceChar = '' }
-          }
-        }
-        if (openFenceIdx >= 0) {
-          lines[openFenceIdx] = lines[openFenceIdx].replace(/^(\s*)(`{3,}|~{3,})/, (_all, s: string, fence: string) => s + fence[0] + '\u200B' + fence.slice(1))
-        }
-        const curIdx = (() => { try { return before.split('\n').length - 1 } catch { return -1 } })()
-        if (curIdx >= 0 && curIdx < lines.length) {
-          const line = lines[curIdx]
-          const singlePos: number[] = []
-          for (let i = 0; i < line.length; i++) {
-            if (line[i] !== '$') continue
-            if (i + 1 < line.length && line[i + 1] === '$') { i++; continue }
-            let bs = 0
-            for (let j = i - 1; j >= 0 && line[j] === '\\'; j--) bs++
-            if ((bs & 1) === 1) continue
-            singlePos.push(i)
-          }
-          if ((singlePos.length & 1) === 1) {
-            const idx = singlePos[singlePos.length - 1]
-            lines[curIdx] = line.slice(0, idx + 1) + '\u200B' + line.slice(idx + 1)
-          }
-        }
-        raw = lines.join('\n')
-      } catch {}
-    }
-  } catch {}
-  // 轻渲染预览：只渲染正文部分，忽略 YAML Front Matter
-  try {
-    const { body } = splitYamlFrontMatter(raw)
-    raw = body
-  } catch {}
-  // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整行当数学渲染
-  raw = protectExcelDollarRefs(raw)
-  // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被 CommonMark 分断的问题
-  try {
-    const { normalizeCalloutMarkdown } = await import('./plugins/markdownItCallout')
-    if (typeof normalizeCalloutMarkdown === 'function') {
-      raw = normalizeCalloutMarkdown(raw)
-    }
-  } catch {}
-  // 按需加载文档中用到的 highlight.js 语言模块
-  try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
-  raw = guardStrongBoundaryForCommonMark(raw)
-  const html = stripStrongBoundaryGuard(md!.render(raw))
-  const safe = await sanitizePreviewHtml(html)
-  // 渲染 .md-math-* 占位符为 KaTeX
-  try {
-    const tempDiv = document.createElement('div')
-    tempDiv.innerHTML = safe
-    try {
-      const mathNodes = Array.from(tempDiv.querySelectorAll('.md-math-inline, .md-math-block')) as HTMLElement[]
-      if (mathNodes.length > 0) {
-        // 使用所见模式的导入方式
-        const katex = await import('katex')
-
-        if (!katexCssLoaded) {
-          await import('katex/dist/katex.min.css')
-          katexCssLoaded = true
-
-          // 手动注入“只影响预览区”的关键 CSS 兜底，避免全局覆盖导致所见模式错乱
-          katexCriticalStyleApi!.ensure()
-        }
-
-        // 渲染每个数学节点
-        for (const el of mathNodes) {
-          try {
-            const value = el.getAttribute('data-math') || ''
-            const displayMode = el.classList.contains('md-math-block')
-
-            // 清空元素
-            el.innerHTML = ''
-
-            // 使用 katex.default.render()（与所见模式相同）
-            katex.default.render(value, el, {
-              throwOnError: false,
-              displayMode: displayMode,
-            })
-          } catch (e) {
-            console.error('[KaTeX 导出] 渲染单个公式失败:', e)
-            el.textContent = el.getAttribute('data-math') || ''
-          }
-        }
-      }
-    } catch (mainErr) {
-      console.error('[KaTeX 导出] 主流程崩溃:', mainErr)
-    }
-    try { mdHost.innerHTML = `<div class="preview-body">${tempDiv.innerHTML}</div>` } catch {}
-  } catch {
-    // 回退：如果 KaTeX 渲染失败，使用原始 HTML
-    try { mdHost.innerHTML = `<div class="preview-body">${safe}</div>` } catch {}
-  }
-  // 轻渲染后也生成锚点，提升滚动同步体验
-  // 旧所见模式移除：不再重建锚点表
 }
 
 // 供所见 V2 调用：将粘贴/拖拽的图片保存到本地，并返回可写入 Markdown 的路径（自动生成不重复文件名）
@@ -2778,24 +2620,6 @@ async function ensureHljsCore(): Promise<any> {
   return hljsCore
 }
 
-async function ensureHljsLanguage(lang: string): Promise<void> {
-  // common 包已预注册常用语言；非 common 语言暂不支持动态加载，
-  // 避免运行时模板路径 import 在打包后 404 导致高亮失效。
-  if (!lang) return
-  await ensureHljsCore()
-}
-
-function detectCodeLanguages(raw: string): string[] {
-  const langs = new Set<string>()
-  const fenceRE = /^ {0,3}(```+|~~~+)(\S*)/gm
-  let m: RegExpExecArray | null
-  while ((m = fenceRE.exec(raw)) !== null) {
-    const lang = m[2]?.trim().toLowerCase()
-    if (lang && lang !== 'mermaid') langs.add(lang)
-  }
-  return Array.from(langs)
-}
-
 // 延迟加载高亮库并创建 markdown-it
 // 任务列表（阅读模式）：将 "- [ ]" / "- [x]" 渲染为复选框
 async function ensureRenderer() {
@@ -2921,6 +2745,7 @@ function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
 // 渲染预览（带安全消毒）
 async function renderPreview(opts?: RenderPreviewOptions) {
   const seq = ++_renderPreviewSeq
+  _nudgedCaretForThisRender = false
   try { if (DEBUG_RENDER) console.log('=== 开始渲染预览 ===') } catch {}
   // 首次预览开始打点
   try { if (!(renderPreview as any)._firstLogged) { (renderPreview as any)._firstLogged = true; logInfo('打点:首次预览开始') } } catch {}
@@ -3057,8 +2882,10 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       raw = normalizeCalloutMarkdown(raw)
     }
   } catch {}
-  // 按需加载文档中用到的 highlight.js 语言模块
-  try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
+  // 确保 highlight.js 核心已加载。
+  // 曾在此遍历 detectCodeLanguages(raw) 逐个调 ensureHljsLanguage，但该函数只 await
+  // ensureHljsCore()、完全忽略 lang 参数，等于每次渲染都白跑一遍全文件正则。
+  try { await ensureHljsCore() } catch {}
   raw = guardStrongBoundaryForCommonMark(raw)
   const html = stripStrongBoundaryGuard(md!.render(raw))
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
@@ -3117,11 +2944,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       try { outlineApi.renderOutlinePanel() } catch {}
     } catch {}
   } catch {} finally { try { if (seq === _renderPreviewSeq) preview.classList.remove('rendering') } catch {} }
-  // 重新计算所见模式锚点表
-  // @ts-ignore — _wysiwygAnchors / buildAnchors 在文件下方声明
-  try { if (wysiwyg) { _wysiwygAnchors = buildAnchors(preview) } } catch {}
-  // 所见模式下，确保“模拟光标 _”在预览区可见
-  // 旧所见模式移除：不再调整模拟光标
   // 外链安全属性
   mdHost.querySelectorAll('a[href]').forEach((a) => {
     const el = a as HTMLAnchorElement
@@ -3148,8 +2970,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         const el = img as HTMLImageElement
         const maybeNudge = () => {
           try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
-          // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
-          try { if (_nudgedCaretForThisRender) return; if (!wysiwyg) return } catch { return }
+          if (_nudgedCaretForThisRender || !wysiwyg) return
           try {
             const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
             const pr = Math.max(0, preview.scrollHeight - preview.clientHeight)
@@ -3161,7 +2982,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
               const approx = Math.round(((el.clientHeight || 0) / (lh || 16)) * 0.3)
               const lines = Math.max(4, Math.min(12, approx || 0))
               const moved = wysiwygCaretApi.moveWysiwygCaretByLines(lines, wysiwygCaretApi.getVisualColumn())
-              if (moved !== 0) { // @ts-ignore — _nudgedCaretForThisRender 在文件下方声明
+              if (moved !== 0) {
                 _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
             }
           } catch {}
@@ -5328,8 +5149,8 @@ try {
         }
       } catch {}
 
-      // 按需加载文档中用到的 highlight.js 语言模块
-      try { await Promise.all(detectCodeLanguages(raw).map(ensureHljsLanguage)) } catch {}
+      // 确保 highlight.js 核心已加载（见 renderPreview 内同名注释：原逐语言调用已失效）
+      try { await ensureHljsCore() } catch {}
       return md.render(raw)
     }
     // 渲染 Markdown 到指定容器：在纯渲染基础上补全 Mermaid/KaTeX 等 DOM 后处理，
@@ -6233,58 +6054,6 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
   }
 }
 
-async function renderDir(container: HTMLDivElement, dir: string) {
-  container.innerHTML = ''
-  const entries = await listDirOnce(dir)
-  for (const e of entries) {
-    if (e.isDir) {
-      const row = document.createElement('div')
-      row.className = 'lib-node lib-dir'
-      row.innerHTML = `<svg class="lib-tg" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><svg class="lib-ico lib-ico-folder" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a 2 2 0 0 1 2-2h4l2 2h8a 2 2 0 0 1 2 2v7a 2 2 0 0 1-2 2H5a 2 2 0 0 1-2-2V7z"/></svg><span class="lib-name">${e.name}</span>`
-      ;(row as any).dataset.path = e.path
-      const kids = document.createElement('div')
-      kids.className = 'lib-children'
-      kids.style.display = 'none'
-      container.appendChild(row)
-      row.addEventListener('dragover', (ev) => {
-        ev.preventDefault()
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move'
-        row.classList.add('selected')
-      })
-      row.addEventListener('dragleave', () => { row.classList.remove('selected') })
-      row.addEventListener('drop', async (ev) => { try { ev.preventDefault(); row.classList.remove('selected'); const src = ev.dataTransfer?.getData('text/plain') || ''; if (!src) return; const base = e.path; const sep = base.includes('\\\\') ? '\\\\' : '/'; const dst = base + sep + (src.split(/[\\\\/]+/).pop() || ''); if (src === dst) return; const root = await getLibraryRoot(); if (!root || !isInside(root, src) || !isInside(root, dst)) { alert('仅允许在库目录内移动'); return } if (await exists(dst)) { const ok = await ask('目标已存在，是否覆盖？'); if (!ok) return } await moveFileSafe(src, dst); if (currentFilePath === src) { currentFilePath = dst as any; titlebarStatusApi?.refreshTitle() } const treeEl = document.getElementById('lib-tree') as HTMLDivElement | null; if (treeEl && !fileTreeReady) { await fileTree.init(treeEl, { getRoot: getLibraryRoot, onOpenFile: async (p: string) => { await openFile2(p) }, onOpenNewFile: async (p: string) => { await openFile2(p); mode='edit'; preview.classList.add('hidden'); try { (editor as HTMLTextAreaElement).focus() } catch {} } }); fileTreeReady = true } else if (treeEl) { await fileTree.refresh() } } catch (e) { showError('移动失败', e) } })
-      container.appendChild(kids)
-      let expanded = false
-      row.addEventListener('click', async () => {
-         selectLibraryNode(row, e.path, true)
-        expanded = !expanded
-        kids.style.display = expanded ? '' : 'none'
-        row.classList.toggle('expanded', expanded)
-        if (expanded && kids.childElementCount === 0) {
-          await renderDir(kids as HTMLDivElement, e.path)
-        }
-      })
-    } else {
-      const row = document.createElement('div')
-      const ext = (e.name.split('.').pop() || '').toLowerCase()
-      row.className = 'lib-node lib-file file-ext-' + ext
-      row.innerHTML = `<svg class="lib-ico lib-ico-app" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6"/><path d="M9 17h4"/></svg><span class="lib-name">${e.name}</span>`
-       row.setAttribute('draggable','true')
-       row.addEventListener('dragstart', (ev) => { try { ev.dataTransfer?.setData('text/plain', e.path) } catch {} })
-      row.title = e.path
-       ;(row as any).dataset.path = e.path
-       row.setAttribute('draggable','true')
-       row.addEventListener('dragstart', (ev) => { try { ev.dataTransfer?.setData('text/plain', e.path); if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move' } catch {} })
-      row.addEventListener('click', async () => {
-        selectLibraryNode(row, e.path, false)
-        await openFile2(e.path)
-      })
-      container.appendChild(row)
-    }
-  }
-
-}
-
 function showFileMenu() {
   mainTopMenusApi.showFileMenu()
 }
@@ -6694,7 +6463,13 @@ function applyI18nUi() {
   } catch {}
 }
 
+// 启动失败降级路径会再次调用 bindEvents()。此守卫避免把里面几十个监听器
+// （keydown / paste / drop / beforeunload …）重复绑定一遍——重复绑定会让每个事件
+// 触发多次，包括保存与退出确认。
+let _bindEventsDone = false
 function bindEvents() {
+  if (_bindEventsDone) return
+  _bindEventsDone = true
   try { ensureEditorKeyHooksBound() } catch {}
 // 全局：确保编辑器键盘钩子仅绑定一次（切换文档/重开窗也生效）
   function ensureEditorKeyHooksBound() {
@@ -6747,7 +6522,7 @@ function bindEvents() {
           ta.selectionStart = ta.selectionEnd = s + 1
         }
         try { dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
 
       function handleTabIndent(e: KeyboardEvent) {
@@ -6770,7 +6545,7 @@ function bindEvents() {
         ta.selectionStart = result.selectionStart
         ta.selectionEnd = result.selectionEnd
         try { dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       }
 
       document.addEventListener('keydown', (e) => { try { handleKeydown(e) } catch {} }, true)
@@ -7190,7 +6965,7 @@ function bindEvents() {
       }
       const pos = s + rep.length
       setSel(pos, pos)
-      dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+      dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { scheduleRenderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
       findNext(false)
       updateFindCountLabel()
     }
@@ -7237,7 +7012,7 @@ function bindEvents() {
         }
         const caret = Math.min(editor.value.length, editor.selectionEnd + rep.length)
         setSel(caret, caret)
-        dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
+        dirty = true; titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus(); if (mode === 'preview') { scheduleRenderPreview() } else if (wysiwyg) { scheduleWysiwygRender() }
       }
       updateFindCountLabel()
     }
@@ -7313,7 +7088,7 @@ function bindEvents() {
   function refreshEditorAfterAutoWrap() {
     dirty = true
     try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-    if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+    if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
   }
   function replaceEditorRange(ta: HTMLTextAreaElement, start: number, end: number, text: string, selStart: number, selEnd: number) {
     const val = String(ta.value || '')
@@ -7469,7 +7244,7 @@ function bindEvents() {
         try { ta.selectionStart = ta.selectionEnd = caret } catch {}
         dirty = true
         try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
         return true
       }
 
@@ -7492,7 +7267,7 @@ function bindEvents() {
       insertUndoable(ta, '\n' + nextPrefix)
       dirty = true
       try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-      if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+      if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       return true
     } catch {
       return false
@@ -7530,7 +7305,7 @@ function bindEvents() {
         }
         if (e0 > s0) { ta.selectionStart = s0 + 2; ta.selectionEnd = s0 + 2 + mid.length } else { ta.selectionStart = ta.selectionEnd = s0 + 2 }
         dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
         return
       }
       const _pairs: Array<[string, string]> = [
@@ -7558,7 +7333,7 @@ function bindEvents() {
             ta.selectionStart = ta.selectionEnd = s - 2
           }
           dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-          if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+          if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
           return
         }
         if (openClose[prev] && openClose[prev] === next) {
@@ -7571,7 +7346,7 @@ function bindEvents() {
             ta.selectionStart = ta.selectionEnd = s - 1
           }
           dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-          if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+          if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
           return
         }
       }
@@ -7604,7 +7379,7 @@ function bindEvents() {
         ta.selectionStart = ta.selectionEnd = s + 1
       }
       dirty = true; try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-      if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+      if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
     })
   } catch {}  // 源码模式：Tab/Shift+Tab 段落缩进/反缩进
   try {
@@ -7626,7 +7401,7 @@ function bindEvents() {
         ta.selectionEnd = result.selectionEnd
         dirty = true
         try { titlebarStatusApi?.refreshTitle(); titlebarStatusApi?.refreshStatus() } catch {}
-        if (mode === 'preview') { try { void renderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
+        if (mode === 'preview') { try { scheduleRenderPreview() } catch {} } else if (wysiwyg) { try { scheduleWysiwygRender() } catch {} }
       } catch {}
     })
   } catch {}
@@ -8213,8 +7988,7 @@ function bindEvents() {
       _statusRaf = requestAnimationFrame(() => {
         _statusRaf = 0
         try { (titlebarStatusApi as any)?.refreshStatus?.(_lastStatusEv) } catch {}
-        // @ts-ignore — notifySelectionChangeForPlugins 在文件下方声明
-        try { notifySelectionChangeForPlugins() } catch {}
+        try { (pluginRuntimeProxy.pluginHost as any)?.notifySelectionChangeForPlugins?.() } catch {}
         _lastStatusEv = undefined
       })
     }
@@ -9612,8 +9386,12 @@ function bindEvents() {
 
     // 🔧 即使启动失败，也尝试绑定基本事件
     try {
-      bindEvents()
-      console.log('已降级绑定基本事件')
+      if (_bindEventsDone) {
+        console.log('基础事件此前已绑定，跳过重复绑定')
+      } else {
+        bindEvents()
+        console.log('已降级绑定基本事件')
+      }
     } catch (e) {
       console.error('事件绑定也失败了:', e)
     }

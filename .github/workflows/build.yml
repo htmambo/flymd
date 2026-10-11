@@ -28,15 +28,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # jsdom@30 要求 ^22.22.2 || ^24.15.0 || >=26.0.0；vite@8 要求 ^20.19 || >=22.12
+          node-version: 22
+          cache: 'pnpm'
+
+      # 与仓库的打包脚本保持一致：一律以 pnpm-lock.yaml 为准
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Unit tests
+        run: pnpm test
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: cargo fmt --check
+        if: matrix.os != 'Windows'
+        working-directory: src-tauri
+        run: cargo fmt --check
 
       # Windows 特定依赖
       - name: Install Windows bundlers (NSIS + WiX)
@@ -71,14 +93,8 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Install Tauri CLI
-        run: npm i -D @tauri-apps/cli@^2
-
-      - name: Install frontend dependencies
-        run: npm ci
-
       - name: Generate icons from Flymdnew.png
-        run: npx tauri icon ./Flymdnew.png
+        run: pnpm exec tauri icon ./Flymdnew.png
       - name: Install macOS DMG toolchain
         if: startsWith(matrix.platform, 'macos-')
         run: |

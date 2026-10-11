@@ -301,6 +301,8 @@ export type PluginHost = {
   registerBuiltinSuffixRules: (ownerId: string, spec: AdditionalSuffixRegisterSpec) => void
   unregisterBuiltinSuffixRules: (ownerId: string) => void
   registerBuiltinAPI: (namespace: string, ownerId: string, api: any) => void
+  // 主动向插件广播一次选区变化（编辑器 keyup/click 时由宿主调用）
+  notifySelectionChangeForPlugins: () => void
 }
 
 let _appLocalDataDirCached: string | null | undefined
@@ -804,6 +806,8 @@ export function createPluginHost(
     }
   }
 
+  let notifySelectionChangeForPluginsRef: (() => void) | null = null
+
   async function activatePlugin(p: InstalledPlugin): Promise<void> {
     if (state.activePlugins.has(p.id)) return
     const code = await readPluginMainCode(p)
@@ -913,6 +917,24 @@ export function createPluginHost(
       }
     }
 
+    // 向所有已注册 onSelectionChange 的插件广播一次选区变化。
+    // 宿主在编辑器 keyup/click（RAF 节流）时调用。state 来自 activatePlugin 参数，
+    // 故函数体在此创建、引用挂到外层，由 createPluginHost 暴露。
+    notifySelectionChangeForPluginsRef = () => {
+      try {
+        const sel = getSourceSelectionForPlugin()
+        for (const fn of state.pluginSelectionHandlers.values()) {
+          if (typeof fn === 'function') {
+            try {
+              fn(sel)
+            } catch (e) {
+              console.error('[Plugin] onSelectionChange 失败', e)
+            }
+          }
+        }
+      } catch {}
+    }
+
     // 计算源码编辑器中当前光标（selectionEnd）在视口中的大致矩形
     const getSourceCaretRectForPlugin = () => {
       try {
@@ -1004,21 +1026,6 @@ export function createPluginHost(
       } catch {
         return ''
       }
-    }
-
-    const notifySelectionChangeForPlugins = () => {
-      try {
-        const sel = getSourceSelectionForPlugin()
-        for (const fn of state.pluginSelectionHandlers.values()) {
-          if (typeof fn === 'function') {
-            try {
-              fn(sel)
-            } catch (e) {
-              console.error('[Plugin] onSelectionChange 失败', e)
-            }
-          }
-        }
-      } catch {}
     }
 
     const ctx = {
@@ -2830,5 +2837,6 @@ export function createPluginHost(
     registerBuiltinSuffixRules,
     unregisterBuiltinSuffixRules,
     registerBuiltinAPI,
+    notifySelectionChangeForPlugins: () => notifySelectionChangeForPluginsRef?.(),
   }
 }

@@ -25,11 +25,17 @@ jobs:
       - name: Checkout 代码
         uses: actions/checkout@v4
 
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: 设置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          # jsdom@30 要求 ^22.22.2 || ^24.15.0 || >=26.0.0
+          node-version: '22'
+          cache: 'pnpm'
 
       - name: 设置 Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -59,15 +65,18 @@ jobs:
           echo "NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
       - name: 安装依赖
-        run: npm install
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm exec tsc --noEmit
 
       - name: 初始化 Tauri Android 项目
         run: |
-          npm install -g @tauri-apps/cli
-          npx tauri android init || echo "Android project already initialized"
+          pnpm install -g @tauri-apps/cli
+          pnpm exec tauri android init || echo "Android project already initialized"
 
       - name: 构建前端
-        run: npm run build
+        run: pnpm build
 
       - name: 构建 Android APK (Debug)
         if: ${{ github.event.inputs.build_type == 'debug' || github.event.inputs.build_type == '' }}

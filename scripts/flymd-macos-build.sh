@@ -153,8 +153,7 @@ if [ ! -d "node_modules" ]; then
     info "检测到 pnpm-lock.yaml，使用 pnpm"
     pnpm install --frozen-lockfile
   else
-    info "使用 npm ci"
-    npm ci
+    err "需要 pnpm（仓库以 pnpm-lock.yaml 为准，已不再维护 package-lock.json）"
   fi
 else
   info "node_modules 已存在，跳过安装"

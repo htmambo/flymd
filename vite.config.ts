@@ -15,8 +15,13 @@ const DEV_CSP = [
 
 export default defineConfig(({ mode }) => ({
   base: './',
+  // 测试：默认仍用 node 环境，DOM 测试继续在文件顶部写 // @vitest-environment jsdom
+  // （与既有 31 个 DOM 测试文件一致）。setupFiles 无条件生效，负责修复 Node 22+
+  // 内置 localStorage 全局顶掉 jsdom Storage 的问题。
+  test: {
+    setupFiles: ['./src/test/setup.ts']
+  },
   resolve: {
-    alias: {},
     dedupe: ['katex', '@milkdown/prose'] // 去重，避免多个版本
   },
   server: {
@@ -26,9 +31,13 @@ export default defineConfig(({ mode }) => ({
   },
   // 生产构建：分包与剥离 console/debugger；开发：预打包重库
   esbuild: mode === 'production' ? {
-    // 生产环境去掉 console/debugger，减小体积并避免多余日志
+    // 生产环境去掉 console/debugger，减小体积并避免多余日志。
+    // 注意：启动错误浮层(index.html 的 #startup-errors)基于 window.onerror 与
+    // unhandledrejection，不依赖 console，所以 drop console 不影响它。
     drop: ['console', 'debugger'],
-    legalComments: 'none' // 移除许可注释，减小体积
+    // MIT/BSD 等许可要求在再分发时保留版权声明，不能剥到 none；
+    // 抽成同目录 *.LICENSE.txt 文件，比留在 bundle 里更省体积。
+    legalComments: 'external'
   } : {},
   optimizeDeps: {
     // 开发时预构建大型依赖，加快热更新（仅影响 dev，不改变生产包）
@@ -80,7 +89,7 @@ export default defineConfig(({ mode }) => ({
             if (id.includes('katex')) return 'katex'
             if (id.includes('pdfjs-dist')) return 'pdfjs'
             // 导出相关库（按需加载）
-            if (id.includes('html2pdf') || id.includes('html-docx') || id.includes('html-to-docx')) return 'docx'
+            if (id.includes('html2pdf') || id.includes('html-docx')) return 'docx'
             if (id.includes('canvg')) return 'pdf'
             // WebDAV 相关
             if (id.includes('webdav')) return 'wps'
