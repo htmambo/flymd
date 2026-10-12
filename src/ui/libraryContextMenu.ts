@@ -28,7 +28,7 @@ export type LibraryContextMenuDeps = {
   normalizePath(p: string): string
   getLibraryRoot(): Promise<string | null>
   renameFileSafe(path: string, newName: string): Promise<string>
-  deleteFileSafe(path: string, toTrash: boolean): Promise<void>
+  deleteFileSafe(path: string, toTrash: boolean, opts?: { root?: string | null }): Promise<void>
   openFile(path: string): Promise<void>
   ensureTreeInitialized(): Promise<void>
   refreshTree(): Promise<void>
@@ -336,7 +336,11 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
         const name = (path.split(/[\\/]+/).pop() || '').trim()
         const ok = await showLibraryDeleteDialog(name, isDir)
         if (!ok) return
-        await deps.deleteFileSafe(path, false)
+        // 传入库根，让 deleteFileSafe 自身做越权防护（拒绝删库根与库外路径）。
+        // 库根行同样带 dataset.path 并会出现在右键菜单里，删除路径此前是唯一
+        // 没有 isInside 守卫的路径 —— 重命名路径早就有。
+        const root = await deps.getLibraryRoot()
+        await deps.deleteFileSafe(path, false, { root })
 
         // 通知：某个路径已被删除（由标签系统订阅并决定是否关闭标签）
         dispatchPathDeleted(path, isDir)
@@ -361,7 +365,12 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
     }
 
     menu.appendChild(mkItem(t('ctx.rename'), () => { void doRename() }))
-    menu.appendChild(mkItem(t('ctx.delete'), () => { void doDelete() }))
+    // 库根（depth 0）不提供删除入口：整个库被移走没有合理场景，
+    // 而确认弹窗只显示文件夹名、不提示这是整个库，容易误触。
+    const isRootRow = (row as any).dataset?.depth === '0'
+    if (!isRootRow) {
+      menu.appendChild(mkItem(t('ctx.delete'), () => { void doDelete() }))
+    }
 
     try {
       const sep = document.createElement('div') as HTMLDivElement

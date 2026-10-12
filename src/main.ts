@@ -4717,6 +4717,10 @@ try {
     ;(window as any).flymdGetDefaultPasteDir = () => getDefaultPasteDir()
     ;(window as any).flymdAlwaysSaveLocalImages = () => getAlwaysSaveLocalImages()
     ;(window as any).flymdPreferRelativeLocalImages = () => getPreferRelativeLocalImages()
+    // libraryContextMenu 的「移动到」用它做越权校验。此前该函数只被读取、
+    // 从未被赋值，导致 `!isInside` 恒为真 —— 菜单项永远走 alert 分支，
+    // 功能完全不可用，守卫也是死的。
+    ;(window as any).flymdIsInside = (root: string, p: string) => { try { return isInside(root, p) } catch { return false } }
     ;(window as any).flymdSaveImageToLocalAndGetPath = (file: File, name: string, force?: boolean) => saveImageToLocalAndGetPath(file, name, force)
     ;(window as any).flymdResolveImageTarget = (blob: Blob, name: string, mime?: string, opts?: any) => resolveImageTarget(
       makeImageTargetDeps(),
