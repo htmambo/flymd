@@ -63,7 +63,7 @@ describe('deleteFileSafe', () => {
     fsState.files.add('/lib/note.md')
     await deleteFileSafe('/lib/note.md')
     expect(fsState.files.has('/lib/note.md')).toBe(false)
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/lib/note.md' })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/lib/note.md', root: null })
   })
 
   it('skips trash when permanent=true', async () => {
@@ -79,7 +79,7 @@ describe('deleteFileSafe', () => {
     invokeMock.mockImplementationOnce(async () => { throw new Error('trash unavailable') })
     fsState.files.add('/lib/note.md')
     await deleteFileSafe('/lib/note.md')
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/lib/note.md' })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/lib/note.md', root: null })
     expect(fsState.files.has('/lib/note.md')).toBe(false)
   })
 })

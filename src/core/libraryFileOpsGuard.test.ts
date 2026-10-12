@@ -57,21 +57,29 @@ describe('deleteFileSafe 越权防护', () => {
 
   it('允许删除库内文件并走回收站', async () => {
     await deleteFileSafe(`${ROOT}/sub/a.md`, false, { root: ROOT })
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: `${ROOT}/sub/a.md` })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: `${ROOT}/sub/a.md`, root: ROOT })
   })
 
   it('允许删除库内目录', async () => {
     await deleteFileSafe(`${ROOT}/sub`, false, { root: ROOT })
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: `${ROOT}/sub` })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: `${ROOT}/sub`, root: ROOT })
+  })
+
+  it('把库根一并传给后端，供 move_to_trash / force_remove_path 做纵深校验', async () => {
+    await deleteFileSafe(`${ROOT}/sub/a.md`, false, { root: ROOT })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', {
+      path: `${ROOT}/sub/a.md`,
+      root: ROOT,
+    })
   })
 
   it('未提供 root 时不做越权拦截（保持旧行为，供库外场景使用）', async () => {
     await deleteFileSafe('/tmp/scratch.md', false)
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/tmp/scratch.md' })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/tmp/scratch.md', root: null })
   })
 
   it('root 为 null/空 时同样不拦截', async () => {
     await deleteFileSafe('/tmp/scratch.md', false, { root: null })
-    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/tmp/scratch.md' })
+    expect(invokeMock).toHaveBeenCalledWith('move_to_trash', { path: '/tmp/scratch.md', root: null })
   })
 })

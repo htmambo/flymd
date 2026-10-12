@@ -16,7 +16,8 @@ import { ensureDir, isInside } from './fsSafe'
  * 优先尝试移至回收站(macOS/Windows);若为目录或回收站失败,递归删除子项后用 force_remove_path 兜底;3 次重试。
  *
  * 越权防护(必须在此函数内,而非只在调用点):deleteFileSafe 会递归销毁传入的
- * 任何路径,后端 move_to_trash / force_remove_path 也不做任何根目录校验。
+ * 任何路径。后端 move_to_trash / force_remove_path 现在也会校验(root 参数),
+ * 但那是纵深防御——前端这一层不能省,否则一旦某处漏传 root 就直接失效。
  * 此前唯一的防线是「调用方传的路径来自文件树 dataset.path」这一假设 ——
  * 而库根行同样带 dataset.path 且会出现在右键菜单里,右键删除库根即可把整个
  * 库移入回收站,弹窗还只显示文件夹名、不提示这是整个库。
@@ -40,7 +41,7 @@ export async function deleteFileSafe(p: string, permanent = false, opts?: { root
   // 第一步:尝试移至回收站(如果不是永久删除)
   if (!permanent && typeof invoke === 'function') {
     try {
-      await invoke('move_to_trash', { path: p })
+      await invoke('move_to_trash', { path: p, root: root ?? null })
       // 验证删除是否成功
       const stillExists = await exists(p)
       if (!stillExists) return
@@ -70,7 +71,7 @@ export async function deleteFileSafe(p: string, permanent = false, opts?: { root
         }
         await remove(p)
       } else if (typeof invoke === 'function') {
-        await invoke('force_remove_path', { path: p })
+        await invoke('force_remove_path', { path: p, root: root ?? null })
       }
 
       const finalCheck = await exists(p)

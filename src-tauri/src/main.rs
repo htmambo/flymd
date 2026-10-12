@@ -172,7 +172,8 @@ fn install_panic_hook_once() {
   }
 
   std::panic::set_hook(Box::new(|info| {
-    // 注意：release 里 panic=abort，但 hook 仍有机会写入关键信息
+    // 即使展开后 panic 会被上层捕获/转成错误，这里也值得先落盘：
+    // 崩溃现场的栈信息只存在于日志里，错过就再也拿不到了。
     let ts = now_epoch_ms();
     write_startup_log(&format!("[panic] t={ts}ms {info}"));
   }));
@@ -253,6 +254,60 @@ fn is_supported_doc_path(path: &std::path::Path) -> bool {
     }
     None => false,
   }
+}
+
+/// 越权防护：确认 `path` 位于 `root` 之内，且不是 `root` 本身。
+///
+/// move_to_trash / force_remove_path 此前对任意绝对路径来者不拒 —— 前端若因缺陷
+/// 传错路径，整个库会被移进回收站。后端这道防线与前端的 isInside 检查互补：
+/// 前端能挡住已知的调用路径，这里挡住「将来某个调用点忘了检查」。
+///
+/// 两处关键处理：
+///  - 用 Path::starts_with 做**组件级**比较而非字符串前缀，
+///    否则 /notes-backup 会被误判为在 /notes 之内；
+///  - 目标可能已不存在（这本来就是删除操作），canonicalize 失败时退化为
+///    「规范化父目录 + 重新拼接文件名」，仍然能消除 .. 与符号链接。
+fn ensure_inside_root(root: &str, path: &str) -> Result<(), String> {
+  use std::path::{Path, PathBuf};
+
+  let root_path = PathBuf::from(root);
+  let target = PathBuf::from(path);
+
+  if !target.is_absolute() {
+    return Err(format!("拒绝操作非绝对路径: {path}"));
+  }
+  if !root_path.is_absolute() {
+    return Err(format!("root 必须是绝对路径: {root}"));
+  }
+
+  let root_canonical = root_path
+    .canonicalize()
+    .map_err(|e| format!("root 不可访问: {e}"))?;
+
+  let target_canonical: PathBuf = match target.canonicalize() {
+    Ok(p) => p,
+    Err(_) => {
+      // 目标已不存在：规范化父目录后重新拼回文件名
+      let parent: &Path = target
+        .parent()
+        .ok_or_else(|| format!("无效路径: {path}"))?;
+      let parent_canonical = parent
+        .canonicalize()
+        .map_err(|e| format!("父目录不可访问: {e}"))?;
+      match target.file_name() {
+        Some(name) => parent_canonical.join(name),
+        None => parent_canonical,
+      }
+    }
+  };
+
+  if target_canonical == root_canonical {
+    return Err("拒绝删除库根目录本身".to_string());
+  }
+  if !target_canonical.starts_with(&root_canonical) {
+    return Err(format!("拒绝操作库外路径: {path}"));
+  }
+  Ok(())
 }
 
 // 判定是否为 Markdown 类文本（供插件扫描使用，不包含 PDF）
@@ -3929,7 +3984,12 @@ async fn get_pending_open_path(state: State<'_, PendingOpenPath>) -> Result<Opti
 }
 
 #[tauri::command]
-async fn move_to_trash(path: String) -> Result<(), String> {
+async fn move_to_trash(path: String, root: Option<String>) -> Result<(), String> {
+  // 越权防护：前端传入库根时强制校验（见 ensure_inside_root）。
+  // root 为 None 时不校验 —— 供删除库外文件（如上传缓存）的既有调用方使用。
+  if let Some(r) = root.as_deref() {
+    ensure_inside_root(r, &path)?;
+  }
   // 使用 trash crate 跨平台移动到回收站
   tauri::async_runtime::spawn_blocking(move || {
     trash::delete(path).map_err(|e| format!("move_to_trash error: {e}"))
@@ -3940,10 +4000,13 @@ async fn move_to_trash(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn force_remove_path(path: String) -> Result<(), String> {
+async fn force_remove_path(path: String, root: Option<String>) -> Result<(), String> {
   use std::fs;
-  use std::path::PathBuf;
-  let pathbuf = PathBuf::from(path);
+  // 越权防护：同 move_to_trash
+  if let Some(r) = root.as_deref() {
+    ensure_inside_root(r, &path)?;
+  }
+  let pathbuf = std::path::PathBuf::from(path);
   tauri::async_runtime::spawn_blocking(move || {
     if pathbuf.is_dir() {
       fs::remove_dir_all(&pathbuf).map_err(|e| format!("remove_dir_all error: {e}"))
@@ -4200,5 +4263,116 @@ mod office_preview_tests {
     let url = lo_user_installation_url(std::path::Path::new("/tmp/flymd/lo-profile"));
     assert!(url.starts_with("file://"));
     assert!(!url.contains('\\'));
+  }
+}
+
+/// ensure_inside_root 的行为验证。
+///
+/// 这道防线挡住的是「前端因缺陷传错路径」——例如右键菜单误传库根本身，
+/// 一次误操作就把整个库移进回收站。测试用真实临时目录而非硬编码路径，
+/// 因为 canonicalize 在 macOS 上会把 /var 解析成 /private/var。
+#[cfg(test)]
+mod delete_guard_tests {
+  use super::*;
+
+  /// 建一个 root/{sub} 结构，返回 (root, 已删的 target 路径)
+  fn make_root() -> (std::path::PathBuf, std::path::PathBuf) {
+    let base = std::env::temp_dir().join(format!(
+      "flymd_guard_test_{}_{:?}",
+      std::process::id(),
+      std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("notes");
+    let sub = root.join("sub");
+    std::fs::create_dir_all(&sub).expect("create test dirs");
+    let target = sub.join("a.md");
+    std::fs::write(&target, b"x").expect("write test file");
+    (root, target)
+  }
+
+  fn root_str(root: &std::path::Path) -> String {
+    root.to_string_lossy().to_string()
+  }
+
+  #[test]
+  fn allows_file_inside_root() {
+    let (root, target) = make_root();
+    let r = ensure_inside_root(&root_str(&root), &target.to_string_lossy());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_ok(), "库内文件应被允许: {:?}", r);
+  }
+
+  #[test]
+  fn allows_nested_directory_inside_root() {
+    let (root, _t) = make_root();
+    let sub = root.join("sub");
+    let r = ensure_inside_root(&root_str(&root), &sub.to_string_lossy());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_ok(), "库内子目录应被允许: {:?}", r);
+  }
+
+  #[test]
+  fn rejects_root_itself() {
+    let (root, _t) = make_root();
+    let r = ensure_inside_root(&root_str(&root), &root_str(&root));
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_err(), "库根本身必须被拒绝");
+    assert!(r.unwrap_err().contains("库根"));
+  }
+
+  #[test]
+  fn rejects_sibling_prefix_directory() {
+    // /notes-backup 不在 /notes 之内 —— 字符串前缀比较会误判为「在内」
+    let (root, _t) = make_root();
+    let sibling = root.with_file_name("notes-backup");
+    std::fs::create_dir_all(&sibling).unwrap();
+    let r = ensure_inside_root(&root_str(&root), &sibling.to_string_lossy());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_err(), "同前缀的兄弟目录必须被拒绝: {:?}", r);
+  }
+
+  #[test]
+  fn rejects_parent_escape_via_dotdot() {
+    // canonicalize 会消解 ..，因此词法上「看起来在库内」的路径也会被拒
+    let (root, _t) = make_root();
+    let sneaky = root.join("sub").join("..").join("..").join("outside.md");
+    let r = ensure_inside_root(&root_str(&root), &sneaky.to_string_lossy());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_err(), "经 .. 逃逸到库外的路径必须被拒绝: {:?}", r);
+  }
+
+  #[test]
+  fn rejects_non_absolute_path() {
+    let (root, _t) = make_root();
+    let r = ensure_inside_root(&root_str(&root), "relative/a.md");
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_err(), "非绝对路径必须被拒绝");
+  }
+
+  #[test]
+  fn handles_already_deleted_target() {
+    // 删除操作里目标常常已不存在；canonicalize 失败时应回退到父目录规范化，
+    // 而不是把整个操作判为失败
+    let (root, target) = make_root();
+    std::fs::remove_file(&target).unwrap();
+    let r = ensure_inside_root(&root_str(&root), &target.to_string_lossy());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    assert!(r.is_ok(), "目标已不存在但仍在库内时应被允许: {:?}", r);
+  }
+
+  #[test]
+  fn rejects_symlink_pointing_outside_root() {
+    #[cfg(unix)]
+    {
+      let (root, _t) = make_root();
+      let outside = root.parent().unwrap().join("secret.md");
+      std::fs::write(&outside, b"secret").unwrap();
+      let link = root.join("sub").join("link.md");
+      std::os::unix::fs::symlink(&outside, &link).unwrap();
+      let r = ensure_inside_root(&root_str(&root), &link.to_string_lossy());
+      let _ = std::fs::remove_dir_all(root.parent().unwrap());
+      assert!(r.is_err(), "指向库外的符号链接必须被拒绝: {:?}", r);
+    }
   }
 }
