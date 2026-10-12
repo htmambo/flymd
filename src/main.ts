@@ -8216,7 +8216,11 @@ function bindEvents() {
       try { (window as any).flymdStopTabSessionAutoSave?.() } catch {}
       // 保存标签会话（所有打开的文件）；discard 路径传 includeDirtyContent:false，
       // 避免把用户已选择丢弃的内容持久化到 storage、下次启动又被恢复。
-      try { (window as any).flymdSaveTabSession?.(opts) } catch {}
+      // autoReschedule:false —— saveTabSession 默认会在末尾重新排定自动保存定时器，
+      // 且不带 opts，includeDirtyContent 会被重置为默认的 true。本函数在 save 之后
+      // 还有若干 await（文件标识 flush / 便签恢复 / 便携导出 / 关闭前同步），
+      // 总耗时超过 5s（自动保存周期）时定时器就会触发，把刚丢弃的内容又写回去。
+      try { (window as any).flymdSaveTabSession?.({ ...(opts || {}), autoReschedule: false }) } catch {}
       // 落盘"当前文件"标识（防抖 500ms 可能未触发，退出前必须 flush 一次）
       try { const m = await import('./tabs/integration'); await m.flushActiveFileMarkerToLibrary() } catch {}
       try { await restoreStickyIfNeeded() } catch {}

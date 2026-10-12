@@ -342,7 +342,17 @@ async function saveAllDirtyTabs(): Promise<boolean> {
 // ---- 会话保存/恢复 ----
 // key 派生与老 key 迁移逻辑见 ./sessionStorageKey（已抽为纯函数并单测）。
 
-function saveTabSession(opts?: { includeDirtyContent?: boolean }): void {
+/**
+ * @param opts.includeDirtyContent 是否把未保存内容一并持久化（discard 路径传 false）
+ * @param opts.autoReschedule 传 false 可阻止本次保存重新排定自动保存定时器。
+ *   退出流程必须用它：exitNow 里 stop → save 的顺序下，saveTabSession 末尾会
+ *   无条件 scheduleSessionAutoSave()，且不带任何 opts，于是 includeDirtyContent
+ *   又变回默认的 true。定时器周期 5s，而 exitNow 在 save 之后仍有若干 await
+ *   （flush 文件标识、恢复便签、便携导出、关闭前同步），总耗时一旦超过 5s，
+ *   定时器就会把用户已选择丢弃的内容重新写进 localStorage，下次启动又被恢复 ——
+ *   正好抵消 stopSessionAutoSave 的注释里写明要避免的那件事。
+ */
+function saveTabSession(opts?: { includeDirtyContent?: boolean; autoReschedule?: boolean }): void {
   try {
     const state = tabManager.exportState(opts)
     localStorage.setItem(getSessionStorageKey(), JSON.stringify(state))
@@ -351,6 +361,7 @@ function saveTabSession(opts?: { includeDirtyContent?: boolean }): void {
   }
   // 会话保存点（切换/关闭/自动保存/退出）顺带同步"当前文件"标识
   try { syncActiveFileMarkerToLibrary() } catch {}
+  if (opts?.autoReschedule === false) return
   scheduleSessionAutoSave()
 }
 
