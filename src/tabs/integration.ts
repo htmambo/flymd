@@ -211,10 +211,17 @@ async function confirmTabClose(tab: TabDocument): Promise<boolean> {
     const flymd = getFlymd()
     if (flymd.flymdSaveFile) {
       await flymd.flymdSaveFile()
+      // 必须核对保存是否真的成功。saveFile / saveAs 失败时都不会抛错：
+      // saveFile 的 catch 只调 showError 就结束，saveAs 在用户取消路径选择时
+      // 直接 return，两者都正常 resolve。少了这一步，「保存并关闭」会在磁盘写
+      // 失败（磁盘满 / 权限 / 只读）或另存为被取消的情况下照常关闭标签，
+      // 把未保存内容直接丢掉。
+      tabManager.syncActiveTabState()
+      if (tabManager.findTabById(tab.id)?.dirty) return false
     }
   }
 
-  // 'save' 或 'discard' 都允许关闭
+  // 'save' 且确认保存成功，或 'discard'
   return true
 }
 
@@ -465,16 +472,21 @@ export async function restoreDirtyDraftsFromSession(): Promise<number> {
         if (filePath) {
           const existing = tabManager.findTabByPath(filePath)
           if (existing) {
-            tabManager.updateTabContent(existing.id, content)
-            existing.dirty = true
-          } else {
-            const { tab } = tabManager.openFile(filePath, content)
-            tab.dirty = true
+            // 必须走 applyTabState 而非 updateTabContent：
+            // updateTabContent 只改内存里的 TabDocument，不碰编辑器，还会把
+            // dirty 重置为 false。而 existing 往往正是当前活动标签（启动时
+            // openRecentSetAsTabs 已激活该文件），于是紧接着的 saveTabSession()
+            // → exportState() → saveCurrentTabState() 会拿编辑器里的旧内容
+            // 覆盖刚写进去的草稿，草稿就此丢失 —— 每次启动都可能发生。
+            await tabManager.applyTabState(existing.id, { content, dirty: true })
+            rescued++
+            continue
           }
+          const { tab } = tabManager.openFile(filePath, content)
+          tab.dirty = true
         } else {
           const tab = tabManager.createNewTab()
-          tabManager.updateTabContent(tab.id, content)
-          tab.dirty = true
+          await tabManager.applyTabState(tab.id, { content, dirty: true })
         }
         rescued++
       } catch (e) {
@@ -1130,7 +1142,15 @@ function hookSaveFile(): void {
       if (newPath && newPath !== tab.filePath) {
         tabManager.updateCurrentTabPath(newPath)
       }
-      tabManager.markCurrentTabSaved()
+      // 仅在 main.ts 侧确认未再处于 dirty 时才标记为已保存。
+      // originalSaveFile 失败时不抛错（catch 只 showError），无条件调用
+      // markCurrentTabSaved 会让标签显示为「已保存」而磁盘上并没有新内容，
+      // 同时 main.ts 的 dirty 仍为 true —— 两边状态就此分叉：脏点消失、
+      // 用户失去视觉信号，且 saveAllDirtyTabs 依赖的 after.dirty 守卫失效。
+      const stillDirty = (flymd.flymdIsDirty as (() => boolean) | undefined)?.()
+      if (stillDirty !== true) {
+        tabManager.markCurrentTabSaved()
+      }
     }
   }
 }

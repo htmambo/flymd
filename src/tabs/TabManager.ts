@@ -57,6 +57,18 @@ export interface TabManagerHooks {
 export class TabManager {
   private tabs: TabDocument[] = []
   private activeTabId: string | null = null
+  /**
+   * 单调递增的「状态恢复」令牌。
+   *
+   * restoreTabState 内部有 await（所见模式启停、PDF 重载），而 switchToTab
+   * 不串行化、调用方（TabBar 的点击处理）也不 await。若在 A 的恢复尚未完成时
+   * 又切到 B，A 的续行会在 B 恢复完之后继续执行，把 A 的 dirty / 滚动 / 光标
+   * 写到正显示 B 的编辑器上 —— 若 A 干净而 B 有未保存改动，dirty 被抹成 false，
+   * 随后 saveCurrentTabState 会把这个错误状态固化进 B，关闭 B 时就不再提示。
+   *
+   * 令牌让「只有最近一次状态恢复可以落地」成为可判定条件。
+   */
+  private restoreToken = 0
   private hooks: TabManagerHooks | null = null
   private listeners: TabEventListener[] = []
   private initialized = false
@@ -193,6 +205,12 @@ export class TabManager {
   private async restoreTabState(tab: TabDocument): Promise<void> {
     if (!this.hooks) return
 
+    // 领取本次恢复的令牌；下面每个 await 之后都要重新校验它是否仍然有效
+    const token = ++this.restoreToken
+    const superseded = () => token !== this.restoreToken
+    // 该标签是否仍为当前活动标签
+    const noLongerActive = () => this.activeTabId !== tab.id
+
     // Office 转换预览标签锁定阅读模式：旧会话可能存过 edit/所见态，恢复时归一化；
     // 分屏是全局叠加态，源码栏会露出临时副本内容，一并关闭
     if (normalizeOfficePreviewTabState(tab.filePath, tab)) {
@@ -202,6 +220,8 @@ export class TabManager {
     // PDF 文件需要特殊处理：重新加载
     if (tab.isPdf && tab.filePath) {
       await this.hooks.reloadFile(tab.filePath)
+      // 同样是 await，期间可能已切换到别的标签
+      if (superseded() || noLongerActive()) return
       return
     }
 
@@ -220,11 +240,16 @@ export class TabManager {
     const currentWysiwygEnabled = this.hooks.getWysiwygEnabled()
     if (currentWysiwygEnabled) {
       await this.hooks.setWysiwygEnabled(false)
+      // 所见模式启停是重量级 await（Milkdown 重建），窗口足够宽到让并发切换交错。
+      // 若期间已切到别的标签，此处必须停止 —— 否则本函数后续会把「本标签」的
+      // dirty / 滚动 / 光标写到正在显示另一个标签的编辑器上。
+      if (superseded() || noLongerActive()) return
     }
 
     // 然后根据目标标签状态启用所见模式
     if (tab.wysiwygEnabled) {
       await this.hooks.setWysiwygEnabled(true)
+      if (superseded() || noLongerActive()) return
     }
 
     // 重要：所见模式切换可能会因内容规范化差异错误触发 dirty = true
@@ -234,15 +259,23 @@ export class TabManager {
     // 恢复位置（延迟执行，等待渲染完成）
     const savedDirty = tab.dirty
     const hooks = this.hooks
+    const tokenAtSchedule = token
     requestAnimationFrame(() => {
       if (!hooks) return
+      // rAF 在下一次绘制才执行，期间的切换同样可能已经发生。
+      // 过期回调若继续写入，会把上一个标签的 dirty 抹到当前标签上，
+      // 随后 saveCurrentTabState 将其固化 —— 用户关闭有未保存改动的标签时
+      // 就不再收到提示了。
+      if (tokenAtSchedule !== this.restoreToken) return
+      if (this.activeTabId !== tab.id) return
       hooks.setScrollTop(tab.scrollTop)
       hooks.setCursorPos(tab.cursorLine, tab.cursorCol)
       // 再次确保 dirty 状态正确（处理异步回调可能导致的状态变化）
       hooks.setDirty(savedDirty)
     })
 
-    // 刷新 UI
+    // 刷新 UI（同样只在本次恢复仍然有效时执行）
+    if (superseded() || noLongerActive()) return
     this.hooks.refreshTitle()
     this.hooks.refreshPreview()
   }
@@ -376,9 +409,19 @@ export class TabManager {
    * 场景：跨窗口拖入时，我们会先 createNewTab，再把远端传来的 content/dirty/mode 写入标签对象；
    * 由于 switchToTab(tabId===active) 会直接 return，需要一个“无条件恢复”的入口。
    */
-  async applyTabState(tabId: string): Promise<boolean> {
+  async applyTabState(tabId: string, override?: { content?: string; dirty?: boolean }): Promise<boolean> {
     const targetTab = this.findTabById(tabId)
     if (!targetTab || !this.hooks) return false
+    // override 在恢复之前写入，随后 restoreTabState 会把这份内容真正送进编辑器。
+    // 用于「会话草稿抢救」这类场景：内容来自 localStorage 而非编辑器，
+    // 只更新 TabDocument 是不够的 —— 紧接着的 exportState 会用编辑器里的
+    // 旧内容把它覆盖掉。
+    if (override && override.content !== undefined) {
+      targetTab.content = override.content
+    }
+    if (override && override.dirty !== undefined) {
+      targetTab.dirty = override.dirty
+    }
     await this.restoreTabState(targetTab)
     this.emit({ type: 'tab-updated', tab: targetTab })
     return true
