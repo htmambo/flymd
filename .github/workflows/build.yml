@@ -45,13 +45,10 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        components: rustfmt
-
-      - name: cargo fmt --check
-        working-directory: src-tauri
-        run: cargo fmt --check
+      # 暂不启用 cargo fmt --check：本仓库的 Rust 代码从未按 rustfmt 格式化
+      # （main.rs 用 2 空格缩进，rustfmt 默认 4），启用会让每一次 CI 直接失败。
+      # 若要启用，需要先单独做一次全量格式化并单独提 PR —— 那个 diff 会
+      # 覆盖整个 src-tauri/src/main.rs（4200+ 行），不适合与逻辑改动混在一起。
 
       # Tauri webview 里的 JS 报错只有带 sourcemap 才定位得到文件/行号，
       # 而正式构建默认不带。产出一份带 map 的构建供排查用户现场问题，

@@ -369,7 +369,8 @@ fn dispatch_open_file_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, path: 
 // macOS：通过 RunEvent::Opened 捕获 Finder/Launch Services 传入的文件 URL，并复用统一分发逻辑
 #[cfg(target_os = "macos")]
 fn init_macos_open_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-  use tauri::plugin::{Builder as PluginBuilder, TauriPlugin};
+  // TauriPlugin 不在此处引入：返回类型已用完整路径 tauri::plugin::TauriPlugin
+  use tauri::plugin::Builder as PluginBuilder;
   use tauri::RunEvent;
 
   PluginBuilder::new("macos-open-handler")
@@ -2829,6 +2830,10 @@ struct GitCommitEntry {
 }
 
 fn git_command() -> std::process::Command {
+  // mut 仅被下面的 #[cfg(windows)] 分支需要（creation_flags 取 &mut self）。
+  // 不加条件属性的话，非 Windows 平台会报 "variable does not need to be mutable"，
+  // 而直接删掉 mut 又会让 Windows 构建编译失败。
+  #[cfg_attr(not(windows), allow(unused_mut))]
   let mut cmd = std::process::Command::new("git");
 
   // Windows 下从 GUI 进程拉起 console 子进程时，可能会弹出一闪而过的 cmd/PowerShell 窗口。
