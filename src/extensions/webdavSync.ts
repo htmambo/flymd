@@ -2906,24 +2906,20 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
           await syncLog('[skip-delete-remote] ' + act.rel + ' 为了安全，不自动删除远程文件')
           // 从元数据中移除（但不删除实际文件）
         } else if (act.type === 'delete-local') {
-          // 删除本地文件（通常是因为远程已删除且本地未修改）
-          await syncLog('[delete-local] ' + act.rel + ' 删除本地文件（远程已删除）')
-          try {
-            const full = localRoot + (localRoot.includes('\\') ? '\\' : '/') + act.rel.replace(/\//g, localRoot.includes('\\') ? '\\' : '/')
-            // 检查文件是否存在
-            if (await exists(full as any)) {
-              await remove(full as any)
-              await syncLog('[ok] delete-local ' + act.rel)
-            } else {
-              await syncLog('[skip] delete-local ' + act.rel + ' 文件不存在')
-            }
-            // 从元数据中移除
-            delete newMeta.files[act.rel]
-            recordAction('delete', act.rel)
-          } catch (e) {
-            await syncLog('[fail] delete-local ' + act.rel + ' : ' + ((e as any)?.message || e))
-            throw e  // 继续抛出错误，让外层捕获
-          }
+          // 不再自动删除本地文件，只记录警告 —— 与相邻的 `delete`(跳过删远程)
+          // 以及 download 分支的 [skip-delete-local] 保持一致。
+          //
+          // f219de4「取消同步功能中的删除逻辑」正是为此：远程「未找到」可能只是
+          // 编码问题或扫描误判，不足以判定用户真的删了它。但那次改动只在
+          // download 分支加了 skip 标记，而 auto 策略生成的 type:'delete-local'
+          // 走的是本分支，真正执行 remove() 的代码被漏改了 ——
+          // 于是「远程未找到 + 本地未修改」仍会永久删除本地文件。
+          // remove() 不走回收站、不弹确认，任何有远端写权限的一方误删都会直接
+          // 造成不可恢复的本地丢失。
+          await syncLog('[skip-delete-local] ' + act.rel + ' 为了安全，不自动删除本地文件（远程可能只是未找到）')
+          // 从元数据中移除，但不删除实际文件
+          // 不调用 recordAction：与另外两处 skip 分支（skip-delete-remote、
+          // download+remote-deleted）保持一致 —— 跳过不是一次实际动作。
         } else if (act.type === 'remote-deleted-ask') {
           // 远程文件被删除，询问用户如何处理本地文件
           await syncLog('[remote-deleted-ask] ' + act.rel + ' 远程已删除，询问用户如何处理')
