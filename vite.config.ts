@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite'
+import { configDefaults } from 'vitest/config'
 
 const DEV_CSP = [
   "default-src 'self'",
@@ -19,7 +20,13 @@ export default defineConfig(({ mode }) => ({
   // （与既有 31 个 DOM 测试文件一致）。setupFiles 无条件生效，负责修复 Node 22+
   // 内置 localStorage 全局顶掉 jsdom Storage 的问题。
   test: {
-    setupFiles: ['./src/test/setup.ts']
+    setupFiles: ['./src/test/setup.ts'],
+    // web/server 是独立工程：自带 package.json 与依赖树，而 pnpm-workspace.yaml
+    // 没有 packages 字段，它不在工作区内，根 pnpm install 不会装它的依赖。
+    // 不排除的话，默认 glob 会把它的测试一并扫进来，用根依赖树加载必然失败
+    // （Cannot find package 'openai' / 'dotenv'），拖垮根项目的测试门禁。
+    // 它的测试由 web/server 自行运行。
+    exclude: [...configDefaults.exclude, 'web/server/**']
   },
   resolve: {
     dedupe: ['katex', '@milkdown/prose'] // 去重，避免多个版本
