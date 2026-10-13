@@ -49,7 +49,12 @@ describe('退出时的会话自动保存', () => {
     // 模拟退出时「放弃未保存内容」的保存
     api.flymdSaveTabSession?.({ includeDirtyContent: false, autoReschedule: false })
 
-    // 不应留下任何待触发的定时器；否则 5s 后会把丢弃的内容写回 storage
+    // saveTabSession 必然要写一次 localStorage，而 jsdom 的 Storage.setItem 自身
+    // 就排了一个 0ms 定时器来派发 storage 事件（真实浏览器不走定时器，这是 jsdom
+    // 的实现细节）。不先跑掉它，vi.getTimerCount() 恒不为 0，断言就变成了在测 jsdom。
+    // 跑完之后剩下的才是会话自动保存那个 5s 定时器 —— 它不该存在，
+    // 否则 5s 后会把用户已丢弃的内容写回 storage。
+    vi.advanceTimersByTime(0)
     expect(vi.getTimerCount()).toBe(0)
   })
 
