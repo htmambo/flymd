@@ -251,6 +251,16 @@ class CalloutNodeView implements NodeView {
         this.toggleFold()
       })
       titleBar.appendChild(foldBtn)
+
+      // 整个标题栏可点击折叠(与 Obsidian 一致),排除复制/折叠按钮与标题内的链接、按钮。
+      // 排除项与预览模式 onCalloutFoldClick 保持一致,避免两套实现的语义漂移。
+      titleBar.addEventListener('mousedown', (e) => {
+        const t = e.target as HTMLElement | null
+        if (t?.closest?.('.callout-copy-icon, .callout-fold-icon, a, button')) return
+        e.preventDefault()
+        e.stopPropagation()
+        this.toggleFold()
+      })
     }
 
     const copyBtn = document.createElement('div')

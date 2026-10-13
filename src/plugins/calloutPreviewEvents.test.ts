@@ -2,20 +2,30 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { onCalloutFoldClick, onCalloutCopyClick } from './calloutPreviewEvents'
 
-function makeCallout(opts: { folded?: boolean } = {}) {
+function makeCallout(opts: { folded?: boolean; foldable?: boolean } = {}) {
   const callout = document.createElement('div')
   callout.classList.add('callout')
+  const foldable = opts.foldable ?? true
+  if (foldable) callout.dataset.foldable = 'true'
   if (opts.folded) {
     callout.classList.add('folded')
     callout.dataset.folded = 'true'
   }
+  const titleBar = document.createElement('div')
+  titleBar.classList.add('callout-title')
   const foldIcon = document.createElement('span')
   foldIcon.classList.add('callout-fold-icon')
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   foldIcon.appendChild(svg)
+  const titleInner = document.createElement('div')
+  titleInner.classList.add('callout-title-inner')
+  titleInner.textContent = 'Title'
   const copyIcon = document.createElement('span')
   copyIcon.classList.add('callout-copy-icon')
   copyIcon.innerHTML = '<svg><rect x="9" y="9" width="13" height="13"/></svg>'
+  titleBar.appendChild(foldIcon)
+  titleBar.appendChild(titleInner)
+  titleBar.appendChild(copyIcon)
   const content = document.createElement('div')
   content.classList.add('callout-content')
   const child1 = document.createElement('p')
@@ -27,14 +37,13 @@ function makeCallout(opts: { folded?: boolean } = {}) {
   content.appendChild(child1)
   content.appendChild(child2)
   content.appendChild(childEmpty)
-  callout.appendChild(foldIcon)
-  callout.appendChild(copyIcon)
+  callout.appendChild(titleBar)
   callout.appendChild(content)
-  return { callout, foldIcon, copyIcon, content, svg }
+  return { callout, titleBar, titleInner, foldIcon, copyIcon, content, svg }
 }
 
 describe('onCalloutFoldClick', () => {
-  it('does nothing if click is not inside .callout-fold-icon', () => {
+  it('does nothing if click is not inside .callout-title', () => {
     const { callout } = makeCallout()
     const other = document.createElement('div')
     other.appendChild(callout)
@@ -42,10 +51,27 @@ describe('onCalloutFoldClick', () => {
     expect(callout.classList.contains('folded')).toBe(false)
   })
   it('does nothing if .callout is missing', () => {
-    const orphan = document.createElement('span')
-    orphan.classList.add('callout-fold-icon')
-    onCalloutFoldClick({ target: orphan } as any)
+    const titleBar = document.createElement('div')
+    titleBar.classList.add('callout-title')
+    onCalloutFoldClick({ target: titleBar } as any)
     // no error
+  })
+  it('does nothing for a non-foldable callout', () => {
+    const { callout, titleInner } = makeCallout({ foldable: false })
+    onCalloutFoldClick({ target: titleInner } as any)
+    expect(callout.classList.contains('folded')).toBe(false)
+  })
+  it('does nothing when clicking the copy button inside the title bar', () => {
+    const { callout, copyIcon } = makeCallout()
+    onCalloutFoldClick({ target: copyIcon } as any)
+    expect(callout.classList.contains('folded')).toBe(false)
+  })
+  it('does nothing when clicking a link inside the title bar', () => {
+    const { callout, titleInner } = makeCallout()
+    const link = document.createElement('a')
+    titleInner.appendChild(link)
+    onCalloutFoldClick({ target: link } as any)
+    expect(callout.classList.contains('folded')).toBe(false)
   })
   it('toggles .folded on the callout and updates dataset + content display', () => {
     const { callout, content, foldIcon, svg } = makeCallout()
@@ -54,6 +80,11 @@ describe('onCalloutFoldClick', () => {
     expect(callout.dataset.folded).toBe('true')
     expect(content.style.display).toBe('none')
     expect(svg.style.transform).toBe('rotate(-90deg)')
+  })
+  it('toggles when clicking anywhere on the title bar', () => {
+    const { callout, titleInner } = makeCallout()
+    onCalloutFoldClick({ target: titleInner } as any)
+    expect(callout.classList.contains('folded')).toBe(true)
   })
   it('unfolds when already folded', () => {
     const { callout, content, foldIcon, svg } = makeCallout({ folded: true })

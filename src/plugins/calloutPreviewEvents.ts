@@ -15,22 +15,28 @@ const CHECK_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="no
 const X_ICON_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
 
 /**
- * 处理 .callout-fold-icon 上的点击:toggle .folded class + 隐藏内容 + 旋转 SVG。
+ * 处理 callout 标题栏(.callout-title)上的点击:toggle .folded class + 隐藏内容 + 旋转 SVG。
+ * 整个标题栏可点击(与 Obsidian 一致),但排除标题栏上的按钮(复制按钮)和链接,
+ * 只对可折叠(data-foldable="true")的 callout 生效。
  * 点击冒泡到 ev.target 内部任意子元素都能匹配(用 closest)。
  */
 export function onCalloutFoldClick(ev: Event): void {
   try {
     const target = ev.target as HTMLElement | null
-    const foldBtn = target?.closest?.('.callout-fold-icon') as HTMLElement | null
-    if (!foldBtn) return
-    const callout = foldBtn.closest('.callout') as HTMLElement | null
+    const titleBar = target?.closest?.('.callout-title') as HTMLElement | null
+    if (!titleBar) return
+    // 排除标题栏上的复制按钮及链接,避免点击它们时误触发折叠
+    if (target?.closest?.('.callout-copy-icon, a, button')) return
+    const callout = titleBar.closest('.callout') as HTMLElement | null
     if (!callout) return
+    if (callout.dataset.foldable !== 'true') return
+    const foldBtn = callout.querySelector('.callout-fold-icon') as HTMLElement | null
     const content = callout.querySelector('.callout-content') as HTMLElement | null
     if (!content) return
     const isFolded = callout.classList.toggle('folded')
     callout.dataset.folded = String(isFolded)
     content.style.display = isFolded ? 'none' : ''
-    const svg = foldBtn.querySelector('svg')
+    const svg = foldBtn?.querySelector('svg')
     if (svg) {
       svg.style.transform = isFolded ? 'rotate(-90deg)' : ''
     }

@@ -616,6 +616,13 @@
   user-select: none;
 }
 
+/* 可折叠 callout:整个标题栏可点击折叠(阅读/所见模式一致)。
+   必须用直接子选择器:可折叠 callout 内容里可以嵌套不可折叠的子 callout,
+   后代选择器会给那些点不动的子标题栏也加上 pointer 光标。 */
+.callout[data-foldable="true"] > .callout-title {
+  cursor: pointer;
+}
+
 .callout-icon {
   display: flex;
   align-items: center;
