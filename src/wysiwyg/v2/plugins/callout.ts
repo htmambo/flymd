@@ -246,6 +246,8 @@ class CalloutNodeView implements NodeView {
       foldBtn.innerHTML = getFoldIconSvg(isFolded)
       foldBtn.contentEditable = 'false'
       foldBtn.addEventListener('mousedown', (e) => {
+        // mousedown 对所有按键触发;右键/中键不应折叠(右键还要留给上下文菜单)
+        if (e.button !== 0) return
         e.preventDefault()
         e.stopPropagation()
         this.toggleFold()
@@ -254,7 +256,9 @@ class CalloutNodeView implements NodeView {
 
       // 整个标题栏可点击折叠(与 Obsidian 一致),排除复制/折叠按钮与标题内的链接、按钮。
       // 排除项与预览模式 onCalloutFoldClick 保持一致,避免两套实现的语义漂移。
+      // mousedown 对所有按键触发;只响应主键,右键/中键放行给上下文菜单等平台行为。
       titleBar.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return
         const t = e.target as HTMLElement | null
         if (t?.closest?.('.callout-copy-icon, .callout-fold-icon, a, button')) return
         e.preventDefault()
@@ -269,6 +273,8 @@ class CalloutNodeView implements NodeView {
     copyBtn.innerHTML = getCopyIconSvg()
     copyBtn.contentEditable = 'false'
     copyBtn.addEventListener('mousedown', (e) => {
+      // 同上:只响应主键
+      if (e.button !== 0) return
       e.preventDefault()
       e.stopPropagation()
       this.copyContent()

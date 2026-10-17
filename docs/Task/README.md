@@ -529,3 +529,10 @@ docs/Task/
   - **系列总览**: 7 个 PR 全部完成,库私有化 v2 落地
   - **验证**: `npx tsc --noEmit` 0 错 / `npm test` 784/785(1 pre-existing 与本 PR 无关) / `npm run build` 成功(3.20s)
   - **后续**: 等待人工 Tauri 端到端冒烟 + codex/coding-bridge 复审
+- ✅ [2026-10-17-commit-review-followup-plan.md](Archive/2026-10/2026-10-17-commit-review-followup-plan.md) — 最近5次提交外部审核与后续处置(完成 2026-10-17)
+  - **审核**: 5 提交逐一过 coding-bridge(串行);570da66 APPROVED;35e1b44 / e06e2e0 NEEDS_CHANGES;ee98d1d / 58008b3 通过有保留
+  - **实证反驳**: 35e1b44 两项阻塞质疑不成立(标题 contentEditable=false;预览态为容器级单一 capture 委托)
+  - **修复**: callout.ts 三个 mousedown 处理器补 `e.button !== 0` 守卫(右键/中键不再误折叠/复制)
+  - **复审**: Round 2/5 APPROVED,无阻塞残余;typecheck 干净,vitest 694/694
+  - **遗留(未动工)**: web/server CI 恢复 SSRF 覆盖;root=None 后端化;终局 save 静默 catch 加 warn;callout 键盘可达性
+  - **经验**: 外部审核 MCP 单次约 4-5 分钟逼近 300s 超时,必须串行;超时先精简 prompt 重试
