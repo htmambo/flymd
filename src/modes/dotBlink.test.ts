@@ -1,48 +1,42 @@
 // @vitest-environment jsdom
-// 测试 dotBlink 工厂:start/stop 状态机、idempotency、intervalMs 生效
+// 测试 dotBlink 工厂:start/stop 状态机、idempotency、无 JS interval(闪烁由 CSS 动画驱动)
 // 关注点:
-// 1) start 后 timer 不为 null
-// 2) 多次 start idempotent(早返,不创建新 timer)
-// 3) stop 后 timer 清理,on=false
+// 1) start 后 isOn() === true
+// 2) 多次 start idempotent(状态不变,不调度任何计时器)
+// 3) stop 后 isOn() === false;未 start 时 stop 不抛
 // 4) start → stop → start 复活
-// 5) intervalMs 注入生效(fast interval 用 fake timers 验证)
+// 5) 全程零 setInterval/clearInterval 调用(空转 interval 已移除)
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { createDotBlink } from './dotBlink'
 
-beforeEach(() => {
-  vi.useFakeTimers()
-})
-
-afterEach(() => {
-  vi.useRealTimers()
-})
-
 describe('createDotBlink', () => {
-  it('start() sets timer and on=true', () => {
+  it('start() sets on=true', () => {
     const api = createDotBlink({ intervalMs: 800 })
     api.start()
     expect(api.isOn()).toBe(true)
     api.stop()
   })
 
-  it('start() is idempotent: second call does not create a new timer', () => {
+  it('start() is idempotent: repeated calls keep state and schedule no timers', () => {
     const setIntervalSpy = vi.spyOn(window, 'setInterval')
     const api = createDotBlink({ intervalMs: 800 })
     api.start()
     api.start()
-    expect(setIntervalSpy).toHaveBeenCalledTimes(1)
+    api.start()
+    expect(api.isOn()).toBe(true)
+    expect(setIntervalSpy).not.toHaveBeenCalled()
     api.stop()
     setIntervalSpy.mockRestore()
   })
 
-  it('stop() clears timer and sets on=false', () => {
+  it('stop() sets on=false and clears nothing (no timer to clear)', () => {
     const clearIntervalSpy = vi.spyOn(window, 'clearInterval')
     const api = createDotBlink({ intervalMs: 800 })
     api.start()
     api.stop()
-    expect(clearIntervalSpy).toHaveBeenCalled()
     expect(api.isOn()).toBe(false)
+    expect(clearIntervalSpy).not.toHaveBeenCalled()
     clearIntervalSpy.mockRestore()
   })
 
@@ -52,18 +46,7 @@ describe('createDotBlink', () => {
     expect(api.isOn()).toBe(false)
   })
 
-  it('intervalMs injection: fast interval flips on state', () => {
-    const api = createDotBlink({ intervalMs: 100 })
-    api.start()
-    expect(api.isOn()).toBe(true)
-    vi.advanceTimersByTime(100)
-    expect(api.isOn()).toBe(false)
-    vi.advanceTimersByTime(100)
-    expect(api.isOn()).toBe(true)
-    api.stop()
-  })
-
-  it('start() after stop() resurrects the timer', () => {
+  it('start() after stop() resurrects the on state', () => {
     const api = createDotBlink({ intervalMs: 800 })
     api.start()
     api.stop()
@@ -71,5 +54,16 @@ describe('createDotBlink', () => {
     api.start()
     expect(api.isOn()).toBe(true)
     api.stop()
+  })
+
+  it('never schedules an interval across the full lifecycle', () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+    const api = createDotBlink({ intervalMs: 100 })
+    api.start()
+    api.stop()
+    api.start()
+    api.stop()
+    expect(setIntervalSpy).not.toHaveBeenCalled()
+    setIntervalSpy.mockRestore()
   })
 })

@@ -117,6 +117,13 @@ async function ensureAdditionalSuffixCache(): Promise<void> {
 let _watchRefreshTimer: number | null = null
 let _watchRefreshRunning = false
 let _watchRefreshPending = false
+// 监听刷新连续失败熔断上限：超过后不再自动重调度，等下一个 watch 事件或手动刷新
+const WATCH_REFRESH_MAX_FAIL_STREAK = 3
+// 监听刷新连续失败计数：catch 内借 _watchRefreshPending 重调度时熔断，成功即清零
+let _watchRefreshFailStreak = 0
+// debounce 合并窗口内的事件路径并集（去重），供 refreshTree 做增量失效（NFR-3）。
+// 刷新任务出队时一次性取走并清空；事件路径在窗口内持续累积，跨重调度（_watchRefreshPending）不丢。
+let _watchPendingPaths: Set<string> | null = null
 
 // 渲染也可能被多处触发（切库/监听/手动刷新），必须支持“后来的覆盖先来的”，避免中途清空造成闪烁
 let _renderJobId = 0
@@ -136,6 +143,8 @@ function resetWatchRefreshScheduler() {
   } catch {}
   _watchRefreshRunning = false
   _watchRefreshPending = false
+  _watchRefreshFailStreak = 0
+  _watchPendingPaths = null
 }
 
 function isRelevantWatchEvent(ev: any): boolean {
@@ -155,8 +164,14 @@ function isRelevantWatchEvent(ev: any): boolean {
   return true
 }
 
-function scheduleRefreshTreeFromWatch() {
+function scheduleRefreshTreeFromWatch(paths?: string[] | null) {
   try {
+    if (paths && paths.length) {
+      if (!_watchPendingPaths) _watchPendingPaths = new Set()
+      for (const p of paths) {
+        if (typeof p === 'string' && p) _watchPendingPaths.add(p)
+      }
+    }
     if (_watchRefreshTimer != null) clearTimeout(_watchRefreshTimer)
     _watchRefreshTimer = window.setTimeout(async () => {
       _watchRefreshTimer = null
@@ -165,10 +180,24 @@ function scheduleRefreshTreeFromWatch() {
         return
       }
       _watchRefreshRunning = true
+      // pending 在 try 外取走并清空：refreshTree 抛错时能把路径并集放回，避免这批
+      // 路径的失效彻底丢失（此前实现中 catch 会静默吞掉并集）
+      const pending = _watchPendingPaths ? Array.from(_watchPendingPaths) : null
+      _watchPendingPaths = null
       try {
-        await refreshTree()
+        await refreshTree(pending)
+        _watchRefreshFailStreak = 0
       } catch {
-        // 忽略监听触发的刷新异常：不能因为监听崩掉 UI
+        // 刷新失败：路径并集放回（与后续新事件合并），标脏强制下次全清全扫兜底，
+        // 并借 _watchRefreshPending 重调度一次；连续失败熔断（≤3 次）防止持久故障下
+        // 每 250ms 空转重试，此后等下一个 watch 事件或手动刷新（dirty 已置位）
+        if (pending && pending.length) {
+          if (!_watchPendingPaths) _watchPendingPaths = new Set()
+          for (const p of pending) _watchPendingPaths.add(p)
+        }
+        _dirDocPresenceScanDirty = true
+        _watchRefreshFailStreak++
+        if (_watchRefreshFailStreak <= WATCH_REFRESH_MAX_FAIL_STREAK) _watchRefreshPending = true
       } finally {
         _watchRefreshRunning = false
         if (_watchRefreshPending) {
@@ -712,52 +741,88 @@ const _dirDocPresenceScan = new Map<string, boolean>()
 // 预扫描 epoch：每次 prefetch 或 invalidate 自增；返回时若已被新轮覆盖则丢弃旧结果（防陈旧）。
 let _dirDocPresenceScanEpoch = 0
 
-// 路径 key 归一与段级前缀匹配：抽到独立模块便于单测与复用。
-import { normDirKey, pathPrefixMatch } from './fileTreePathKey'
+// 后台预取失败标脏（FR-3 兜底）：为 true 时下一次 refreshTree 强制走全清 + root 全扫，
+// 全扫完成后由 refreshTree/refresh 消费复位。
+let _dirDocPresenceScanDirty = false
 
-// 失效入口：prefix 不传 → 全量清；传 → 仅清 prefix 前缀（用 pathPrefixMatch 防误命中兄弟目录）。
+// 同一脏期内延迟单次全扫重试只排一次；脏标记被成功全扫消费时一并复位
+let _dirDocPresenceRetryScheduled = false
+
+// 后台预取失败后的单次全扫重试延迟（B3）
+const DIR_DOC_PRESENCE_RETRY_MS = 2000
+
+// 路径 key 归一与段级前缀匹配：抽到独立模块便于单测与复用。
+import { normDirKey } from './fileTreePathKey'
+// watch 增量失效决策（纯函数，便于单测）：路径归一、祖先链前缀、N=64 降级阈值
+import {
+  resolveDocPresenceRefresh,
+  docPresenceHintSetsEqual,
+} from './core/docPresenceScan'
+
+// 失效入口：不传 / 空数组 → 全量清；传单个前缀（向后兼容）或前缀数组 → 仅清匹配前缀
+// （段级对齐匹配防误命中兄弟目录，normDirKey 归一大小写）。
 // 即便当前没有在途扫描，自增 epoch 也是无副作用的（下次 prefetch 会用更大的 epoch 重新开始）。
-function invalidateDirDocPresenceScan(prefix?: string): void {
+function invalidateDirDocPresenceScan(prefix?: string | string[]): void {
   // 关键：让任何在途扫描结果作废——失效必须赢得竞态，防止"扫描完成用陈旧快照复活已失效条目"。
   _dirDocPresenceScanEpoch++
   if (!prefix) {
     _dirDocPresenceScan.clear()
     return
   }
-  const key = normDirKey(prefix)
+  const prefixes = (Array.isArray(prefix) ? prefix : [prefix])
+    .map((p) => normDirKey(p))
+    .filter((k) => !!k)
+  if (prefixes.length === 0) return
+  // 祖先链匹配：对每个缓存 key 向上逐段查前缀集，O(keys×深度)；
+  // 避免 O(keys×prefixes) 双重循环（N=64 上限下前缀可能达数百）。段级对齐匹配防误命中兄弟目录。
+  const prefixSet = new Set(prefixes)
   for (const k of Array.from(_dirDocPresenceScan.keys())) {
-    if (pathPrefixMatch(k, key)) _dirDocPresenceScan.delete(k)
+    if (prefixSet.has(k)) { _dirDocPresenceScan.delete(k); continue }
+    let idx = k.lastIndexOf('/')
+    while (idx > 0) {
+      const parent = k.slice(0, idx)
+      if (prefixSet.has(parent)) { _dirDocPresenceScan.delete(k); break }
+      idx = parent.lastIndexOf('/')
+    }
   }
 }
 
-async function prefetchDirDocPresence(root: string): Promise<void> {
-  try {
-    if (typeof invoke !== 'function') return
-    const allow = state.additionalSuffixAllow || new Set(['md', 'markdown', 'txt', 'pdf'])
-    // 自增 epoch：本轮异步返回时若已被新轮覆盖，直接放弃旧结果
-    const myEpoch = ++_dirDocPresenceScanEpoch
-    const t0 = Date.now()
-    // Rust 端（scan_dirs_doc_presence）只返回"含受支持文档"的目录列表；
-    // 未在列表中的目录视为"无文档"，避免返回全量 HashMap 造成的 IPC 体积浪费。
-    const arr = await invoke<string[]>('scan_dirs_doc_presence', {
-      root,
-      exts: Array.from(allow),
-      maxDepth: 20,
-    })
-    // 新一轮 prefetch 已发起，旧结果丢弃
-    if (myEpoch !== _dirDocPresenceScanEpoch) return
-    _dirDocPresenceScan.clear()
-    for (const dir of arr || []) {
-      _dirDocPresenceScan.set(normDirKey(dir), true)
-    }
-    const cost = Date.now() - t0
-    if (cost >= 300) {
-      try {
-        const { logInfo } = await import('./core/logger')
-        logInfo('[启动耗时] 目录文档预扫描', { 耗时ms: cost, 目录数: _dirDocPresenceScan.size })
-      } catch {}
-    }
-  } catch {}
+async function prefetchDirDocPresence(root: string, baseline?: ReadonlyMap<string, boolean>): Promise<boolean> {
+  if (typeof invoke !== 'function') return false
+  // 扫描后缀恒为 内置默认 ∪ ASP 允许集：additionalSuffixAllow 填充后本身已含默认值,
+  // 但缓存未填充/被清空(root 切换、refresh 早退)时不得把内置后缀从 Rust 扫描中丢掉
+  const allow = new Set(['md', 'markdown', 'txt', 'pdf'])
+  if (state.additionalSuffixAllow) for (const e of state.additionalSuffixAllow) allow.add(e)
+  // 自增 epoch：本轮异步返回时若已被新轮覆盖，直接放弃旧结果
+  const myEpoch = ++_dirDocPresenceScanEpoch
+  const t0 = Date.now()
+  // Rust 端（scan_dirs_doc_presence）只返回"含受支持文档"的目录列表；
+  // 未在列表中的目录视为"无文档"，避免返回全量 HashMap 造成的 IPC 体积浪费。
+  // 注意：Rust 端目前只支持 root 整树扫描，不支持按前缀扫描——增量失效后的后台预取
+  // 仍以 root 全树在后台运行（不阻塞渲染）；待 Rust 支持 prefix 参数后再收敛为前缀扫描。
+  const arr = await invoke<string[]>('scan_dirs_doc_presence', {
+    root,
+    exts: Array.from(allow),
+    maxDepth: 20,
+  })
+  // 新一轮 prefetch/invalidate 已发起，旧结果丢弃。当前 prefetch 恒为 root 全量扫描，
+  // 作废轮次的失效范围必被新一轮覆盖；若未来 Rust 支持前缀扫描，此处需改为重新排队失效前缀。
+  if (myEpoch !== _dirDocPresenceScanEpoch) return false
+  _dirDocPresenceScan.clear()
+  for (const dir of arr || []) {
+    _dirDocPresenceScan.set(normDirKey(dir), true)
+  }
+  const cost = Date.now() - t0
+  if (cost >= 300) {
+    try {
+      const { logInfo } = await import('./core/logger')
+      logInfo('[启动耗时] 目录文档预扫描', { 耗时ms: cost, 目录数: _dirDocPresenceScan.size })
+    } catch {}
+  }
+  // 有基线（增量路径调用方在失效前留的快照）→ 比对 hint 集合是否变化，
+  // 供后台预取完成后判断是否需要二次刷新（FR-3 最终一致）；无基线（渲染前全扫）→ true
+  if (!baseline) return true
+  return !docPresenceHintSetsEqual(baseline, _dirDocPresenceScan)
 }
 
 async function dirHasSupportedDocRecursive(dir: string, allow: Set<string>, depth = 20): Promise<boolean> {
@@ -1610,8 +1675,9 @@ async function renderRoot(root: string) {
   }
 }
 
-// 内部刷新函数，不重新设置监听
-async function refreshTree() {
+// 内部刷新函数，不重新设置监听。
+// paths：watch 事件路径并集（已去重）；null/undefined 表示无路径上下文 → 全清 + root 全扫。
+async function refreshTree(paths?: string[] | null) {
   const root = await state.opts!.getRoot()
   if (!root) {
     if (state.container) state.container.innerHTML = ''
@@ -1625,11 +1691,59 @@ async function refreshTree() {
   await updateAdditionalSuffixCache()
   // 刷新前清理目录缓存，确保显示与实际文件状态一致
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
-  // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
-  try { invalidateDirDocPresenceScan() } catch {}
-  // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
-  // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
-  try { await prefetchDirDocPresence(root) } catch {}
+
+  // NFR-3 / A5：有路径上下文且去重后 ≤64 条 → 前缀增量失效，立即以缓存渲染，
+  // 后台预取不阻塞渲染；无路径上下文 / >64（写放大防护）/ 后台预取曾失败标脏 →
+  // 全清 + root 全扫（现状语义）。
+  const strategy = resolveDocPresenceRefresh(paths, { dirty: _dirDocPresenceScanDirty })
+  if (strategy.kind === 'full-scan') {
+    // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
+    try { invalidateDirDocPresenceScan() } catch {}
+    // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
+    // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
+    try {
+      await prefetchDirDocPresence(root)
+      // 全扫成功才消费脏标记，同时复位"脏期内单次重试"配额
+      _dirDocPresenceScanDirty = false
+      _dirDocPresenceRetryScheduled = false
+    } catch {
+      // 全扫失败：保留/置位脏标记，下次刷新继续全清全扫兜底（渲染侧此时回落懒加载递归，hint 不会永久错误）
+      _dirDocPresenceScanDirty = true
+    }
+    await renderRoot(root)
+    return
+  }
+
+  // —— 增量路径：失效前留基线快照（拷贝，与失效同步相邻，之间无 await）——
+  const baseline = new Map(_dirDocPresenceScan)
+  try { invalidateDirDocPresenceScan(strategy.prefixes) } catch {}
+  // 后台预取先行启动（fire-and-forget，不阻塞返回）：即使下方渲染失败，
+  // 失效前缀仍会被扫描结果回填（FR-3 最终一致）。
+  // 注：目标语义是仅失效前缀集合预取；Rust scan_dirs_doc_presence 暂不支持 prefix 参数，
+  // 当前仍以 root 全树在后台扫描（见 prefetchDirDocPresence 注释），待 Rust 支持后收敛。
+  void prefetchDirDocPresence(root, baseline)
+    .then((hintsChanged) => {
+      if (!hintsChanged) return
+      // hint 与已渲染不一致：只更新受影响目录行 hint DOM 的定向刷新实现成本过高
+      // （需反向映射 DOM 行 ↔ 失效前缀），先兜底整树重渲染——renderRoot 有 jobId 防交错，
+      // 代价与一次普通渲染相当，且仅在 hint 真正变化时发生。
+      void renderRoot(root).catch(() => {})
+    })
+    .catch((err) => {
+      // logWarn + 标脏：下一次 refreshTree 走全清 + root 全扫兜底（FR-3）
+      _dirDocPresenceScanDirty = true
+      void import('./core/logger')
+        .then(({ logWarn }) => logWarn('[文件树] 目录文档预扫描后台预取失败，已标脏，下次刷新全扫兜底', { err: String(err) }))
+        .catch(() => {})
+      // 延迟后单次全扫重试（refreshTree(null) 因 dirty 必走全清全扫分支），避免 hint
+      // 长时间停留在懒加载回落；同一脏期内只排一次，重试再失败则等下一次刷新触发
+      if (!_dirDocPresenceRetryScheduled) {
+        _dirDocPresenceRetryScheduled = true
+        window.setTimeout(() => { void refreshTree(null).catch(() => {}) }, DIR_DOC_PRESENCE_RETRY_MS)
+      }
+    })
+  // 立即以缓存渲染（不等待后台扫描）：被失效前缀下的目录行会回落到懒加载递归
+  // （数量受阈值约束），hint 允许短暂 stale（FR-3 允许短暂 stale、要求最终一致）
   await renderRoot(root)
 }
 
@@ -1672,7 +1786,14 @@ async function refresh() {
   try { invalidateDirDocPresenceScan() } catch {}
   // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
   // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
-  try { await prefetchDirDocPresence(root) } catch {}
+  try {
+    await prefetchDirDocPresence(root)
+    // refresh 恒走全清全扫；扫描成功才消费脏标记（并复位重试配额），失败保留下轮兜底
+    _dirDocPresenceScanDirty = false
+    _dirDocPresenceRetryScheduled = false
+  } catch {
+    _dirDocPresenceScanDirty = true
+  }
   await renderRoot(root)
 
     // 设置文件监听（如果还未设置或根目录改变了）
@@ -1680,7 +1801,8 @@ async function refresh() {
       try {
         const u = await watch(root, async (event) => {
           if (!isRelevantWatchEvent(event)) return
-          scheduleRefreshTreeFromWatch()
+          // 透传事件路径：debounce 合并窗口内取去重并集，供 refreshTree 做增量失效（NFR-3）
+          scheduleRefreshTreeFromWatch((event as any)?.paths ?? null)
         }, { recursive: true, delayMs: 250 } as any)
         state.unwatch = () => { try { u(); } catch {} }
         state.watching = true
@@ -1811,6 +1933,25 @@ export const fileTree: FileTreeAPI = {
   getSelectedDir: () => (state.selectedIsDir ? (state.selected || null) : (state.selected ? base(state.selected) : null)),
   newFileInSelected, newFolderInSelected,
   setSort: (mode) => { state.sortMode = mode },
+}
+
+// 仅供测试（vitest）：暴露内部函数与状态，验证 watch 增量失效的调度语义
+// （≤64 路径不 await 后台预取、>64 降级全扫、标脏兜底），不影响生产行为。
+export const __fileTreeTestHooks = {
+  refreshTree,
+  scheduleRefreshTreeFromWatch,
+  invalidateDirDocPresenceScan,
+  prefetchDirDocPresence,
+  get dirDocPresenceScan() { return _dirDocPresenceScan },
+  get dirDocPresenceDirty() { return _dirDocPresenceScanDirty },
+  resetForTest() {
+    resetWatchRefreshScheduler()
+    _dirDocPresenceScanDirty = false
+    _dirDocPresenceRetryScheduled = false
+    _dirDocPresenceScan.clear()
+    hasDocCache.clear()
+    hasDocPending.clear()
+  },
 }
 
 export default fileTree

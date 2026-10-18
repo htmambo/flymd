@@ -1,10 +1,7 @@
-// Markdown Front Matter 解析
-// 抽离自 main.ts:2167-2206(splitYamlFrontMatter) + 2220-2232(parseFrontMatterMeta)。
-// 之所以独立成 core 模块:这俩是纯文本解析,无 main.ts 闭包依赖;
-// 插件运行时已暴露 splitYamlFrontMatter(见 main.ts:11285),所以本文件对外可被 main 直接 re-export,
-// 保持 plugin API 表面不变。
-
-import { load as yamlLoad } from 'js-yaml'
+// Markdown Front Matter 剥离(纯字符串,无 js-yaml 依赖)
+// splitYamlFrontMatter 抽离自 main.ts:2167-2206。
+// 解析元数据的 parseFrontMatterMeta 已迁至 frontMatterMeta.ts(静态依赖 js-yaml),
+// 入口 chunk 不得经本文件触达 js-yaml(见 NFR-2)。
 
 /**
  * 把 Markdown 文档开头的 YAML front matter(`--- ... ---`)剥出来。
@@ -49,20 +46,3 @@ export function splitYamlFrontMatter(raw: string): { frontMatter: string | null;
   }
 }
 
-/**
- * 把 splitYamlFrontMatter 拿到的 fmText 进一步解析为对象。
- * 失败/非对象返回 null,而不是抛错——调用方多为预览元数据注入,失败应静默降级。
- */
-export function parseFrontMatterMeta(fm: string | null): any | null {
-  if (!fm) return null
-  try {
-    let s = String(fm)
-    s = s.replace(/^﻿?---\s*\r?\n?/, '')
-    s = s.replace(/\r?\n---\s*$/, '')
-    const doc = yamlLoad(s)
-    if (!doc || typeof doc !== 'object') return null
-    return doc
-  } catch {
-    return null
-  }
-}

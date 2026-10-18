@@ -12,6 +12,10 @@
 // getOutlineDocked / clearOutlineHeadsCache / ensureOutlineHeadsCacheFromCtx /
 // cssEscapeCompat / makePreviewHeadingId 全部用 deps 注入。
 
+// PDF 目录缓存上限:_pdfOutlineCache 为只增 Map(迭代序=插入序),
+// 写路径超限时按插入序淘汰最旧项(LRU)
+const PDF_OUTLINE_CACHE_MAX = 20
+
 export interface OutlineDeps {
   /** 当前文件路径(可能 null) */
   getCurrentFilePath: () => string | null
@@ -554,7 +558,16 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
         await walk(pdfOutline, 1)
         if (items.length === 0) { outlineEl.innerHTML = '<div class="empty">目录为空</div>'; deps.logWarn('PDF 目录:目录为空'); return }
 
-        try { if (cacheKey) _pdfOutlineCache.set(cacheKey, { mtime: curMtime, items: items.slice() }) } catch {}
+        try {
+          if (cacheKey) {
+            _pdfOutlineCache.set(cacheKey, { mtime: curMtime, items: items.slice() })
+            while (_pdfOutlineCache.size > PDF_OUTLINE_CACHE_MAX) {
+              const oldest = _pdfOutlineCache.keys().next().value
+              if (oldest === undefined) break
+              _pdfOutlineCache.delete(oldest)
+            }
+          }
+        } catch {}
 
         renderItems(items, false)
       } finally {

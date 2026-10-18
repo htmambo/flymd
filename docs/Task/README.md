@@ -53,6 +53,12 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-18-perf-startup-runtime-plan.md](Archive/2026-10/2026-10-18-perf-startup-runtime-plan.md) — 性能优化实施：启动速度+运行效率 T1-T8（完成 2026-10-18，fullauto perf-2026-10）
+  - **范围**：启动链路 Phase A/B 重排、入口静态闭包减负（js-yaml/diffMerge 动态化+构建门禁）、文件树 watch 增量失效（N=64）、渲染收敛（任务列表预检/mermaid 并发4+按序回填）、rAF 节流/dotBlink/outline 缓存上限、窗口 exactly-once reveal、reqwest 共享 client+S3 有界缓存
+  - **验证**：三视角（功能/安全/质量）+ coding-bridge 外审全 APPROVED；五门禁全绿（tsc 0 错 / vitest 758/758 / build+闭包校验 / cargo check / cargo test 27/27）
+  - **产物**：.omc/fullauto/perf-2026-10/{spec,validation}.md、.omc/plans/fullauto-perf-2026-10-impl.md（含全部 Runtime Decisions）
+  - **已知债务**（低危，见 validation.md）：mermaid 渲染链无超时、T3 后台 root 全扫待 Rust prefix 参数、Windows 兜底 show 绕过 CAS（pre-existing）、S3 缓存可演进 LRU
+
 - ✅ [2026-06-26-macos-remove-isMaximized-polling.md](Archive/2026-06/2026-06-26-macos-remove-isMaximized-polling.md) — macOS 彻底删除 isMaximized 实时同步(完成 2026-06-26)
   - **根因**(Tauri #5812 / #13199):macOS WKWebView 任何调 isMaximized() 触发 looped resize 死循环
   - **方案 B** 完全避开触发条件:删 onResized/listen 路径(全平台),Rust 端简化为 baseline-only

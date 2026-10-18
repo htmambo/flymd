@@ -425,11 +425,24 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
         }
       } catch {}
       mermaid.initialize(getMermaidConfig());
+      // FR-2: mermaid.render 内部使用全局临时 DOM/样式状态，不可重入并发；
+      // 用 promise 链把实际 render 调用串行化（prep/缓存/wrap 仍由 worker pool 并发），回填仍按文档序。
+      let _mmdRenderTail: Promise<unknown> = Promise.resolve()
+      const mermaidRenderSeq = (renderId: string, code: string): Promise<{ svg: string }> => {
+        const run = _mmdRenderTail.then(() => mermaid.render(renderId, code))
+        _mmdRenderTail = run.catch(() => {})
+        return run
+      }
       // 不要在这里 decorateCodeBlocks：renderPreview 传入的 root 是尚未挂载的
       // buf，而该装饰依赖 getComputedStyle / getBoundingClientRect 做像素测量，
       // 在游离节点上全返回 0。更糟的是它会把 pre 标记为 data-codebox=1，
       // 导致挂载后 mdHost 上的那次正确调用被守卫跳过，行号内边距就永久错了。
-      for (let i = 0; i < nodes.length; i++) {
+      type MmdRenderResult =
+        | { kind: 'ok'; fig: HTMLElement; svgEl: SVGElement }
+        | { kind: 'err'; error: any }
+        | { kind: 'noop' }
+      // 单图渲染：只准备结果、不直接改 DOM（回填统一按文档序进行）；逐图 try/catch，单图失败不影响其他节点
+      const renderOne = async (i: number): Promise<MmdRenderResult> => {
         const el = nodes[i]
         const code = el.textContent || ''
         const hash = hashMermaidCode(code)
@@ -439,48 +452,81 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
           const cacheHit = !!svgMarkup
           if (!svgMarkup) {
             const renderId = `${hash}-${Date.now()}-${i}`
-            const { svg } = await mermaid.render(renderId, code)
+            const { svg } = await mermaidRenderSeq(renderId, code)
             cacheMermaidSvg(code, svg, renderId)
             svgMarkup = svg.split(renderId).join(desiredId)
           }
           const wrap = document.createElement('div')
           wrap.innerHTML = svgMarkup || ''
           const svgEl = wrap.firstElementChild as SVGElement | null
-          if (svgEl) {
-            try { normalizeMermaidSvg(svgEl) } catch {}
-            try { svgEl.setAttribute('data-mmd-hash', hash) } catch {}
-            try { svgEl.setAttribute('data-mmd-cache', cacheHit ? 'hit' : 'miss') } catch {}
-            if (!svgEl.id) svgEl.id = desiredId
-            const fig = document.createElement('div')
-            fig.className = 'mmd-figure'
-            // 记录 Mermaid 源码：导出 PDF 时按需重建为 <div class="mermaid">text</div> 后用 light theme 重新渲染，
-            // 解决 dark mode 下导出 PDF 仍是黑底的问题。源码长度通常 < 1KB，data 属性开销可忽略。
-            try { fig.dataset.source = code } catch {}
-            fig.appendChild(svgEl)
-            try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
-            el.replaceWith(fig)
-            try { postAttachMermaidSvgAdjust(svgEl) } catch {}
-          }
-        } catch (e: any) {
-          // 渲染失败：保留占位并把错误信息回填到 DOM，让用户能直接看到问题
-          // （mermaid 11 移除了 st=>start: / Andrew->China: 等老式语法，会在 parse/render 时抛错）
-          try {
-            const msg = (e && (e.message || e.toString && e.toString())) || '未知错误'
-            const hint = (e && e.hash && (e.hash.text || e.hash.token)) ? ` (line ${e.hash.line || '?'})` : ''
-            try { console.warn('[Mermaid] 渲染失败：', msg) } catch {}
-            const fig = document.createElement('div')
-            fig.className = 'mmd-figure mmd-error'
-            const title = document.createElement('div')
-            title.className = 'mmd-error-title'
-            title.textContent = 'Mermaid 渲染失败' + hint
-            const body = document.createElement('pre')
-            body.className = 'mmd-error-body'
-            body.textContent = String(msg)
-            fig.appendChild(title)
-            fig.appendChild(body)
-            el.replaceWith(fig)
-          } catch {}
+          if (!svgEl) return { kind: 'noop' }
+          try { normalizeMermaidSvg(svgEl) } catch {}
+          try { svgEl.setAttribute('data-mmd-hash', hash) } catch {}
+          try { svgEl.setAttribute('data-mmd-cache', cacheHit ? 'hit' : 'miss') } catch {}
+          if (!svgEl.id) svgEl.id = desiredId
+          const fig = document.createElement('div')
+          fig.className = 'mmd-figure'
+          // 记录 Mermaid 源码：导出 PDF 时按需重建为 <div class="mermaid">text</div> 后用 light theme 重新渲染，
+          // 解决 dark mode 下导出 PDF 仍是黑底的问题。源码长度通常 < 1KB，data 属性开销可忽略。
+          try { fig.dataset.source = code } catch {}
+          fig.appendChild(svgEl)
+          try { fig.appendChild(createMermaidToolsFor(svgEl)) } catch {}
+          return { kind: 'ok', fig, svgEl }
+        } catch (error: any) {
+          return { kind: 'err', error }
         }
+      }
+      // worker pool（并发 4）渲染；池级异常时自动降级串行补齐未完成的节点（逐图 try/catch 不变）
+      const results: Array<MmdRenderResult | undefined> = new Array(nodes.length)
+      let nextRenderIndex = 0
+      const runRenderWorker = async (): Promise<void> => {
+        for (;;) {
+          const i = nextRenderIndex++
+          if (i >= nodes.length) return
+          results[i] = await renderOne(i)
+        }
+      }
+      try {
+        const workerCount = Math.min(4, nodes.length)
+        const workers: Array<Promise<void>> = []
+        for (let w = 0; w < workerCount; w++) workers.push(runRenderWorker())
+        await Promise.all(workers)
+      } catch {
+        for (let i = 0; i < nodes.length; i++) {
+          if (results[i] === undefined) {
+            try { results[i] = await renderOne(i) } catch (error: any) { results[i] = { kind: 'err', error } }
+          }
+        }
+      }
+      // 全部完成后按文档序回填（并发完成序≠文档序，直接回填会破坏输出等价性）
+      for (let i = 0; i < nodes.length; i++) {
+        const el = nodes[i]
+        const r = results[i]
+        if (!r || r.kind === 'noop') continue
+        if (r.kind === 'ok') {
+          el.replaceWith(r.fig)
+          try { postAttachMermaidSvgAdjust(r.svgEl) } catch {}
+          continue
+        }
+        // 渲染失败：保留占位并把错误信息回填到 DOM，让用户能直接看到问题
+        // （mermaid 11 移除了 st=>start: / Andrew->China: 等老式语法，会在 parse/render 时抛错）
+        try {
+          const e = r.error
+          const msg = (e && (e.message || e.toString && e.toString())) || '未知错误'
+          const hint = (e && e.hash && (e.hash.text || e.hash.token)) ? ` (line ${e.hash.line || '?'})` : ''
+          try { console.warn('[Mermaid] 渲染失败：', msg) } catch {}
+          const fig = document.createElement('div')
+          fig.className = 'mmd-figure mmd-error'
+          const title = document.createElement('div')
+          title.className = 'mmd-error-title'
+          title.textContent = 'Mermaid 渲染失败' + hint
+          const body = document.createElement('pre')
+          body.className = 'mmd-error-body'
+          body.textContent = String(msg)
+          fig.appendChild(title)
+          fig.appendChild(body)
+          el.replaceWith(fig)
+        } catch {}
       }
       const _mmdTotalMs = Math.round(performance.now() - _mmdT0)
       if (_mmdTotalMs >= 300) { try { logInfo('[启动耗时] Mermaid渲染总耗时', { 耗时ms: _mmdTotalMs, 图数: nodes.length }) } catch {} }
@@ -769,7 +815,6 @@ let store: Store | null = null
 let uploaderEnabledSnapshot = false
 // 配置备份（已拆分到 core/configBackup.ts）
 import { CONFIG_BACKUP_VERSION, PLUGINS_DIR, SETTINGS_FILE_NAME, BACKUP_PREFIX_APPDATA, BACKUP_PREFIX_APPLOCAL, normalizeBackupPath, base64ToBytes, getSettingsBaseDir, collectConfigBackupFiles, resolveBackupPath, ensureParentDirsForBackup, clearDirectory, clearAppLocalDataForRestore, type ConfigBackupPayload } from './core/configBackup'
-import { load as yamlLoad } from 'js-yaml'
 // 便携模式（已拆分到 core/portable.ts）
 import { exportPortableBackupSilent, readPortableBackupPayload } from './core/portable'
 
@@ -1287,9 +1332,9 @@ import { appendLog, logInfo, logWarn, logDebug } from './core/logger'
 import { isOfficePreviewCachePath } from './core/officePreviewPath'
 // 视觉列号工具(calcVisualColumn/offsetForVisualColumn/advanceVisualColumn)
 // 已抽离到 src/utils/visualColumn.ts,仅 src/modes/wysiwygCaret.ts 复用,main.ts 无引用。
-import { splitYamlFrontMatter, parseFrontMatterMeta } from './core/frontMatter'
+import { splitYamlFrontMatter } from './core/frontMatter'
 import { resolvePreviewLocalDocPath } from './utils/previewPath'
-import { scanTaskList, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
+import { scanTaskList, hasTaskListCandidate, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
 import { onCalloutFoldClick, onCalloutCopyClick } from './plugins/calloutPreviewEvents'
 import {
   buildContextMenuContext,
@@ -2514,12 +2559,8 @@ async function initStore() {
     // Tauri v2 使用 Store.load，在应用数据目录下持久化
     store = await Store.load('flymd-settings.json')
     try { bindSharedStore(store) } catch {}
-    // PR-7: 注册 store getter + 挂 library changed 桥接,触发 PR-4 一次性迁移
-    try {
-      const { setStoreForMigration, installLibraryChangedBridge } = await import('./core/libraryPrivate')
-      setStoreForMigration(() => store as any)
-      installLibraryChangedBridge()
-    } catch (e) { try { console.warn('[init] library private bridge failed', e) } catch {} }
+    // PR-7 桥接（libraryPrivate 动态 import + 迁移挂载）已移至启动 IIFE 阶段B
+    // （reveal 后执行）：其唯一消费方是 reveal 后流程，reveal 前加载会拖慢首帧（NFR-1）
     void logInfo('应用存储初始化成功')
     return true
   } catch (error) {
@@ -2838,7 +2879,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   let previewMetaLabels: MetadataLabelMap | null = null
   try {
     const r = splitYamlFrontMatter(raw)
-    previewMeta = parseFrontMatterMeta(r.frontMatter)
+    // js-yaml 依赖方,动态 import 避免进入入口静态闭包(NFR-2)
+    previewMeta = (await import('./core/frontMatterMeta')).parseFrontMatterMeta(r.frontMatter)
     raw = r.body
   } catch {}
   try {
@@ -2881,7 +2923,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
     try {
       if (!wysiwyg) {
         const _rawForTasks = (editor as HTMLTextAreaElement).value
-        const taskMapNow = scanTaskList(_rawForTasks)
+        // 预检是 scanTaskList 的严格超集:不命中时 scanTaskList 必返回 [],直接置空跳过全文扫描
+        const taskMapNow: Array<{ line: number; ch: number }> = hasTaskListCandidate(_rawForTasks) ? scanTaskList(_rawForTasks) : []
         const boxes = Array.from(buf.querySelectorAll('input.task-list-item-checkbox')) as HTMLInputElement[]
         boxes.forEach((el, i) => { try { (el as HTMLInputElement).setAttribute('type','checkbox') } catch {}; try { (el as any).dataset.taskId = String(i) } catch {} })
         _taskMapLast = taskMapNow
@@ -2903,6 +2946,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
         const enhance = (footnoteMod as any).enhanceFootnotes as ((root: HTMLElement) => void) | undefined
         if (typeof enhance === 'function') enhance(mdHost)
       } catch {}
+      // 代码块装饰只在挂载后的 mdHost 上做（依赖 getComputedStyle/getBoundingClientRect 像素测量；
+      // 原先对游离 buf 的调用测量全为 0 且会置 data-codebox=1 让本次调用被守卫跳过，已删除）
       try { decorateCodeBlocks(mdHost) } catch {}
       // 公式多的文档（例如 solag.md）这里是主要性能瓶颈：切片渲染避免 UI “假死”。
       try {
@@ -3043,9 +3088,6 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   try {
     if (!wysiwyg) adjustExistingMermaidSvgsForScale()
   } catch {}
-
-  // 代码块装饰：委托到统一的 decorateCodeBlocks，避免重复实现导致行为不一致
-  try { decorateCodeBlocks(preview) } catch {}
 
   // 首次预览完成打点
   try { if (!(renderPreview as any)._firstDone) { (renderPreview as any)._firstDone = true; logInfo('打点:首次预览完成') } } catch {}
@@ -3197,6 +3239,10 @@ async function revealMainWindowOnce(): Promise<void> {
     const win = getCurrentWindow()
     await win.show()
     await win.setFocus()
+    // Rust 侧第二显示通道（幂等，exactly-once）：非 Tauri 运行时或命令不可用都必须静默
+    try {
+      void invoke('flymd_window_ready').catch(() => {})
+    } catch {}
   } catch {}
 }
 
@@ -4375,23 +4421,34 @@ async function isOpenableFilePath(p: unknown): Promise<boolean> {
 }
 
 // 从最近列表（库优先，无库回落全局）+ 库内"当前文件"标识，挑出启动/切库要全量
-// 打开的文件集合：paths=全部仍可打开的 recent（保持 recent 顺序，逐个校验存在性，
-// 跳过目录与失效项）；库内记录的 currentFile（最后激活标签）若因 recent 截断
+// 打开的文件集合：paths=全部仍可打开的 recent（保持 recent 顺序，存在性校验并发执行、
+// 按原序回填，跳过目录与失效项）；库内记录的 currentFile（最后激活标签）若因 recent 截断
 // （RECENT_MAX=5）不在列表中，也补入一并打开；
 // active=应激活的标签（currentFile 优先，校验失败回落 paths[0]）。
 async function pickRecentSetToOpen(): Promise<{ paths: string[]; active: string | null }> {
   const paths: string[] = []
   try {
     const recents = await getRecent(store)
+    // Office 缓存路径判定与存在性校验解耦：判定函数一次性加载（保持 import 失败时
+    // "不过滤"的原语义），存在性校验用 allSettled 并发——任一失败不影响其余，
+    // 再按 recent 原序过滤，保持串行版的容错语义
+    let isOfficeCachePath: (p: any) => boolean = () => false
+    try {
+      const m = await import('./extensions/officePreview')
+      isOfficeCachePath = (p: any) => m.isOfficePreviewCachePath(p)
+    } catch {}
+    const candidates: string[] = []
     for (const p of recents) {
       if (!p || typeof p !== 'string') continue
       // Office 预览缓存目录里的临时副本不参与恢复：重开无意义，且重开会经
       // openFile2 触发库根同步，把当前库翻切成只含临时副本的"临时库"
-      try {
-        const m = await import('./extensions/officePreview')
-        if (m.isOfficePreviewCachePath(p)) continue
-      } catch {}
-      if (await isOpenableFilePath(p)) paths.push(p)
+      try { if (isOfficeCachePath(p)) continue } catch {}
+      candidates.push(p)
+    }
+    const checks = await Promise.allSettled(candidates.map((p) => isOpenableFilePath(p)))
+    for (let i = 0; i < candidates.length; i++) {
+      const r = checks[i]
+      if (r.status === 'fulfilled' && r.value) paths.push(candidates[i])
     }
   } catch {}
   let active: string | null = null
@@ -8571,62 +8628,82 @@ function bindEvents() {
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
-    // 库私有配置作用域缓存：必须在任何按库读写之前就绪
-    try { await refreshLibraryScopeCache() } catch {}
-    // 初始化扩展管理面板宿主（依赖 store 等全局状态）
+    // 便签模式检测（前置到 reveal 前：窗口几何恢复组需依据是否便签启动决定跳过）。
+    // get_cli_args 为幂等命令（Rust 侧重新收集 env 参数），单次调用并缓存，
+    // 后续 macOS 兜底打开直接复用缓存值，不再二次 IPC。
+    let startupCliArgs: string[] = []
+    let isStickyNoteStartup = false
+    let stickyNoteStartupPath: string | null = null
     try {
-      // 动态加载核心扩展常量/函数，避免在启动包中静态引入 runtime 依赖。
-      const { CORE_AI_EXTENSION_ID, markCoreExtensionBlocked } = await import('./extensions/coreExtensions')
-      await initExtensionsPanel({
-        getStore: () => store,
-        pluginNotice,
-        showError,
-        confirmNative: (message: string) => confirmNative(message),
-        openUploaderDialog,
-        openWebdavSyncDialog,
-        getWebdavSyncConfig,
-        getOfficePreviewConfig: async () => {
-          try {
-            const m = await import('./extensions/officePreview')
-            return { enabled: m.isOfficePreviewEnabled() }
-          } catch { return { enabled: false } }
-        },
-        setOfficePreviewEnabled: async (enabled: boolean) => {
-          try {
-            const m = await import('./extensions/officePreview')
-            await m.setOfficePreviewEnabled(enabled)
-          } catch (e) { console.warn('切换 Word 预览状态失败', e) }
-        },
-        openInBrowser,
-        // 插件运行时延迟初始化：通过 Proxy 把实际调用转发到初始化后的 pluginRuntime。
-        installPluginFromGit: (ref, opt) => pluginRuntimeProxy.installPluginFromGit(ref, opt),
-        installPluginFromLocal: (path, opt) => pluginRuntimeProxy.installPluginFromLocal(path, opt),
-        activatePlugin: (p) => pluginRuntimeProxy.activatePlugin(p),
-        deactivatePlugin: (id) => pluginRuntimeProxy.deactivatePlugin(id),
-        getActivePluginModule: (id: string) => pluginRuntimeProxy.pluginHost.getActivePluginModule(id),
-        coreAiExtensionId: CORE_AI_EXTENSION_ID,
-        markCoreExtensionBlocked: (id: string) => markCoreExtensionBlocked(store, id),
-        removePluginDir: (dir: string) => pluginRuntimeProxy.removePluginDir(dir),
-        openPluginSettings: (p) => pluginRuntimeProxy.openPluginSettings(p),
+      startupCliArgs = (await invoke<string[]>('get_cli_args')) || []
+      const stickyIndex = startupCliArgs.findIndex(a => a === '--sticky-note')
+      if (stickyIndex >= 0) {
+        const p = startupCliArgs[stickyIndex + 1]
+        if (p && typeof p === 'string') {
+          isStickyNoteStartup = true
+          stickyNoteStartupPath = p
+        }
+      }
+    } catch (e) {
+      console.warn('[便签模式] 检测启动参数失败:', e)
+    }
+
+    // 阶段A 恢复组：紧凑标题栏 + 窗口几何恢复，串行执行（外审 T1-R3：标题栏装饰变化
+    // 会影响几何测量，先定标题栏再测几何）。
+    // NFR-1 硬性要求：窗口几何（restoreWindowStateBeforeSticky / ensureMinWindowSize /
+    // centerWindow 等窗口 IPC）必须在 reveal 前完成，禁止后移至 show 之后。
+    // 几何组内部保持原串行次序（restore → ensureMin → focusMode → center，center 依赖最终尺寸/位置）。
+    const compactTitlebarTask = (async () => {
+      // 同步从 store 加载紧凑标题栏状态,避免后续 getCurrentWindow 拖拽判断读到过期的默认值
+      const compact = await getCompactTitlebar(store).catch(() => isCompactTitlebarEnabled())
+      // 启动期的 setCompactTitlebar(persist=false) 只刷新装饰,不允许其异常中断主流程
+      await setCompactTitlebar(compact, store, false).catch((e) => {
+        try { console.warn('启动期 setCompactTitlebar 失败:', e) } catch {}
       })
-    } catch {}
-    await maybeAutoImportPortableBackup()
-    // 同步从 store 加载紧凑标题栏状态,避免后续 getCurrentWindow 拖拽判断读到过期的默认值
-    const compact = await getCompactTitlebar(store).catch(() => isCompactTitlebarEnabled())
-    const [layout, side, docked] = await Promise.all([
-      getOutlineLayout().catch(() => outlineLayout),
-      getLibrarySide().catch(() => librarySide),
-      getLibraryDocked().catch(() => libraryDocked),
-    ])
-    // 启动期的 setCompactTitlebar(persist=false) 只刷新装饰,不允许其异常中断主流程
-    const compactTitlebarTask = setCompactTitlebar(compact, store, false).catch((e) => {
-      try { console.warn('启动期 setCompactTitlebar 失败:', e) } catch {}
-    })
-    try { await syncOutlineDockFromStore() } catch {}
-    try { await setOutlineLayout(layout, false) } catch {}
-    try { await setLibrarySide(side, false) } catch {}
-    try { await setLibraryDocked(docked, false) } catch {}
-    try { await compactTitlebarTask } catch {}
+    })()
+    const windowGeometryTask = (async () => {
+      // 非便签模式启动时，检查是否有便签前保存的状态需要恢复（若存在则恢复并清除记录），并将窗口居中
+      if (isStickyNoteStartup) return
+      // 1) 若存在便签前窗口状态，先恢复
+      try { await restoreWindowStateBeforeSticky() } catch {}
+      // 2) 兜底：窗口过小则拉回 960x640，避免残留便签尺寸
+      try { await windowPlacementApi.ensureMinWindowSize() } catch {}
+      // 3) 恢复专注模式状态（从 Store 读取；若未开启则兜底重置，防止异常无标题栏状态）
+      try {
+        const savedFocusMode = await getFocusMode(store)
+        if (savedFocusMode) {
+          await toggleFocusMode(true, store)
+        } else {
+          await resetFocusModeDecorations()
+        }
+      } catch {}
+      // 4) 统一将窗口居中显示，避免位置跑偏
+      try { await windowPlacementApi.centerWindow() } catch {}
+
+      // 移除透明度 CSS 变量，确保主窗口不透明
+      try { document.documentElement.style.removeProperty('--sticky-opacity') } catch {}
+
+      // 恢复源码模式状态（如果有便签前记录）
+      try {
+        if (store) {
+          const editorState = await (store as any).get('editorModeBeforeSticky') as { mode: string; wysiwygV2Active: boolean } | null
+          if (editorState) {
+            // 恢复源码模式，并清除记录
+            // 注意：这里只是恢复状态变量，UI 切换会在后续文件打开时自动处理
+            mode = editorState.mode as 'edit' | 'preview'
+            // wysiwygV2Active 的恢复需要等 UI 加载完成后处理，这里只清除记录
+            await (store as any).delete('editorModeBeforeSticky')
+            await (store as any).save()
+          }
+        }
+      } catch (e) {
+        console.warn('[启动] 恢复源码模式状态失败:', e)
+      }
+    })()
+    // 先定标题栏再测几何：compact 切换改变标题栏装饰/内容高度，与几何测量并发
+    // 完成顺序不定会在慢机上得到错误几何（外审 T1-R3）；两项仍都在 reveal 前完成
+    await compactTitlebarTask
+    await windowGeometryTask
     // 开发模式：不再自动打开 DevTools，改为快捷键触发，避免干扰首屏
     // 快捷键见下方全局 keydown（F12 或 Ctrl+Shift+I）
     // 核心功能：必须执行
@@ -8634,16 +8711,102 @@ function bindEvents() {
     titlebarStatusApi?.refreshStatus()
     bindEvents()  // 🔧 关键：无论存储是否成功，都要绑定事件
     initContextMenuListener()  // 初始化右键菜单监听
-    // 注意：专注模式状态恢复移至便签模式检测之后，见下方
     try { logInfo('打点:事件绑定完成') } catch {}
     await revealMainWindowOnce()
+    // 性能标记：窗口 reveal 完成（阶段A 结束；此后才允许 chunk 加载/写盘，NFR-1）
+    performance.mark('flymd-window-reveal')
 
-    let handledStartupOpenPath = false
+    // 阶段B（reveal 后）：libraryPrivate 桥接 / 库作用域缓存 / 扩展面板宿主 /
+    // 便携备份 / 布局恢复。保持在主链上 await（不进 ric）：库作用域缓存是紧随其后的
+    // openFile2 与最近文件恢复（getRecent → getLibraryScope）的读取前提，
+    // 延迟到空闲期会与主链读取竞争，导致按库读取落空（FR-1）。
     try {
-      const path = await invoke<string | null>('get_pending_open_path')
-      if (path && typeof path === 'string') {
+      // libraryPrivate 动态 import（原 initStore 内联，唯一消费方是 reveal 后流程）：
+      // PR-7 注册 store getter + 挂 library changed 桥接,触发 PR-4 一次性迁移。
+      // 必须先于 refreshLibraryScopeCache：首次 setLibraryScopeCache 会派发
+      // library:changed，桥接未挂载则本次迁移不会被触发
+      try {
+        const { setStoreForMigration, installLibraryChangedBridge } = await import('./core/libraryPrivate')
+        setStoreForMigration(() => store as any)
+        installLibraryChangedBridge()
+      } catch (e) { try { console.warn('[init] library private bridge failed', e) } catch {} }
+      // 库私有配置作用域缓存：必须在任何按库读写之前就绪
+      try { await refreshLibraryScopeCache() } catch {}
+      let layout: OutlineLayout = outlineLayout
+      let side: LibrarySide = librarySide
+      let docked: boolean = libraryDocked
+      await Promise.all([
+        // 初始化扩展管理面板宿主（依赖 store 等全局状态；host 赋值，无视觉副作用）
+        (async () => {
+          try {
+            // 动态加载核心扩展常量/函数，避免在启动包中静态引入 runtime 依赖。
+            const { CORE_AI_EXTENSION_ID, markCoreExtensionBlocked } = await import('./extensions/coreExtensions')
+            await initExtensionsPanel({
+              getStore: () => store,
+              pluginNotice,
+              showError,
+              confirmNative: (message: string) => confirmNative(message),
+              openUploaderDialog,
+              openWebdavSyncDialog,
+              getWebdavSyncConfig,
+              getOfficePreviewConfig: async () => {
+                try {
+                  const m = await import('./extensions/officePreview')
+                  return { enabled: m.isOfficePreviewEnabled() }
+                } catch { return { enabled: false } }
+              },
+              setOfficePreviewEnabled: async (enabled: boolean) => {
+                try {
+                  const m = await import('./extensions/officePreview')
+                  await m.setOfficePreviewEnabled(enabled)
+                } catch (e) { console.warn('切换 Word 预览状态失败', e) }
+              },
+              openInBrowser,
+              // 插件运行时延迟初始化：通过 Proxy 把实际调用转发到初始化后的 pluginRuntime。
+              installPluginFromGit: (ref, opt) => pluginRuntimeProxy.installPluginFromGit(ref, opt),
+              installPluginFromLocal: (path, opt) => pluginRuntimeProxy.installPluginFromLocal(path, opt),
+              activatePlugin: (p) => pluginRuntimeProxy.activatePlugin(p),
+              deactivatePlugin: (id) => pluginRuntimeProxy.deactivatePlugin(id),
+              getActivePluginModule: (id: string) => pluginRuntimeProxy.pluginHost.getActivePluginModule(id),
+              coreAiExtensionId: CORE_AI_EXTENSION_ID,
+              markCoreExtensionBlocked: (id: string) => markCoreExtensionBlocked(store, id),
+              removePluginDir: (dir: string) => pluginRuntimeProxy.removePluginDir(dir),
+              openPluginSettings: (p) => pluginRuntimeProxy.openPluginSettings(p),
+            })
+          } catch {}
+        })(),
+        // 便携模式备份自动导入（reveal 后执行，不阻塞首帧）
+        (async () => { try { await maybeAutoImportPortableBackup() } catch {} })(),
+        // 布局项读取（应用放到并行组完成后串行执行）
+        (async () => {
+          const [l, s, d] = await Promise.all([
+            getOutlineLayout().catch(() => outlineLayout),
+            getLibrarySide().catch(() => librarySide),
+            getLibraryDocked().catch(() => libraryDocked),
+          ])
+          layout = l
+          side = s
+          docked = d
+        })(),
+      ])
+      // 布局串行应用（并行组完成后）；写盘项（syncOutlineDockFromStore 的补齐写）最后
+      try { await setOutlineLayout(layout, false) } catch {}
+      try { await setLibrarySide(side, false) } catch {}
+      try { await setLibraryDocked(docked, false) } catch {}
+      try { await syncOutlineDockFromStore() } catch {}
+    } catch {}
+    // 性能标记：阶段B 完成
+    performance.mark('flymd-phase-b-done')
+
+    // 待打开路径：get_pending_open_path 为消费(take)语义（Rust 侧 slot.take()），
+    // 单次调用并缓存；下方兜底分支直接复用缓存值（二次调用恒为 null，重复 IPC 无意义）
+    let handledStartupOpenPath = false
+    let startupPendingOpenPath: string | null = null
+    try {
+      startupPendingOpenPath = await invoke<string | null>('get_pending_open_path')
+      if (startupPendingOpenPath && typeof startupPendingOpenPath === 'string') {
         handledStartupOpenPath = true
-        await openFile2(path)
+        await openFile2(startupPendingOpenPath)
       }
     } catch {}
 
@@ -8668,6 +8831,15 @@ function bindEvents() {
           ]))
           // 扩展：初始化目录并激活已启用扩展（此时 Store 已就绪）
           await runtimeMod.ensurePluginsDir()
+          // js-yaml 依赖方,在使用点动态加载,避免进入入口静态闭包(NFR-2)
+          // 加载失败不拖垮整个扩展初始化:降级为抛错桩,插件调用 yamlLoad 时得到明确错误
+          let yamlLoad: (raw: string) => any
+          try {
+            yamlLoad = (await import('js-yaml')).load
+          } catch (e) {
+            console.error('[扩展] js-yaml 动态加载失败,yamlLoad 降级为抛错桩', e)
+            yamlLoad = () => { throw new Error('js-yaml 加载失败,YAML 解析不可用') }
+          }
           pluginRuntime = pluginRuntimeHostMod.initPluginRuntime({
             getStore: () => store,
             getEditor: () => editor,
@@ -8881,80 +9053,40 @@ function bindEvents() {
         if (isF12 || isCtrlShiftI) { e.preventDefault(); try { (getCurrentWebview() as any).openDevtools() } catch {} }
       })
     } catch {}
-    // 便签模式检测：检查启动参数中是否有 --sticky-note
-    let isStickyNoteStartup = false
-    try {
-      const cliArgs = await invoke<string[]>('get_cli_args')
-      const stickyIndex = (cliArgs || []).findIndex(a => a === '--sticky-note')
-      if (stickyIndex >= 0) {
-        const stickyFilePath = cliArgs[stickyIndex + 1]
-        if (stickyFilePath && typeof stickyFilePath === 'string') {
-          isStickyNoteStartup = true
-          // 延迟执行，确保 UI 初始化完成
-          setTimeout(async () => {
-            try { await enterStickyNoteMode(stickyFilePath) } catch (e) {
-              console.error('[便签模式] 进入便签模式失败:', e)
-            }
-          }, 300)
+    // 便签模式进入：启动参数检测已前置到 reveal 前（窗口几何组依赖其结果），
+    // 此处仅按原时序延迟进入便签模式，确保 UI 初始化完成
+    if (isStickyNoteStartup && stickyNoteStartupPath) {
+      const stickyFilePath = stickyNoteStartupPath
+      setTimeout(async () => {
+        try { await enterStickyNoteMode(stickyFilePath) } catch (e) {
+          console.error('[便签模式] 进入便签模式失败:', e)
         }
-      }
-    } catch (e) {
-      console.warn('[便签模式] 检测启动参数失败:', e)
+      }, 300)
     }
 
-    // 非便签模式启动时，检查是否有便签前保存的状态需要恢复（若存在则恢复并清除记录），并将窗口居中
-    if (!isStickyNoteStartup) {
-      // 1) 若存在便签前窗口状态，先恢复
-      try { await restoreWindowStateBeforeSticky() } catch {}
-      // 2) 兜底：窗口过小则拉回 960x640，避免残留便签尺寸
-      try { await windowPlacementApi.ensureMinWindowSize() } catch {}
-      // 3) 恢复专注模式状态（从 Store 读取；若未开启则兜底重置，防止异常无标题栏状态）
-      try {
-        const savedFocusMode = await getFocusMode(store)
-        if (savedFocusMode) {
-          await toggleFocusMode(true, store)
-        } else {
-          await resetFocusModeDecorations()
-        }
-      } catch {}
-      // 4) 统一将窗口居中显示，避免位置跑偏
-      try { await windowPlacementApi.centerWindow() } catch {}
-
-      // 移除透明度 CSS 变量，确保主窗口不透明
-      try { document.documentElement.style.removeProperty('--sticky-opacity') } catch {}
-
-      // 恢复源码模式状态（如果有便签前记录）
-      try {
-        if (store) {
-          const editorState = await (store as any).get('editorModeBeforeSticky') as { mode: string; wysiwygV2Active: boolean } | null
-          if (editorState) {
-            // 恢复源码模式，并清除记录
-            // 注意：这里只是恢复状态变量，UI 切换会在后续文件打开时自动处理
-            mode = editorState.mode as 'edit' | 'preview'
-            // wysiwygV2Active 的恢复需要等 UI 加载完成后处理，这里只清除记录
-            await (store as any).delete('editorModeBeforeSticky')
-            await (store as any).save()
-          }
-        }
-      } catch (e) {
-        console.warn('[启动] 恢复源码模式状态失败:', e)
-      }
-    }
+    // 窗口几何恢复（restoreWindowStateBeforeSticky / ensureMinWindowSize / focusMode /
+    // centerWindow）已前置到 reveal 前的阶段A 并行组（NFR-1：禁止后移至 show 之后）
 
     // 兜底：主动询问后端是否有"默认程序/打开方式"传入的待打开路径
     if (!handledStartupOpenPath) {
       try {
-        const path = await invoke<string | null>('get_pending_open_path')
+        // 优先复用启动时单次调用的缓存值；缓存为空（take 后槽位为空恒返回 null，
+        // 安全）时补捞一次——覆盖 reveal 后 OS 晚投递/第二实例晚到的待打开路径（外审 T1-R1）
+        let path = startupPendingOpenPath
+        if (!path) {
+          try { path = await invoke<string | null>('get_pending_open_path') } catch {}
+        }
         if (path && typeof path === 'string') {
           handledStartupOpenPath = true
           void openFile2(path)
         } else {
           // macOS 兜底：通过后端命令读取启动参数，获取 Finder "打开方式"传入的文件
+          // （get_cli_args 幂等，复用启动时缓存的 startupCliArgs，不再二次 IPC）
           try {
             const ua = navigator.userAgent || ''
             const isMac = /Macintosh|Mac OS X/i.test(ua)
             if (isMac) {
-              const args = await invoke<string[]>('get_cli_args')
+              const args = startupCliArgs
               const pick = (args || []).find((a) => {
                 if (!a || typeof a !== 'string') return false
                 const low = a.toLowerCase()

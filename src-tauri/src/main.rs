@@ -4,9 +4,76 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, Emitter, State};
+use std::sync::atomic::Ordering;
 // 全局共享：保存通过“打开方式/默认程序”传入且可能早于前端监听的文件路径
 #[derive(Default)]
 struct PendingOpenPath(std::sync::Mutex<Option<String>>);
+
+// 应用级共享状态：T7 用于窗口显示的 exactly-once 标记；T8 在此基础上扩展
+// http client / s3 client 缓存等字段，字段保持 pub 便于直接扩展。
+pub struct AppState {
+  pub window_shown: std::sync::atomic::AtomicBool,
+  // T8 共享 reqwest client：默认配置（无 timeout/redirect/代理/TLS 等特殊项）。
+  // 逐点审计结论（FR-4）：原 4 个 Client::builder() 调用点均只配置了 timeout/User-Agent，
+  // 可 per-request 复原，已改用 state.http + RequestBuilder::timeout/.header：
+  //   http_xmlrpc_post(.timeout 20s)、flymd_piclist_upload(.timeout 30s)、
+  //   check_update(UA flymd-updater + 10s)、download_file(UA flymd-updater + 120s)。
+  // 例外（保留独立 client，无法 per-request 复原，与 ai_novel 同列）：
+  //   ai_novel_api —— connect_timeout / http1_only / pool_max_idle_per_host(0) 均为 client 级配置。
+  pub http: reqwest::Client,
+  // T8 S3 client 缓存：key = "endpoint|region|ak|sk|pathStyle" 组合字符串（不哈希，免碰撞），
+  // value = (SdkConfig, s3::Client)。锁仅保护查/插两个短临界区，禁止持锁跨 await。
+  pub s3_cache: std::sync::Mutex<std::collections::HashMap<String, (aws_config::SdkConfig, aws_sdk_s3::Client)>>,
+}
+
+/// 纯逻辑：把 shown 从 false 原子翻转为 true，仅「首次」调用返回 true。
+/// compare_exchange exactly-once 语义：并发/重复调用下 show+set_focus 至多发生一次。
+fn try_mark_shown(shown: &std::sync::atomic::AtomicBool) -> bool {
+  shown
+    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+    .is_ok()
+}
+
+/// show + set_focus 的窗口抽象：ready 命令拿到的是 `Window`，setup 兜底线程
+/// 经 `get_webview_window` 拿到的是 `WebviewWindow`，二者在此复用同一封装。
+trait RevealOnce {
+  fn show_and_focus(&self);
+}
+
+impl RevealOnce for tauri::Window {
+  fn show_and_focus(&self) {
+    let _ = self.show();
+    let _ = self.set_focus();
+  }
+}
+
+impl RevealOnce for tauri::WebviewWindow {
+  fn show_and_focus(&self) {
+    // show 失败必须留痕：否则前端与兜底双通道都失败时窗口静默不可见，无法排查
+    if let Err(e) = self.show() { eprintln!("[flymd] window show failed: {e}"); }
+    let _ = self.set_focus();
+  }
+}
+
+/// 前端异常时的兜底显示延迟（各平台兜底线程共用）。
+const SHOW_FALLBACK_MS: u64 = 2500;
+
+/// 薄封装：只有赢得首次显示权的调用方才真正 show + set_focus。
+fn reveal_window_once(window: &impl RevealOnce, shown: &std::sync::atomic::AtomicBool) -> bool {
+  if !try_mark_shown(shown) {
+    return false;
+  }
+  window.show_and_focus();
+  true
+}
+
+/// 前端首帧就绪后的第二显示通道（幂等）：与 setup 兜底线程共享同一
+/// AppState.window_shown，前端先到时由本命令显示，前端异常时由 setup
+/// 2500ms 兜底，二者至多生效一次。
+#[tauri::command]
+fn flymd_window_ready(window: tauri::Window, state: State<'_, AppState>) {
+  reveal_window_once(&window, &state.window_shown);
+}
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use chrono::{DateTime, Utc};
@@ -553,8 +620,34 @@ struct PresignResp {
   public_url: String,
 }
 
+/// S3 客户端缓存上限：超出即全清重建（防凭据/端点反复变更导致缓存无界增长）。
+const S3_CACHE_MAX_ENTRIES: usize = 32;
+
+/// S3 缓存 key = 有效 endpoint|region|ak|sk 指纹|pathStyle（两处调用点共用此函数防漂移）。
+/// SK 不明文入 key：DefaultHasher 64 位指纹（进程内缓存，无需跨版本稳定）；
+/// endpoint 取 trim 后有效值（空串 = 未自定义），保证语义相同的配置命中同一条目。
+fn s3_cache_key(endpoint: &Option<String>, region: &str, ak: &str, sk: &str, path_style: bool) -> String {
+  let endpoint_eff = endpoint.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("");
+  let sk_fp = {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(sk, &mut h);
+    format!("{:016x}", std::hash::Hasher::finish(&h))
+  };
+  format!("{}|{}|{}|{}|{}", endpoint_eff, region, ak, sk_fp, path_style)
+}
+
+/// 有界插入（调用方持有锁）：≥ S3_CACHE_MAX_ENTRIES 时全清再插，重建代价可忽略。
+fn s3_cache_insert_bounded(
+  cache: &mut std::collections::HashMap<String, (aws_config::SdkConfig, aws_sdk_s3::Client)>,
+  key: String,
+  val: (aws_config::SdkConfig, aws_sdk_s3::Client),
+) {
+  if cache.len() >= S3_CACHE_MAX_ENTRIES { cache.clear(); }
+  cache.insert(key, val);
+}
+
 #[tauri::command]
-async fn upload_to_s3(req: UploadReq) -> Result<UploadResp, String> {
+async fn upload_to_s3(req: UploadReq, state: State<'_, AppState>) -> Result<UploadResp, String> {
   // 使用 AWS SDK for Rust 直传，行为与 PicList（SDK）一致；仅构建机需工具链，用户零依赖。
   use aws_sdk_s3 as s3;
   use aws_config::meta::region::RegionProviderChain;
@@ -563,26 +656,55 @@ async fn upload_to_s3(req: UploadReq) -> Result<UploadResp, String> {
   use s3::primitives::ByteStream;
 
   let region_str = req.region.clone().unwrap_or_else(|| "us-east-1".to_string());
-  let region = Region::new(region_str.clone());
-  let region_provider = RegionProviderChain::first_try(region.clone());
-  let base_conf = aws_config::defaults(aws_config::BehaviorVersion::latest())
-    .region(region_provider)
-    .load()
-    .await;
 
-  let creds = s3::config::Credentials::new(
-    req.access_key_id.clone(),
-    req.secret_access_key.clone(),
-    None,
-    None,
-    "flymd",
-  );
-  let mut conf_builder = s3::config::Builder::from(&base_conf)
-    .credentials_provider(creds)
-    .force_path_style(req.force_path_style);
-  if let Some(ep) = &req.endpoint { if !ep.trim().is_empty() { conf_builder = conf_builder.endpoint_url(ep.trim()); } }
-  let conf = conf_builder.build();
-  let client = s3::Client::from_conf(conf);
+  // region 取默认值后的有效值；key 构造统一走 s3_cache_key（两处调用点防漂移）
+  let cache_key = s3_cache_key(&req.endpoint, &region_str, &req.access_key_id, &req.secret_access_key, req.force_path_style);
+
+  // 查缓存：锁仅保护 map 查询这一个短临界区，guard 在块结束即释放，绝不持锁跨 await
+  let cached = {
+    let cache = state
+      .s3_cache
+      .lock()
+      .map_err(|e| format!("s3 cache lock error: {e}"))?;
+    cache.get(&cache_key).cloned()
+  };
+
+  let (_base_conf, client) = match cached {
+    Some(tuple) => tuple,
+    None => {
+      // 未命中：释放锁后构建（load().await 不得持锁），完成后再短暂加锁插入
+      let region = Region::new(region_str.clone());
+      let region_provider = RegionProviderChain::first_try(region.clone());
+      let base_conf = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(region_provider)
+        .load()
+        .await;
+
+      let creds = s3::config::Credentials::new(
+        req.access_key_id.clone(),
+        req.secret_access_key.clone(),
+        None,
+        None,
+        "flymd",
+      );
+      let mut conf_builder = s3::config::Builder::from(&base_conf)
+        .credentials_provider(creds)
+        .force_path_style(req.force_path_style);
+      if let Some(ep) = &req.endpoint { if !ep.trim().is_empty() { conf_builder = conf_builder.endpoint_url(ep.trim()); } }
+      let conf = conf_builder.build();
+      let client = s3::Client::from_conf(conf);
+      let tuple = (base_conf, client);
+      {
+        let mut cache = state
+          .s3_cache
+          .lock()
+          .map_err(|e| format!("s3 cache lock error: {e}"))?;
+        // 并发 miss 时后者覆盖前者，结果等价；有界插入（超限全清重建）
+        s3_cache_insert_bounded(&mut cache, cache_key, tuple.clone());
+      }
+      tuple
+    }
+  };
 
   let mut put = client
     .put_object()
@@ -804,37 +926,67 @@ async fn flymd_list_uploaded_images(app: tauri::AppHandle) -> Result<Vec<Uploade
 }
 
 #[tauri::command]
-async fn flymd_delete_uploaded_image(app: tauri::AppHandle, req: UploaderDeleteReq) -> Result<(), String> {
+async fn flymd_delete_uploaded_image(app: tauri::AppHandle, req: UploaderDeleteReq, state: State<'_, AppState>) -> Result<(), String> {
   // 1) 使用当前配置删除远端对象
   use aws_config::meta::region::RegionProviderChain;
   use aws_sdk_s3 as s3;
   use s3::config::Region;
 
   let region_str = req.region.clone().unwrap_or_else(|| "us-east-1".to_string());
-  let region = Region::new(region_str.clone());
-  let region_provider = RegionProviderChain::first_try(region.clone());
-  let base_conf = aws_config::defaults(aws_config::BehaviorVersion::latest())
-    .region(region_provider)
-    .load()
-    .await;
+  let path_style = req.force_path_style.unwrap_or(true);
 
-  let creds = s3::config::Credentials::new(
-    req.access_key_id.clone(),
-    req.secret_access_key.clone(),
-    None,
-    None,
-    "flymd",
-  );
-  let mut conf_builder = s3::config::Builder::from(&base_conf)
-    .credentials_provider(creds)
-    .force_path_style(req.force_path_style.unwrap_or(true));
-  if let Some(ep) = &req.endpoint {
-    if !ep.trim().is_empty() {
-      conf_builder = conf_builder.endpoint_url(ep.trim());
+  // 缓存 key 与 upload_to_s3 同一形态（统一走 s3_cache_key 防漂移）。
+  let cache_key = s3_cache_key(&req.endpoint, &region_str, &req.access_key_id, &req.secret_access_key, path_style);
+
+  // 查缓存：锁仅保护 map 查询这一个短临界区，guard 在块结束即释放，绝不持锁跨 await
+  let cached = {
+    let cache = state
+      .s3_cache
+      .lock()
+      .map_err(|e| format!("s3 cache lock error: {e}"))?;
+    cache.get(&cache_key).cloned()
+  };
+
+  let (_base_conf, client) = match cached {
+    Some(tuple) => tuple,
+    None => {
+      // 未命中：释放锁后构建（load().await 不得持锁），完成后再短暂加锁插入
+      let region = Region::new(region_str.clone());
+      let region_provider = RegionProviderChain::first_try(region.clone());
+      let base_conf = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(region_provider)
+        .load()
+        .await;
+
+      let creds = s3::config::Credentials::new(
+        req.access_key_id.clone(),
+        req.secret_access_key.clone(),
+        None,
+        None,
+        "flymd",
+      );
+      let mut conf_builder = s3::config::Builder::from(&base_conf)
+        .credentials_provider(creds)
+        .force_path_style(path_style);
+      if let Some(ep) = &req.endpoint {
+        if !ep.trim().is_empty() {
+          conf_builder = conf_builder.endpoint_url(ep.trim());
+        }
+      }
+      let conf = conf_builder.build();
+      let client = s3::Client::from_conf(conf);
+      let tuple = (base_conf, client);
+      {
+        let mut cache = state
+          .s3_cache
+          .lock()
+          .map_err(|e| format!("s3 cache lock error: {e}"))?;
+        // 并发 miss 时后者覆盖前者，结果等价；有界插入（超限全清重建）
+        s3_cache_insert_bounded(&mut cache, cache_key, tuple.clone());
+      }
+      tuple
     }
-  }
-  let conf = conf_builder.build();
-  let client = s3::Client::from_conf(conf);
+  };
 
   client
     .delete_object()
@@ -1493,13 +1645,12 @@ struct XmlHttpReq {
 }
 
 #[tauri::command]
-async fn http_xmlrpc_post(req: XmlHttpReq) -> Result<String, String> {
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_secs(20))
-    .build()
-    .map_err(|e| format!("client error: {e}"))?;
-  let res = client
+async fn http_xmlrpc_post(req: XmlHttpReq, state: State<'_, AppState>) -> Result<String, String> {
+  // 共享 client：原 builder 仅 .timeout(20s)，此处用 RequestBuilder::timeout 复原（见 AppState 注释审计）
+  let res = state
+    .http
     .post(&req.url)
+    .timeout(Duration::from_secs(20))
     .header("Content-Type", "text/xml; charset=UTF-8")
     .header("Accept", "text/xml, */*;q=0.1")
     .header("User-Agent", "flymd-typecho-publisher/0.1")
@@ -1620,7 +1771,8 @@ async fn ai_novel_api(req: AiNovelApiReq) -> Result<serde_json::Value, String> {
         return Err(format!("send error: {le:?}"));
       }
 
-      std::thread::sleep(Duration::from_millis(ms));
+      // async 上下文中用 tokio sleep，避免阻塞 runtime worker 线程（原 std::thread::sleep 会卡住整个 worker）
+      tokio::time::sleep(Duration::from_millis(ms)).await;
       let client2 = make_client().map_err(|e2| format!("client error: {e2:?}"))?;
       match build_rb(&client2).send().await {
         Ok(r2) => {
@@ -1687,7 +1839,7 @@ struct PicListUploadReq {
 }
 
 #[tauri::command]
-async fn flymd_piclist_upload(req: PicListUploadReq) -> Result<String, String> {
+async fn flymd_piclist_upload(req: PicListUploadReq, state: State<'_, AppState>) -> Result<String, String> {
   use serde_json::Value;
   use url::form_urlencoded;
 
@@ -1723,13 +1875,11 @@ async fn flymd_piclist_upload(req: PicListUploadReq) -> Result<String, String> {
     "list": [req.path]
   });
 
-  let client = reqwest::Client::builder()
-    .timeout(Duration::from_secs(30))
-    .build()
-    .map_err(|e| format!("build client error: {e}"))?;
-
-  let res = client
+  // 共享 client：原 builder 仅 .timeout(30s)，此处用 RequestBuilder::timeout 复原（见 AppState 注释审计）
+  let res = state
+    .http
     .post(&url)
+    .timeout(Duration::from_secs(30))
     .json(&payload)
     .send()
     .await
@@ -2472,11 +2622,18 @@ fn main() {
       office_preview_cache_path,
       docx_to_markdown,
       office_to_pdf,
-      read_file_bytes_any
+      read_file_bytes_any,
+      flymd_window_ready
     ])
     .setup(|app| {
       init_startup_log(&app.handle());
       write_startup_log("[setup] begin");
+
+      app.manage(AppState {
+        window_shown: std::sync::atomic::AtomicBool::new(false),
+        http: reqwest::Client::builder().build()?,
+        s3_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+      });
 
       // 处理 `flymd path/to/file.md` 以及文件关联传入的启动参数。
       if let Some(p) = startup_open_path_from_args() {
@@ -2501,14 +2658,21 @@ fn main() {
           // 这里只保留一个兜底，防止前端异常时窗口永远不可见。
           let win_clone = win.clone();
           std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(2500));
+            std::thread::sleep(std::time::Duration::from_millis(SHOW_FALLBACK_MS));
             let _ = win_clone.show();
           });
         }
         #[cfg(not(target_os = "windows"))]
         {
-          let _ = win.show();
-          let _ = win.set_focus();
+          // Linux/macOS：显示时机交给前端 revealMainWindowOnce（首帧后 show+set_focus）。
+          // 这里只起 SHOW_FALLBACK_MS 兜底线程：前端异常时保证窗口最终可见；
+          // 与 flymd_window_ready 命令共享 AppState.window_shown 的 exactly-once 语义。
+          let win_clone = win.clone();
+          std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(SHOW_FALLBACK_MS));
+            let state = win_clone.state::<AppState>();
+            reveal_window_once(&win_clone, &state.window_shown);
+          });
         }
       }
 
@@ -2701,7 +2865,7 @@ fn match_windows_asset(assets: &[GhAsset]) -> Option<&GhAsset> {
 }
 
 #[tauri::command]
-async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) -> Result<CheckUpdateResp, String> {
+async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, state: State<'_, AppState>) -> Result<CheckUpdateResp, String> {
   // 当前版本：与 tauri.conf.json 一致（构建时可由环境注入，这里直接读取 Cargo.toml 同步版本）
   let current = env!("CARGO_PKG_VERSION").to_string();
   let (os_tag, _arch_tag) = os_arch_tag();
@@ -2709,13 +2873,13 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
   // 节流留空：简单实现始终请求（前端可决定调用频率）
 
   let url = "https://api.github.com/repos/flyhunterl/flymd/releases";
-  let client = reqwest::Client::builder()
-    .user_agent("flymd-updater")
-    .timeout(Duration::from_secs(10))
-    .build()
-    .map_err(|e| format!("build client error: {e}"))?;
-  let resp = client
+  // 共享 client：原 builder 为 .user_agent("flymd-updater") + .timeout(10s)，
+  // 均可用 RequestBuilder::header("User-Agent")/.timeout 复原（见 AppState 注释审计）
+  let resp = state
+    .http
     .get(url)
+    .timeout(Duration::from_secs(10))
+    .header("User-Agent", "flymd-updater")
     .header("Accept", "application/vnd.github+json")
     .send().await.map_err(|e| format!("request error: {e}"))?;
   if !resp.status().is_success() { return Err(format!("http status {}", resp.status())); }
@@ -2803,12 +2967,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>) ->
 
 #[tauri::command]
 #[allow(unused_assignments)]
-async fn download_file(url: String, use_proxy: Option<bool>) -> Result<String, String> {
-  let client = reqwest::Client::builder()
-    .user_agent("flymd-updater")
-    .timeout(Duration::from_secs(120))
-    .build()
-    .map_err(|e| format!("build client error: {e}"))?;
+async fn download_file(url: String, use_proxy: Option<bool>, state: State<'_, AppState>) -> Result<String, String> {
 
   // 解析文件名
   let (direct, proxy) = {
@@ -2837,9 +2996,14 @@ async fn download_file(url: String, use_proxy: Option<bool>) -> Result<String, S
     (direct, proxy)
   };
 
-  // 下载函数
+  // 下载函数（共享 client：原 builder 为 .user_agent("flymd-updater") + .timeout(120s)，
+  // 均在此用 RequestBuilder::header("User-Agent")/.timeout 复原，见 AppState 注释审计）
   async fn do_fetch(client: &reqwest::Client, url: &url::Url, save: &std::path::Path) -> Result<(), String> {
-    let resp = client.get(url.clone()).send().await.map_err(|e| format!("request error: {e}"))?;
+    let resp = client
+      .get(url.clone())
+      .timeout(Duration::from_secs(120))
+      .header("User-Agent", "flymd-updater")
+      .send().await.map_err(|e| format!("request error: {e}"))?;
     if !resp.status().is_success() { return Err(format!("http status {}", resp.status())); }
     let mut f = std::fs::File::create(save).map_err(|e| format!("create file error: {e}"))?;
     let mut stream = resp.bytes_stream();
@@ -2854,13 +3018,13 @@ async fn download_file(url: String, use_proxy: Option<bool>) -> Result<String, S
   let want_proxy = use_proxy.unwrap_or(false);
   let mut last_err: Option<String> = None;
   if want_proxy {
-    if let Err(e) = do_fetch(&client, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
+    if let Err(e) = do_fetch(&state.http, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
     // 代理失败 -> 尝试直连
-    if let Err(e) = do_fetch(&client, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
+    if let Err(e) = do_fetch(&state.http, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
   } else {
-    if let Err(e) = do_fetch(&client, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
+    if let Err(e) = do_fetch(&state.http, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
     // 直连失败 -> 尝试代理
-    if let Err(e) = do_fetch(&client, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
+    if let Err(e) = do_fetch(&state.http, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
   }
   Err(last_err.unwrap_or_else(|| "download failed".into()))
 }
@@ -4374,5 +4538,57 @@ mod delete_guard_tests {
       let _ = std::fs::remove_dir_all(root.parent().unwrap());
       assert!(r.is_err(), "指向库外的符号链接必须被拒绝: {:?}", r);
     }
+  }
+}
+
+/// try_mark_shown 的 exactly-once 语义验证（T7 窗口显示时机的可测纯逻辑）。
+///
+/// Tauri Window 无法在单测中构造，因此可测单元是 try_mark_shown；
+/// reveal_window_once / flymd_window_ready / setup 兜底线程都只是它的薄封装。
+#[cfg(test)]
+mod window_reveal_tests {
+  use super::*;
+  use std::sync::atomic::AtomicBool;
+
+  #[test]
+  fn first_call_wins_second_call_loses() {
+    let shown = AtomicBool::new(false);
+    assert!(try_mark_shown(&shown), "首次调用应赢得显示权");
+    assert!(!try_mark_shown(&shown), "第二次调用必须返回 false");
+    assert!(!try_mark_shown(&shown), "第三次调用仍必须返回 false");
+  }
+
+  #[test]
+  fn flag_transitions_false_to_true_exactly_once() {
+    let shown = AtomicBool::new(false);
+    assert_eq!(shown.load(Ordering::SeqCst), false);
+    assert!(try_mark_shown(&shown));
+    assert_eq!(shown.load(Ordering::SeqCst), true, "首次成功后 flag 必须为 true");
+    assert!(!try_mark_shown(&shown));
+    assert_eq!(shown.load(Ordering::SeqCst), true, "失败后 flag 仍保持 true");
+  }
+
+  #[test]
+  fn concurrent_calls_have_single_winner() {
+    let shown = std::sync::Arc::new(AtomicBool::new(false));
+    let winners = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut handles = Vec::new();
+    for _ in 0..16 {
+      let shown = shown.clone();
+      let winners = winners.clone();
+      handles.push(std::thread::spawn(move || {
+        if try_mark_shown(&shown) {
+          winners.fetch_add(1, Ordering::SeqCst);
+        }
+      }));
+    }
+    for h in handles {
+      h.join().unwrap();
+    }
+    assert_eq!(
+      winners.load(Ordering::SeqCst),
+      1,
+      "16 个并发调用中必须恰好 1 个赢家（exactly-once）"
+    );
   }
 }

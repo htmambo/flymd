@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { splitYamlFrontMatter, parseFrontMatterMeta } from './frontMatter'
+import { splitYamlFrontMatter } from './frontMatter'
+import { parseFrontMatterMeta } from './frontMatterMeta'
 
 const BOM = '﻿'
 

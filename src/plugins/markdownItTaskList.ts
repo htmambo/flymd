@@ -6,6 +6,21 @@
 //   - 这两个拼起来就是"任务列表"完整用例,作为独立插件模块最自然
 
 /**
+ * 任务列表预检:全文是否存在"可能是任务列表"的行。
+ * - 覆盖 `- [ ]` `+ [ ]` `* [ ]` `1. [ ]` `1) [ ]`、任意嵌套缩进及 blockquote(`>`) 前缀
+ * - 必须是 scanTaskList 匹配的严格超集:偏宽无害(多跑一次扫描,结果仍是 []),
+ *   偏窄漏扫会让 renderPreview 跳过 scanTaskList 并错误清空 _taskMapLast,违反输出等价性
+ * - 不理解围栏代码块:``` 内的伪任务行会命中预检(偏宽),scanTaskList 自身的 fence 语义保持不变
+ */
+export function hasTaskListCandidate(md: string): boolean {
+  try {
+    return /^(?:\s|>)*(?:[-*+]|\d+[.)])\s+\[[ xX]\]/m.test(String(md || ''))
+  } catch {
+    return false
+  }
+}
+
+/**
  * 扫描 markdown 文本里所有 task list 复选框,返回编辑器坐标位置。
  * - 支持 `- [ ]` `+ [ ]` `* [ ]` `1. [ ]` 形式
  * - 跳过围栏代码块内部

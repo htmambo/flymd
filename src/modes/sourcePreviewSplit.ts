@@ -1,4 +1,5 @@
 // 源码 + 阅读模式分屏布局（左侧源码，右侧阅读预览）
+import { createRafThrottle } from '../utils/rafThrottle'
 // 设计原则：
 // - 仅在源码模式（mode === 'edit'）且非所见/非便签模式下启用
 // - 从阅读模式开启时，自动切回源码再进入分屏
@@ -273,13 +274,15 @@ function syncPreviewScrollFromEditor(editor: HTMLTextAreaElement, preview: HTMLD
 
 function bindScrollSync(deps: SplitDeps): void {
   const { editor, preview } = deps
-  editor.addEventListener('scroll', () => {
+  // 滚动事件一帧内可能触发多次：leading 立即同步，trailing 用最新位置补发一次
+  const throttledSync = createRafThrottle(() => {
     if (!splitPreviewEnabled) return
     if (!isSupportedContext()) return
     try {
       syncPreviewScrollFromEditor(editor, preview)
     } catch {}
   })
+  editor.addEventListener('scroll', throttledSync, { passive: true })
 }
 
 // 文本内容变化时的预览同步（仅在分屏 + 源码模式下生效）

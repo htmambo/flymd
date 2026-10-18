@@ -2,12 +2,14 @@
 //
 // 设计:
 //   - 工厂 createDotBlink({ intervalMs }) → { start(), stop(), isOn() }
-//   - 闭包持有 _timer(interval id) / _on(可见性状态)
-//   - intervalMs 注入便于测试用 fake timer
-//   - start() idempotent:已有 timer 时早返
-//   - 闪烁由 CSS 动画驱动,本 timer 仅维护状态,按需扩展
+//   - 闪烁由 CSS 动画驱动,本模块只维护"开启/关闭"状态
+//   - 历史上的 setInterval 空转已移除:interval 回调仅翻转布尔,
+//     纯 CPU/定时器开销且无任何驱动 CSS 的副作用(FR-5)
+//   - intervalMs 保留在签名中仅为兼容既有调用方,不再使用
+//   - start() idempotent:已开启时早返
 
 export interface DotBlinkDeps {
+  /** 兼容保留:闪烁由 CSS 动画驱动,不再使用 JS interval,此值被忽略 */
   intervalMs: number
 }
 
@@ -18,29 +20,20 @@ export interface DotBlinkApi {
 }
 
 export function createDotBlink(deps: DotBlinkDeps): DotBlinkApi {
-  const { intervalMs } = deps
-  let timer: number | null = null
+  // intervalMs 仅为兼容旧签名保留,刻意不使用
+  void deps
+  let started = false
   let on = true
 
   return {
     start(): void {
-      try {
-        if (timer != null) return
-        on = true
-        timer = window.setInterval(() => {
-          on = !on
-          // 闪烁由 CSS 动画驱动；此计时器仅用于保持状态，可按需扩展
-        }, intervalMs)
-      } catch {}
+      if (started) return
+      started = true
+      on = true
     },
     stop(): void {
-      try {
-        if (timer != null) {
-          clearInterval(timer)
-          timer = null
-        }
-        on = false
-      } catch {}
+      started = false
+      on = false
     },
     isOn(): boolean {
       return on

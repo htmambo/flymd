@@ -20,7 +20,7 @@ tauri-plugin-window-state = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-http = { version = "2", features = ["unsafe-headers"] }
 tauri-plugin-clipboard-manager = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 percent-encoding = "2"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "multipart"] }

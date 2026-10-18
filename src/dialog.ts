@@ -4,7 +4,6 @@
  */
 
 import { t } from './i18n'
-import { buildHunks, copyHunkToRight, copyHunkToLeft, nextHunkId, countHunks, rightRangeOf } from './core/diffMerge'
 import { logDebug } from './core/logger'
 
 // ============================================================
@@ -132,11 +131,13 @@ export function showFileWatchConflictDialog(filePath: string): Promise<FileWatch
  * - 关闭(取消 / Esc / 遮罩):resolve({ choice: 'cancel' })
  * - 应用:resolve({ choice: 'applyMerged', mergedContent: textarea.value })
  */
-export function showFileWatchDiffDialog(
+export async function showFileWatchDiffDialog(
   filePath: string,
   external: string,
   local: string,
 ): Promise<FileWatchDiffResult> {
+  // diffMerge 为纯函数模块(仅依赖 diff),在使用点动态加载,避免进入入口静态闭包(NFR-2)
+  const { buildHunks, copyHunkToRight, copyHunkToLeft, nextHunkId, countHunks, rightRangeOf } = await import('./core/diffMerge')
   return new Promise((resolve) => {
     // 防御性 try/catch:任何 throw 都会被捕获并打印到 console,避免弹窗静默失败
     try {
