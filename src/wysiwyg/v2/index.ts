@@ -51,6 +51,11 @@ let _lastMd = ''
 // 上次已通过 _onChange 通知外层的序列化结果；null = 本次 enable 尚未通知过。
 // 序列化值不变的事务（属性类/格式化抵消）跳过下游 _onChange（textarea 全量写 + 行号 O(n) diff 空跑）。
 let _lastNotifiedMd: string | null = null
+// 最新文档对象的"原始序列化"（未经本文件后处理管线）：供 math reparse 定时器免重复全文
+// 序列化复用；新鲜度由"文档对象引用相等"判定，引用不等一律回退 getMarkdown（防陈旧串
+// replaceAll 覆盖新编辑）。enable 时双双置 null。
+let _lastRawSerializedMd: string | null = null
+let _lastRawSerializedDoc: unknown = null
 let _imgObserver: MutationObserver | null = null
 let _overlayHost: HTMLDivElement | null = null
 // 注：曾计划用 MutationObserver 监听 ProseMirror 清除我们插入的元素，
@@ -531,6 +536,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   _suppressInitialUpdate = true
   _lastMd = content
   _lastNotifiedMd = null
+  _lastRawSerializedMd = null
+  _lastRawSerializedDoc = null
 
   const editor = await Editor.make()
     .config((ctx) => {
@@ -827,6 +834,12 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       // （老版本 listener API 曾有同名方法，新版本已合并到 updated）
       lm.updated((_ctx) => {
         if (_suppressInitialUpdate) return
+        // 捕获当前文档对象引用（C3）：与 markdownUpdated 的原始序列化配对，
+        // 供 reparse 定时器做新鲜度判定；两处各捕获一次，先后顺序无关
+        try {
+          const v = (_editor as any)?.ctx?.get?.(editorViewCtx)
+          _lastRawSerializedDoc = v?.state?.doc ?? null
+        } catch {}
         // scheduleMermaidRender() // 已由 Milkdown 插件处理
         try { scheduleMathBlockReparse() } catch {}
       })
@@ -834,6 +847,12 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     lm.markdownUpdated((_ctx, markdown) => {
       if (_suppressInitialUpdate) return
       const md0 = String(markdown)
+      // 记录原始序列化（C3，reparse 定时器复用）；文档引用同帧重捕获，保证成对更新
+      _lastRawSerializedMd = md0
+      try {
+        const v0 = (_editor as any)?.ctx?.get?.(editorViewCtx)
+        _lastRawSerializedDoc = v0?.state?.doc ?? null
+      } catch {}
       // 统一 Windows/UNC/含空格路径的图片写法：在 Markdown 中为目标包上尖括号 <...>
       // 快跳（超集条件）：正则必需的 '](' 不存在时 pass 必为 no-op，省一次全文正则扫描
       const md2 = !md0.includes('](') ? md0 : (() => {
@@ -1857,23 +1876,68 @@ function getCodeCopyText(pre: HTMLElement): string | null {
   return raw
 }
 
-function positionCodeCopyWrap(pre: HTMLElement, wrap: HTMLDivElement, rootRc: DOMRect) {
+// —— C1（P1-12）：定位拆成"读测量 / 写应用"两阶段 ——
+// 原实现逐 pre 交替"读 getBoundingClientRect → 写 display/left/top"，每个 pre 触发一次
+// 强制 reflow；scroll 每帧全量刷新时大文档 = 每帧 N 次 reflow。两阶段后读阶段零写 DOM，
+// 整帧只 flush 一次布局，定位输出与原内联计算逐字节等价。
+interface CodeCopyPlacement {
+  pre: HTMLElement
+  /** 既有且仍在文档中的 wrap；null = 应用阶段需新建 */
+  wrap: HTMLDivElement | null
+  preRc: DOMRect
+  visible: boolean
+  top: number
+  copyText: string
+  /** 既有 wrap 的宽度（读阶段测得）；null = 新建 wrap，应用阶段补测 */
+  wrapW: number | null
+  /** 缩放按钮是否可见（读阶段判定，应用阶段只写） */
+  overflowable: boolean
+}
+
+function measureCodeCopyPlacement(
+  pre: HTMLElement,
+  wrap: HTMLDivElement | null,
+  rootRc: DOMRect,
+): CodeCopyPlacement | null {
+  const copyText = getCodeCopyText(pre)
+  if (copyText == null) return null
+  const preRc = pre.getBoundingClientRect()
+  const base: CodeCopyPlacement = {
+    pre,
+    wrap,
+    preRc,
+    visible: false,
+    top: 0,
+    copyText,
+    wrapW: wrap ? (wrap.offsetWidth || 60) : null,
+    overflowable: false,
+  }
+  // 如果代码块完全在视口之上或之下，则隐藏对应按钮，避免在顶部堆积
+  if (preRc.bottom <= rootRc.top || preRc.top >= rootRc.bottom) {
+    return base
+  }
+  base.visible = true
+  base.top = Math.max(0, (preRc.top - rootRc.top) + 4)
   try {
-    const preRc = pre.getBoundingClientRect()
-    // 如果代码块完全在视口之上或之下，则隐藏对应按钮，避免在顶部堆积
-    if (preRc.bottom <= rootRc.top || preRc.top >= rootRc.bottom) {
+    const expanded = pre.classList.contains('code-expanded')
+    base.overflowable = expanded || isCodeContentClipped(pre)
+  } catch {}
+  return base
+}
+
+function applyCodeCopyPlacement(p: CodeCopyPlacement, wrap: HTMLDivElement, rootRc: DOMRect) {
+  try {
+    if (!p.visible) {
       wrap.style.display = 'none'
       return
     }
-    // 代码块在可视区域内时，确保按钮可见（flex 布局）
     wrap.style.display = 'flex'
-    // 使用整个容器的宽度（包含 Delete + Copy 按钮）
-    const wrapW = wrap.offsetWidth || 60
+    // 使用整个容器的宽度（包含 Delete + Copy 按钮）；新建 wrap 此刻补测（低频路径）
+    const wrapW = p.wrapW ?? (wrap.offsetWidth || 60)
     // 所见模式下滚动发生在内部 scrollView，pre 与 root 的相对位置已经包含滚动偏移
-    const left = Math.max(0, (preRc.left - rootRc.left) + Math.max(0, preRc.width - wrapW - 6))
-    const top = Math.max(0, (preRc.top - rootRc.top) + 4)
+    const left = Math.max(0, (p.preRc.left - rootRc.left) + Math.max(0, p.preRc.width - wrapW - 6))
     wrap.style.left = left + 'px'
-    wrap.style.top = top + 'px'
+    wrap.style.top = p.top + 'px'
   } catch {}
 }
 
@@ -1899,6 +1963,74 @@ function toggleWysiwygCodeExpand(view: any, pre: HTMLElement, btn: HTMLButtonEle
   } catch {}
 }
 
+// 构建单个 pre 的按钮组 wrap（Delete + Copy + Expand）；从刷新主循环抽出，逻辑原样保留
+function createCodeCopyWrap(pre: HTMLElement, copyText: string, ov: HTMLElement): HTMLDivElement {
+  const wrap = document.createElement('div')
+  wrap.className = 'ov-codecopy'
+  wrap.style.position = 'absolute'
+  wrap.style.pointerEvents = 'none'
+  wrap.style.zIndex = '8'
+  wrap.style.display = 'flex'
+  wrap.style.gap = '8px'
+  // Delete 按钮（左侧，需二次确认）
+  const delBtn = document.createElement('button')
+  delBtn.type = 'button'
+  delBtn.className = 'code-delete'
+  delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>'
+  delBtn.style.pointerEvents = 'auto'
+  ;(delBtn as any).__targetPre = pre
+  ;(delBtn as any).__deleteArmed = false
+  // 保存原始 SVG 图标用于重置
+  const delBtnOriginalHTML = delBtn.innerHTML
+  delBtn.addEventListener('click', (ev) => {
+    ev.preventDefault()
+    ev.stopPropagation()
+    const btn = ev.currentTarget as HTMLButtonElement
+    // 第一次点击只进入"待确认"状态，第二次点击才真正删除
+    if (!(btn as any).__deleteArmed) {
+      ;(btn as any).__deleteArmed = true
+      btn.textContent = '确认'
+      btn.classList.add('armed')
+      return
+    }
+    const targetPre = (btn as any).__targetPre as HTMLElement | null
+    if (targetPre) deleteWysiwygNodeByDom(targetPre, ['code_block'])
+  })
+  // 失焦时重置确认状态
+  delBtn.addEventListener('blur', () => {
+    if ((delBtn as any).__deleteArmed) {
+      ;(delBtn as any).__deleteArmed = false
+      delBtn.innerHTML = delBtnOriginalHTML
+      delBtn.classList.remove('armed')
+    }
+  })
+  wrap.appendChild(delBtn)
+  // Copy 按钮（右侧）
+  const btn = document.createElement('button')
+  btn.type = 'button'
+  btn.className = 'code-copy'
+  btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
+  btn.style.pointerEvents = 'auto'
+  ;(btn as any).__copyText = copyText
+  wrap.appendChild(btn)
+  // 缩放按钮（最右）：仅当内容超高（限高生效）或已展开时显示，点击切换限高/全高
+  const expandBtn = document.createElement('button')
+  expandBtn.type = 'button'
+  expandBtn.className = 'code-expand'
+  expandBtn.title = '全高显示代码块'
+  expandBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
+  expandBtn.style.pointerEvents = 'auto'
+  expandBtn.style.display = 'none'
+  expandBtn.addEventListener('click', (ev) => {
+    ev.preventDefault()
+    ev.stopPropagation()
+    try { toggleWysiwygCodeExpand(_pmView, pre, expandBtn as HTMLButtonElement) } catch {}
+  })
+  wrap.appendChild(expandBtn)
+  ov.appendChild(wrap)
+  return wrap
+}
+
 function refreshCodeCopyButtonsNow() {
   try {
     const host = getHost()
@@ -1907,92 +2039,32 @@ function refreshCodeCopyButtonsNow() {
     if (!host || !root || !ov) return
     const rootRc = root.getBoundingClientRect()
     const pres = Array.from(host.querySelectorAll('pre')) as HTMLElement[]
+    // —— 读阶段：一次性完成全部布局读（pre 矩形 / 既有 wrap 宽度 / 裁剪判定），期间零写 DOM ——
+    const plans: CodeCopyPlacement[] = []
     const alive = new Set<HTMLElement>()
     for (const pre of pres) {
-      const copyText = getCodeCopyText(pre)
-      if (copyText == null) continue
+      const existing = _codeCopyWraps.get(pre) || null
+      const existingWrap = existing && existing.parentElement ? existing : null
+      const plan = measureCodeCopyPlacement(pre, existingWrap, rootRc)
+      if (!plan) continue
       alive.add(pre)
-      let wrap = _codeCopyWraps.get(pre)
-      if (!wrap || !wrap.parentElement) {
-        wrap = document.createElement('div')
-        wrap.className = 'ov-codecopy'
-        wrap.style.position = 'absolute'
-        wrap.style.pointerEvents = 'none'
-        wrap.style.zIndex = '8'
-        wrap.style.display = 'flex'
-        wrap.style.gap = '8px'
-        // Delete 按钮（左侧，需二次确认）
-        const delBtn = document.createElement('button')
-        delBtn.type = 'button'
-        delBtn.className = 'code-delete'
-        delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>'
-        delBtn.style.pointerEvents = 'auto'
-        ;(delBtn as any).__targetPre = pre
-        ;(delBtn as any).__deleteArmed = false
-        // 保存原始 SVG 图标用于重置
-        const delBtnOriginalHTML = delBtn.innerHTML
-        delBtn.addEventListener('click', (ev) => {
-          ev.preventDefault()
-          ev.stopPropagation()
-          const btn = ev.currentTarget as HTMLButtonElement
-          // 第一次点击只进入"待确认"状态，第二次点击才真正删除
-          if (!(btn as any).__deleteArmed) {
-            ;(btn as any).__deleteArmed = true
-            btn.textContent = '确认'
-            btn.classList.add('armed')
-            return
-          }
-          const targetPre = (btn as any).__targetPre as HTMLElement | null
-          if (targetPre) deleteWysiwygNodeByDom(targetPre, ['code_block'])
-        })
-        // 失焦时重置确认状态
-        delBtn.addEventListener('blur', () => {
-          if ((delBtn as any).__deleteArmed) {
-            ;(delBtn as any).__deleteArmed = false
-            delBtn.innerHTML = delBtnOriginalHTML
-            delBtn.classList.remove('armed')
-          }
-        })
-        wrap.appendChild(delBtn)
-        // Copy 按钮（右侧）
-        const btn = document.createElement('button')
-        btn.type = 'button'
-        btn.className = 'code-copy'
-        btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>'
-        btn.style.pointerEvents = 'auto'
-        ;(btn as any).__copyText = copyText
-        wrap.appendChild(btn)
-        // 缩放按钮（最右）：仅当内容超高（限高生效）或已展开时显示，点击切换限高/全高
-        const expandBtn = document.createElement('button')
-        expandBtn.type = 'button'
-        expandBtn.className = 'code-expand'
-        expandBtn.title = '全高显示代码块'
-        expandBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>'
-        expandBtn.style.pointerEvents = 'auto'
-        expandBtn.style.display = 'none'
-        expandBtn.addEventListener('click', (ev) => {
-          ev.preventDefault()
-          ev.stopPropagation()
-          try { toggleWysiwygCodeExpand(_pmView, pre, expandBtn as HTMLButtonElement) } catch {}
-        })
-        wrap.appendChild(expandBtn)
-        ov.appendChild(wrap)
-        _codeCopyWraps.set(pre, wrap)
-      } else {
+      plans.push(plan)
+    }
+    // —— 写阶段：新建缺失 wrap → 更新 copyText → 应用定位/显隐；不再夹读 ——
+    for (const plan of plans) {
+      const wrap = plan.wrap || createCodeCopyWrap(plan.pre, plan.copyText, ov)
+      if (!plan.wrap) _codeCopyWraps.set(plan.pre, wrap)
+      else {
         const btn = wrap.querySelector('button.code-copy') as HTMLButtonElement | null
         if (btn) {
-          ;(btn as any).__copyText = copyText
+          ;(btn as any).__copyText = plan.copyText
         }
       }
-      positionCodeCopyWrap(pre, wrap, rootRc)
+      applyCodeCopyPlacement(plan, wrap, rootRc)
       // 刷新缩放按钮显隐：已展开时保持显示（供收回）；限高中内容超高才显示
       const expandBtn = wrap.querySelector('button.code-expand') as HTMLButtonElement | null
       if (expandBtn) {
-        try {
-          const expanded = pre.classList.contains('code-expanded')
-          const overflowable = expanded || isCodeContentClipped(pre)
-          expandBtn.style.display = overflowable ? '' : 'none'
-        } catch {}
+        expandBtn.style.display = plan.overflowable ? '' : 'none'
       }
     }
     for (const [pre, wrap] of Array.from(_codeCopyWraps.entries())) {
@@ -2212,7 +2284,19 @@ function scheduleMathBlockReparse() {
   _mathReparseTimer = window.setTimeout(async () => {
     if (_mathEditingActive) return // 浮层打开中:再次检查
     try {
-      const mdNow = await (_editor as any).action(getMarkdown())
+      // C3（P0-9 子集）：若当前文档对象与最后一次序列化时的文档对象是同一引用，
+      // 直接复用其原始序列化串，省去每次 reparse 的全文 getMarkdown（async action +
+      // remark 全文序列化）；引用不等（期间存在未经管线的变更）则回退原路径，绝不
+      // 用陈旧串 replaceAll 覆盖新编辑。
+      const mdNow = await (async () => {
+        try {
+          const v = (_editor as any)?.ctx?.get?.(editorViewCtx)
+          if (v?.state?.doc && _lastRawSerializedDoc === v.state.doc && typeof _lastRawSerializedMd === 'string') {
+            return _lastRawSerializedMd
+          }
+        } catch {}
+        return String(await (_editor as any).action(getMarkdown()) || '')
+      })()
       const current = stripStrongBoundaryGuard(String(mdNow || ''))
       if (/\$\$[\s\S]*?\$\$/m.test(current)) {
         // replaceAll 会用 tr.replace(0, docSize, ...) 重建整篇文档,旧光标被映射到

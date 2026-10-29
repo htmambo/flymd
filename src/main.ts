@@ -8813,8 +8813,15 @@ function bindEvents() {
     // 性能标记：首次渲染完成
     performance.mark('flymd-first-render')
     deferredStartupApi!.schedule()
-    // 在线公告（官网 announcements.json）：不阻塞启动，失败静默
-    try { const { initOnlineAnnouncements } = await import('./core/onlineAnnouncements'); initOnlineAnnouncements() } catch {}
+    // 在线公告（官网 announcements.json）：非紧急 UI，延后 1.5s 发起，
+    // 让出启动尾段的主线程与网络（P3-5）；失败静默
+    try {
+      setTimeout(() => {
+        void import('./core/onlineAnnouncements')
+          .then(({ initOnlineAnnouncements }) => initOnlineAnnouncements())
+          .catch(() => {})
+      }, 1500)
+    } catch {}
 
     // 绑定扩展按钮（立即绑定，但延迟加载扩展）
     try { const btnExt = document.getElementById('btn-extensions'); if (btnExt) btnExt.addEventListener('click', () => { void panelShowExtensionsOverlay(true) }) } catch {}

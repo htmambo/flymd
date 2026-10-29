@@ -53,7 +53,10 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
-- ✅ [2026-10-30-perf-round2-plan.md](Archive/2026-10/2026-10-30-perf-round2-plan.md) — 性能优化第二轮：运行期效率 R1-R5（完成 2026-10-30）
+- ✅ [2026-10-30-perf-round3-plan.md](Archive/2026-10/2026-10-30-perf-round3-plan.md) — 性能优化批次 6 安全子集 C1-C4（完成 2026-10-30）
+  - **范围**：codeCopy 覆盖层两阶段读写分离（每帧 reflow N→1）、在线公告延后 1.5s、math reparse 原始序列化复用（文档引用新鲜度判定）、Windows 兜底 reveal 对齐 exactly-once CAS
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 768/768 / build+闭包 / cargo check / cargo test 31/31）
+- ✅ [2026-10-30-perf-round2-plan.md](Archive/2026-10/2026-10-30-perf-round2-plan.md) — 性能优化第二轮：运行期效率 R1-R5（完成 2026-10-30，d9735bd）
   - **范围**：Rust `scan_dirs_doc_presence` 前缀过滤 + 前端合并/重排队（收敛上轮 T3 后台全扫债务）、所见模式 markdownUpdated 管线 includes 快跳 + onChange 去重、行号栏缩放 remeasure 防抖 + 同文本去重测量、会话自动保存 fragment 复用 + 相同 payload 跳写、windowsCompositorPoke Tauri 事件 unlisten 泄漏修复
   - **验证**：五门禁全绿（tsc 0 错 / vitest 768/768 / build+闭包校验 / cargo check / cargo test 31/31）
 - ✅ [2026-10-18-perf-startup-runtime-plan.md](Archive/2026-10/2026-10-18-perf-startup-runtime-plan.md) — 性能优化实施：启动速度+运行效率 T1-T8（完成 2026-10-18，fullauto perf-2026-10）

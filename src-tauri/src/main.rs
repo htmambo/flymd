@@ -2719,10 +2719,13 @@ fn main() {
 
           // Windows：默认等前端首屏就绪后自行 show。
           // 这里只保留一个兜底，防止前端异常时窗口永远不可见。
+          // 与 flymd_window_ready / 非 Windows 兜底一致：走 reveal_window_once 的
+          // exactly-once CAS，消除兜底与前端 reveal 竞态时的装饰性 double-show。
           let win_clone = win.clone();
           std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(SHOW_FALLBACK_MS));
-            let _ = win_clone.show();
+            let state = win_clone.state::<AppState>();
+            reveal_window_once(&win_clone, &state.window_shown);
           });
         }
         #[cfg(not(target_os = "windows"))]
