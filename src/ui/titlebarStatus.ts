@@ -99,10 +99,22 @@ export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusAp
     let row = fastInfo?.row ?? 0
     let col = fastInfo?.col ?? 0
     if (!fastInfo) {
-      const until = ed.value.slice(0, pos)
-      const parts = until.split('\n')
-      row = parts.length
-      col = (parts[parts.length - 1]?.length ?? 0) + 1
+      // 无行号索引时的兜底（P3-17 子集）：单趟 charCode 计数，与原
+      // `value.slice(0, pos).split('\n')` 语义等价（row = '\n' 数 + 1，
+      // col = pos - 最后一个 '\n' 下标），但不分配整段前缀与 N 个子串——
+      // 关行号时每次光标移动都会走到这里，大文档下分配成本可观。
+      const value = ed.value
+      const limit = Math.min(pos, value.length)
+      let countedRow = 1
+      let lastNl = -1
+      for (let i = 0; i < limit; i++) {
+        if (value.charCodeAt(i) === 10) {
+          countedRow++
+          lastNl = i
+        }
+      }
+      row = countedRow
+      col = limit - lastNl
     }
     if (row < 1) row = 1
     if (col < 1) col = 1

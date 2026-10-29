@@ -148,6 +148,31 @@ describe('refreshStatus', () => {
     // 'he' is one line, 2 chars; col = length + 1 = 3
     expect(deps.status.textContent).toBe('行1,列3, 字 5')
   })
+
+  it('fallback handles multi-line values: rows, empty lines, boundaries', () => {
+    const ed = document.createElement('textarea')
+    // a(0) b(1) \n(2) c(3) d(4) e(5) \n(6) \n(7) f(8)
+    ed.value = 'ab\ncde\n\nf'
+    document.body.appendChild(ed)
+    const deps = makeDeps({ editor: ed })
+    const api = createTitlebarStatus(deps)
+
+    ed.selectionStart = 6 // 'cde' 行尾 → row 2, col 4
+    api.refreshStatus()
+    expect(deps.status.textContent).toBe('行2,列4, 字 9')
+
+    ed.selectionStart = 7 // 空行首 → row 3, col 1
+    api.refreshStatus()
+    expect(deps.status.textContent).toBe('行3,列1, 字 9')
+
+    ed.selectionStart = 8 // 第二个空行 → row 4, col 1
+    api.refreshStatus()
+    expect(deps.status.textContent).toBe('行4,列1, 字 9')
+
+    ed.selectionStart = 0 // 文档开头 → row 1, col 1
+    api.refreshStatus()
+    expect(deps.status.textContent).toBe('行1,列1, 字 9')
+  })
 })
 
 describe('syncToggleButton', () => {

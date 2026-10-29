@@ -108,6 +108,13 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
     finally { mapLoading = null }
   }
 
+  // 上次实际写入的签名（D1/P2-15 子集）：库根 + 排序 key 拼"非 ts 字段"。ts 为只写字段
+  // （全仓无读取方）且每次 saveNow 必变，不入签名——否则"内容未变只刷 ts"的保存
+  // 永远无法命中跳写。库根入签名防切库后内容巧合相同而误跳新库首写。
+  // 签名相同 ⇒ 与上次成功落盘内容语义一致 ⇒ 跳过整个 writeLibraryPrivate
+  // （省全 map 序列化 + 防抖写盘）；任何实际字段变化都会改变签名。
+  let lastWriteSignature: string | null = null
+
   const saveNow = async (): Promise<void> => {
     try {
       const currentFilePath = deps.getCurrentFilePath()
@@ -128,9 +135,20 @@ export function createDocPositionStore(deps: DocPositionStoreDeps): DocPositionS
         mode: deps.getMode(),
         ts: Date.now(),
       }
+      // D1: 相同内容跳写
+      const keys = Object.keys(map).sort()
+      let sig = scope.root + '\u0006'
+      for (const k of keys) {
+        const e = map[k]
+        sig += `${k}\u0000${e.pos}\u0001${e.end}\u0002${e.scroll}\u0003${e.pscroll}\u0004${e.mode}\u0005`
+      }
+      if (sig === lastWriteSignature) return
       // PR-4: 写只走新通道 libraryPrivate
       // 留 debounce 默认 500ms(libraryPrivate 内部),与本模块的 400ms scheduleSave 叠加 = ~900ms 总延迟
-      try { await writeLibraryPrivate({ docPos: map }) } catch {}
+      // 写成功才记签名：失败/返回 false 时下次保存重试，避免"误标记导致内容永不落盘"
+      let ok = false
+      try { ok = await writeLibraryPrivate({ docPos: map }) } catch {}
+      if (ok) lastWriteSignature = sig
     } catch {}
   }
 

@@ -53,7 +53,10 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
-- ✅ [2026-10-30-perf-round3-plan.md](Archive/2026-10/2026-10-30-perf-round3-plan.md) — 性能优化批次 6 安全子集 C1-C4（完成 2026-10-30）
+- ✅ [2026-10-30-perf-round4-plan.md](Archive/2026-10/2026-10-30-perf-round4-plan.md) — 性能优化批次 D：缓存与持久化收尾 D1-D3（完成 2026-10-30）
+  - **范围**：docPos 相同内容跳写（签名绑定库根 + 失败不记签）、mermaid SVG 缓存字节上限 16M units（LRU 淘汰）、状态栏行列回退免分配计数
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 775/775 / build+闭包 / cargo check / cargo test 31/31）
+- ✅ [2026-10-30-perf-round3-plan.md](Archive/2026-10/2026-10-30-perf-round3-plan.md) — 性能优化批次 6 安全子集 C1-C4（完成 2026-10-30，509edd1）
   - **范围**：codeCopy 覆盖层两阶段读写分离（每帧 reflow N→1）、在线公告延后 1.5s、math reparse 原始序列化复用（文档引用新鲜度判定）、Windows 兜底 reveal 对齐 exactly-once CAS
   - **验证**：五门禁全绿（tsc 0 错 / vitest 768/768 / build+闭包 / cargo check / cargo test 31/31）
 - ✅ [2026-10-30-perf-round2-plan.md](Archive/2026-10/2026-10-30-perf-round2-plan.md) — 性能优化第二轮：运行期效率 R1-R5（完成 2026-10-30，d9735bd）

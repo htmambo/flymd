@@ -190,6 +190,29 @@ export function createMermaidToolsFor(svgEl: SVGElement): HTMLDivElement {
 export const mermaidSvgCache = new Map<string, { svg: string; renderId: string }>()
 export let mermaidSvgCacheVersion = 0
 const MERMAID_CACHE_MAX = 300
+// 字节上限（P2-16）：条数上限对"少量超大图"无约束，300 个大图可达几十 MB。
+// 以 UTF-16 code units 数为字节代理（JS 字符串内部即 UTF-16，量纲一致）；
+// 16M units ≈ 32MB，足以容纳常规文档的全部图，同时封住病态大图场景。
+const MERMAID_CACHE_MAX_BYTES = 16 * 1024 * 1024
+// 测试专用：覆盖字节上限（传 null 恢复默认），避免测试里分配 16M 字符
+let _maxBytesOverride: number | null = null
+export function _setMermaidCacheMaxBytesForTest(n: number | null): void {
+  _maxBytesOverride = n
+}
+// 当前缓存总字节代理量；淘汰/插入/替换/失效时同步维护
+export let mermaidSvgCacheBytes = 0
+
+function mermaidEntryBytes(code: string, svg: string): number {
+  return code.length + svg.length
+}
+
+function evictOldestMermaidEntry(): void {
+  const firstKey = mermaidSvgCache.keys().next().value
+  if (firstKey === undefined) return
+  const old = mermaidSvgCache.get(firstKey)
+  if (old) mermaidSvgCacheBytes -= mermaidEntryBytes(firstKey, old.svg)
+  mermaidSvgCache.delete(firstKey)
+}
 
 export function getCachedMermaidSvg(code: string, desiredId: string): string | null {
   try {
@@ -197,7 +220,7 @@ export function getCachedMermaidSvg(code: string, desiredId: string): string | n
     const cached = mermaidSvgCache.get(code)
     if (!cached || !cached.renderId || !cached.svg) return null
     if (!cached.svg.includes('<svg')) return null
-    // 访问后重新 set，保持 LRU 顺序（Map 按插入顺序迭代）
+    // 访问后重新 set，保持 LRU 顺序（Map 按插入顺序迭代）；字节量不变
     mermaidSvgCache.delete(code)
     mermaidSvgCache.set(code, cached)
     // 将缓存中的旧 ID 替换为当前渲染需要的新 ID，确保 DOM 中 ID 唯一
@@ -211,15 +234,22 @@ export function cacheMermaidSvg(code: string, svg: string, renderId: string) {
   try {
     if (isMermaidCacheDisabled()) return
     if (!code || !svg || !renderId) return
-    // 已存在则先删除，再放到末尾（LRU）
+    // 已存在则先删除，再放到末尾（LRU）；替换路径按差值记账
     if (mermaidSvgCache.has(code)) {
+      const old = mermaidSvgCache.get(code)
+      if (old) mermaidSvgCacheBytes -= mermaidEntryBytes(code, old.svg)
       mermaidSvgCache.delete(code)
     } else if (mermaidSvgCache.size >= MERMAID_CACHE_MAX) {
       // 淘汰最久未使用的条目（Map 的第一个键）
-      const firstKey = mermaidSvgCache.keys().next().value
-      if (firstKey !== undefined) mermaidSvgCache.delete(firstKey)
+      evictOldestMermaidEntry()
     }
     mermaidSvgCache.set(code, { svg, renderId })
+    mermaidSvgCacheBytes += mermaidEntryBytes(code, svg)
+    // 字节上限：按 LRU 序继续淘汰，直到达标；至少保留刚插入的这条
+    const cap = _maxBytesOverride ?? MERMAID_CACHE_MAX_BYTES
+    while (mermaidSvgCacheBytes > cap && mermaidSvgCache.size > 1) {
+      evictOldestMermaidEntry()
+    }
   } catch {}
 }
 
@@ -275,6 +305,7 @@ export function postAttachMermaidSvgAdjust(svgEl: SVGElement) {
 export function invalidateMermaidSvgCache(reason?: string) {
   try {
     mermaidSvgCache.clear()
+    mermaidSvgCacheBytes = 0
     mermaidSvgCacheVersion++
     console.log('Mermaid 缓存已清空', reason || '')
   } catch {}
