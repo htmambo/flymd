@@ -12,6 +12,9 @@ export type TabIndentEditResult = {
 
 export function normalizeTabIndentText(input: string): string {
   let out = String(input || '')
+  // 快跳（超集条件）：任一 legacy token 都含 \u3000 / \u00A0 / &emsp / \u2003 之一，
+  // 四个特征全不存在时必无替换，省去 4 次 split/join 全文扫描。调用频率为每次编辑。
+  if (!/(?:\u3000|\u00A0|&emsp|\u2003)/.test(out)) return out
   for (const token of LEGACY_TAB_INDENTS) {
     out = out.split(token).join(TAB_INDENT)
   }

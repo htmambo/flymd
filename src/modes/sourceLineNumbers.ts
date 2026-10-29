@@ -27,6 +27,10 @@ type VisibleRange = {
 
 const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
 
+// Ctrl+滚轮每 tick 都派发 uiZoom:changed；trailing 防抖把手势期间的 layout 刷新
+// 合并为一次，避免大文档缩放时逐 tick 触发 remeasureAll（每行一次强制 reflow）
+const ZOOM_LAYOUT_DEBOUNCE_MS = 120
+
 function px(value: string | null | undefined, fallback = 0): number {
   const parsed = Number.parseFloat(String(value || ''))
   return Number.isFinite(parsed) ? parsed : fallback
@@ -402,6 +406,7 @@ function installLineNumbers(): void {
     let pendingInputPatch: InputPatchHint | null = null
     let lineNumbersPrefEnabled = getSourceLineNumbersEnabled()
     let lineNumbersActive = false
+    let zoomLayoutDebounce: any = 0
 
     flymd.flymdGetSourceEditorPositionInfo = (pos: number) => {
       try {
@@ -492,8 +497,16 @@ function installLineNumbers(): void {
       const safeStart = Math.max(0, Math.min(startLine, lines.length))
       const safeEnd = Math.max(safeStart, Math.min(lines.length, safeStart + Math.max(0, count)))
       let changedFrom = -1
+      // 同字体、同宽度下等文本行必等高：一次 pass 内按行文本去重，每条唯一文本只做
+      // 一次 write+offsetHeight 强制回流；全唯一行的最坏情况与原逐行测量等价
+      const heightByText = new Map<string, number>()
       for (let i = safeStart; i < safeEnd; i++) {
-        const height = measureLineHeight(measureProbe, metrics, lines[i] || '')
+        const lineText = lines[i] || ''
+        let height = heightByText.get(lineText)
+        if (height === undefined) {
+          height = measureLineHeight(measureProbe, metrics, lineText)
+          heightByText.set(lineText, height)
+        }
         if (rowHeights[i] !== height) {
           rowHeights[i] = height
           if (changedFrom < 0) changedFrom = i
@@ -785,7 +798,13 @@ function installLineNumbers(): void {
     window.addEventListener('flymd:mode:changed', () => schedule('layout'))
     window.addEventListener('flymd:theme:changed', () => schedule('layout'))
     window.addEventListener('flymd:localeChanged', () => schedule('layout'))
-    window.addEventListener('flymd:uiZoom:changed', () => schedule('layout'))
+    window.addEventListener('flymd:uiZoom:changed', () => {
+      try { if (zoomLayoutDebounce) clearTimeout(zoomLayoutDebounce) } catch {}
+      zoomLayoutDebounce = setTimeout(() => {
+        zoomLayoutDebounce = 0
+        schedule('layout')
+      }, ZOOM_LAYOUT_DEBOUNCE_MS)
+    })
     window.addEventListener('flymd:sourceLineNumbers:changed', () => schedule('layout'))
     document.addEventListener('selectionchange', () => {
       if (document.activeElement === editor) schedule('selection')

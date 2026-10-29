@@ -1977,6 +1977,7 @@ async fn scan_dirs_doc_presence(
   root: String,
   exts: Vec<String>,
   max_depth: Option<usize>,
+  prefixes: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
   use std::collections::HashSet;
   use std::path::PathBuf;
@@ -2018,6 +2019,17 @@ async fn scan_dirs_doc_presence(
     if allow.is_empty() {
       return Ok::<Vec<String>, String>(Vec::new());
     }
+
+    // ---- 可选前缀过滤（增量补扫语义）：Some 且非空时只遍历前缀子树。
+    // 防御：前缀必须为绝对路径且位于 root 之内，非法条目跳过；全部非法 → 退化为
+    // 全扫（安全侧超集，等价于不传前缀的现状语义）。
+    let prefix_filter: Vec<PathBuf> = prefixes
+      .unwrap_or_default()
+      .iter()
+      .map(|p| PathBuf::from(p.trim()))
+      .filter(|p| p.is_absolute() && p.starts_with(&root_path))
+      .collect();
+    let prefix_mode = !prefix_filter.is_empty();
 
     // 跳过的目录名（大小写不敏感，精确匹配 file_name 组件）。
     // 涵盖：构建/版本控制产物、依赖目录、Tauri/WebView 缓存、跨平台系统目录（macOS/Windows/Linux）。
@@ -2074,8 +2086,25 @@ async fn scan_dirs_doc_presence(
       .min_depth(1) // 跳过根自身（其 depth==0 不参与文件判定）
       .max_depth(max_depth)
       .into_iter()
-      // filter_entry 仍按目录名 skip；min_depth 已排除根
-      .filter_entry(|e| !skip_dir_name(e.file_name().to_string_lossy().as_ref()));
+      // filter_entry 仍按目录名 skip；min_depth 已排除根；
+      // 前缀模式下额外限定前缀子树（增量补扫只看被失效区间）。
+      // 注意两点：① filter_entry 对根条目（depth==0）同样生效，根不匹配任何前缀，
+      // 必须豁免，否则整棵子树被剪空；② 返回 false 会连子树一起剪掉，前缀的
+      // 祖先目录（不匹配前缀但通往匹配区）必须放行，否则前缀成员永远不可达。
+      .filter_entry(|e| {
+        if skip_dir_name(e.file_name().to_string_lossy().as_ref()) {
+          return false;
+        }
+        if prefix_mode && e.depth() > 0 {
+          let path = e.path();
+          let under_prefix = prefix_filter.iter().any(|p| path.starts_with(p));
+          let ancestor_of_prefix = prefix_filter.iter().any(|p| p.starts_with(path));
+          if !under_prefix && !ancestor_of_prefix {
+            return false;
+          }
+        }
+        true
+      });
 
     for entry in walker {
       let entry = match entry {
@@ -2127,17 +2156,50 @@ async fn scan_dirs_doc_presence(
       }
     }
 
-    // 2) 底向上聚合：把"含支持文档"信号冒泡到所有在 root_path 之内的祖先目录。
-    // root_path 自身永远包含：约定——即便其下没有任何 doc，前端也需把 root 视为"已扫描"以避免
-    // 重复触发；同时区分 allow 为空（返回 []）与 allow 非空但零文档（返回 [root]）两种语义。
+    // 2) 底向上聚合：把"含支持文档"信号冒泡到失效区间内的祖先目录。
+    // 全扫模式：聚合到 root_path，且 root 自身永远包含——约定：即便其下没有任何 doc，
+    // 前端也需把 root 视为"已扫描"以避免重复触发；同时区分 allow 为空（返回 []）
+    // 与 allow 非空但零文档（返回 [root]）两种语义。
+    // 前缀模式（增量补扫）：以"最短匹配前缀"为聚合上界——失效只发生在前缀集合内，
+    // 边界之上的祖先键未被失效，本次补扫不越界回填；不匹配任何前缀的文档目录
+    // （如前缀为文件路径时其父目录）的键未被失效，跳过。
     let mut positive: HashSet<PathBuf> = HashSet::new();
-    positive.insert(root_path.clone());
-    for dir in &direct_doc_dirs {
-      for anc in dir.ancestors() {
-        if !anc.starts_with(&root_path) {
-          break;
+    if prefix_mode {
+      for dir in &direct_doc_dirs {
+        let boundary = {
+          let mut best: Option<&PathBuf> = None;
+          for p in &prefix_filter {
+            if dir.starts_with(p) {
+              let shorter = match best {
+                Some(b) => p.components().count() < b.components().count(),
+                None => true,
+              };
+              if shorter {
+                best = Some(p);
+              }
+            }
+          }
+          match best {
+            Some(b) => b,
+            None => continue,
+          }
+        };
+        for anc in dir.ancestors() {
+          positive.insert(anc.to_path_buf());
+          if anc == boundary {
+            break;
+          }
         }
-        positive.insert(anc.to_path_buf());
+      }
+    } else {
+      positive.insert(root_path.clone());
+      for dir in &direct_doc_dirs {
+        for anc in dir.ancestors() {
+          if !anc.starts_with(&root_path) {
+            break;
+          }
+          positive.insert(anc.to_path_buf());
+        }
       }
     }
 
@@ -2152,8 +2214,9 @@ async fn scan_dirs_doc_presence(
     // 4) 可观测信号：截断与遍历错误计入日志，便于生产环境排查"为何某些目录没标出文档"
     if truncated || error_count > 0 {
       eprintln!(
-        "[scan_dirs_doc_presence] root={} truncated={} errors={} visited={} returned={}",
+        "[scan_dirs_doc_presence] root={} prefixes={} truncated={} errors={} visited={} returned={}",
         root_path.display(),
+        prefix_filter.len(),
         truncated,
         error_count,
         visited,

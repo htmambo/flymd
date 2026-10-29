@@ -180,7 +180,10 @@ export class TabManager {
     const tab = this.getActiveTab()
     if (!tab) return
 
-    tab.content = this.hooks.getEditorContent()
+    // 内容相同不重赋值：保住字符串引用，让 exportStateJSON 的 per-tab fragment
+    // 记忆化在"无变化自动保存 tick"上稳定命中（值比较为 O(n) memcmp，远廉价于重序列化）
+    const nextContent = this.hooks.getEditorContent()
+    if (nextContent !== tab.content) tab.content = nextContent
     tab.dirty = this.hooks.getDirty()
     tab.scrollTop = this.hooks.getScrollTop()
     tab.cursorLine = this.hooks.getCursorPos().line
@@ -647,6 +650,74 @@ export class TabManager {
       })),
       activeTabId: this.activeTabId,
     }
+  }
+
+  /**
+   * exportState 的序列化专用路径：与 `JSON.stringify(exportState(opts))` 字节等价
+   * （测试锁定），但 per-tab fragment 经记忆化复用，闲置标签的内容不再每个
+   * 自动保存 tick 重序列化一次。
+   *
+   * fragment 键为字段引用/严格相等的 bundle（`===`）：字符串内容值相等即复用
+   * （O(n) memcmp，无假复用可能——值不同必重建）；content 字段已按 includeDirty
+   * 分支后的值参与比较，discard/默认两种 opts 天然区分。
+   */
+  private exportFragCache = new WeakMap<TabDocument, {
+    key: {
+      id: string
+      filePath: string | null
+      displayName?: string
+      content: string
+      dirty: boolean
+      mode: EditorMode
+      wysiwygEnabled: boolean
+    }
+    json: string
+  }>()
+
+  exportStateJSON(opts?: { includeDirtyContent?: boolean }): string {
+    const includeDirtyContent = opts?.includeDirtyContent !== false
+    this.saveCurrentTabState()
+    const frags = this.tabs.map(t => {
+      const include = t.dirty && includeDirtyContent
+      const content = include ? t.content : ''
+      const dirty = include
+      let entry = this.exportFragCache.get(t)
+      const key = entry?.key
+      if (
+        !entry || !key
+        || key.id !== t.id
+        || key.filePath !== t.filePath
+        || key.displayName !== t.displayName
+        || key.content !== content
+        || key.dirty !== dirty
+        || key.mode !== t.mode
+        || key.wysiwygEnabled !== t.wysiwygEnabled
+      ) {
+        entry = {
+          key: {
+            id: t.id,
+            filePath: t.filePath,
+            displayName: t.displayName,
+            content,
+            dirty,
+            mode: t.mode,
+            wysiwygEnabled: t.wysiwygEnabled,
+          },
+          json: JSON.stringify({
+            id: t.id,
+            filePath: t.filePath,
+            displayName: t.displayName,
+            content,
+            dirty,
+            mode: t.mode,
+            wysiwygEnabled: t.wysiwygEnabled,
+          }),
+        }
+        this.exportFragCache.set(t, entry)
+      }
+      return entry.json
+    })
+    return `{"tabs":[${frags.join(',')}],"activeTabId":${JSON.stringify(this.activeTabId)}}`
   }
 
   /**

@@ -53,6 +53,9 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-30-perf-round2-plan.md](Archive/2026-10/2026-10-30-perf-round2-plan.md) — 性能优化第二轮：运行期效率 R1-R5（完成 2026-10-30）
+  - **范围**：Rust `scan_dirs_doc_presence` 前缀过滤 + 前端合并/重排队（收敛上轮 T3 后台全扫债务）、所见模式 markdownUpdated 管线 includes 快跳 + onChange 去重、行号栏缩放 remeasure 防抖 + 同文本去重测量、会话自动保存 fragment 复用 + 相同 payload 跳写、windowsCompositorPoke Tauri 事件 unlisten 泄漏修复
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 768/768 / build+闭包校验 / cargo check / cargo test 31/31）
 - ✅ [2026-10-18-perf-startup-runtime-plan.md](Archive/2026-10/2026-10-18-perf-startup-runtime-plan.md) — 性能优化实施：启动速度+运行效率 T1-T8（完成 2026-10-18，fullauto perf-2026-10）
   - **范围**：启动链路 Phase A/B 重排、入口静态闭包减负（js-yaml/diffMerge 动态化+构建门禁）、文件树 watch 增量失效（N=64）、渲染收敛（任务列表预检/mermaid 并发4+按序回填）、rAF 节流/dotBlink/outline 缓存上限、窗口 exactly-once reveal、reqwest 共享 client+S3 有界缓存
   - **验证**：三视角（功能/安全/质量）+ coding-bridge 外审全 APPROVED；五门禁全绿（tsc 0 错 / vitest 758/758 / build+闭包校验 / cargo check / cargo test 27/27）

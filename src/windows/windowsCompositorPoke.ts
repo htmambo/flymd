@@ -60,6 +60,9 @@ export function createWindowsCompositorPoke(deps: WindowsCompositorPokeDeps): Wi
   let lastPokeAt = 0
   let unfocusedTimer: any = null
   const listeners: Array<{ target: any; ev: string; fn: any; opts?: any }> = []
+  // Tauri 窗口事件（onMoved/onResized/onFocusChanged/onScaleChanged）的 UnlistenFn
+  // promise；stop() 必须逐个解绑，否则反复 start/stop 会累积处理器
+  let tauriUnlisteners: Array<Promise<() => void>> = []
 
   function pokeCssOnce(): void {
     try {
@@ -142,6 +145,20 @@ export function createWindowsCompositorPoke(deps: WindowsCompositorPokeDeps): Wi
     listeners.length = 0
   }
 
+  function clearTauriListeners(): void {
+    const pending = tauriUnlisteners
+    tauriUnlisteners = []
+    for (const p of pending) {
+      // 句柄 promise 可能尚未 resolve（注册在 Tauri 内部异步完成）；
+      // resolve 后无论早晚都补一次解绑，未决期 start 不会再被 running 门挡住重复注册
+      try {
+        Promise.resolve(p)
+          .then((fn) => { try { fn?.() } catch {} })
+          .catch(() => {})
+      } catch {}
+    }
+  }
+
   function start(): void {
     if (running) return
     const platform = (win?.navigator?.platform || '').toLowerCase()
@@ -149,22 +166,23 @@ export function createWindowsCompositorPoke(deps: WindowsCompositorPokeDeps): Wi
     if (!isTauriRuntime()) return
     running = true
 
+    // 注册保持同步完成（不 await 交错），保证并发 start/stop 下句柄都被 clearTauriListeners 收走
     void (async () => {
       try {
         const w = getCurrentWindow()
-        try { await w.onMoved(() => schedule()) } catch {}
-        try { await w.onResized(() => schedule()) } catch {}
+        try { tauriUnlisteners.push(w.onMoved(() => schedule())) } catch {}
+        try { tauriUnlisteners.push(w.onResized(() => schedule())) } catch {}
         try {
-          await w.onFocusChanged(({ payload }: any) => {
+          tauriUnlisteners.push(w.onFocusChanged(({ payload }: any) => {
             if (payload) {
               stopUnfocusedPoke()
               return schedule()
             }
             for (const ms of FOCUS_LOSS_DEFER_MS) setTimeoutFn(() => schedule(), ms)
             startUnfocusedPoke()
-          })
+          }))
         } catch {}
-        try { await w.onScaleChanged(() => schedule()) } catch {}
+        try { tauriUnlisteners.push(w.onScaleChanged(() => schedule())) } catch {}
       } catch {}
     })()
 
@@ -185,6 +203,7 @@ export function createWindowsCompositorPoke(deps: WindowsCompositorPokeDeps): Wi
     if (!running) return
     running = false
     clearListeners()
+    clearTauriListeners()
     try { if (settleTimer) clearTimeoutFn(settleTimer) } catch {}
     settleTimer = null
     stopUnfocusedPoke()

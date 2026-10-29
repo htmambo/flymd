@@ -48,6 +48,9 @@ let _root: HTMLElement | null = null
 let _onChange: ((md: string) => void) | null = null
 let _suppressInitialUpdate = false
 let _lastMd = ''
+// 上次已通过 _onChange 通知外层的序列化结果；null = 本次 enable 尚未通知过。
+// 序列化值不变的事务（属性类/格式化抵消）跳过下游 _onChange（textarea 全量写 + 行号 O(n) diff 空跑）。
+let _lastNotifiedMd: string | null = null
 let _imgObserver: MutationObserver | null = null
 let _overlayHost: HTMLDivElement | null = null
 // 注：曾计划用 MutationObserver 监听 ProseMirror 清除我们插入的元素，
@@ -527,6 +530,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   _onChange = onChange
   _suppressInitialUpdate = true
   _lastMd = content
+  _lastNotifiedMd = null
 
   const editor = await Editor.make()
     .config((ctx) => {
@@ -829,10 +833,12 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     } catch {}
     lm.markdownUpdated((_ctx, markdown) => {
       if (_suppressInitialUpdate) return
+      const md0 = String(markdown)
       // 统一 Windows/UNC/含空格路径的图片写法：在 Markdown 中为目标包上尖括号 <...>
-      const md2 = (() => {
+      // 快跳（超集条件）：正则必需的 '](' 不存在时 pass 必为 no-op，省一次全文正则扫描
+      const md2 = !md0.includes('](') ? md0 : (() => {
         try {
-          return String(markdown).replace(/!\[[^\]]*\]\(([^)]+)\)/g, (m, g1) => {
+          return md0.replace(/!\[[^\]]*\]\(([^)]+)\)/g, (m, g1) => {
             const s = String(g1 || '').trim()
             // 已经是 <...> 的不处理
             if (s.startsWith('<') && s.endsWith('>')) return m
@@ -846,10 +852,11 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
             }
             return m
           })
-        } catch { return markdown }
+        } catch { return md0 }
       })()
       // Markdown转义字符反转义处理：还原被 Milkdown/remark 转义的方括号
-      const md3 = (() => {
+      // 快跳：无反斜杠时不可能存在 \[ \] \[\[ 转义序列
+      const md3 = !md2.includes('\\') ? md2 : (() => {
         try {
           let s = String(md2)
           // 第1步：还原 Obsidian 双向链接 \[\[ -> [[
@@ -861,10 +868,21 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
           return s
         } catch { return md2 }
       })()
-      const md3Clean = stripStrongBoundaryGuard(md3)
-      const md4 = normalizeTabIndentText(unprotectExcelDollarRefs(restoreEscapedDollars(_lastMd, md3Clean)))
+      // 快跳：stripStrongBoundaryGuard 仅删除零宽空格
+      const md3Clean = md3.includes('\u200B') ? stripStrongBoundaryGuard(md3) : md3
+      const md3Restored = restoreEscapedDollars(_lastMd, md3Clean)
+      // 快跳：unprotectExcelDollarRefs 只在存在 \$ 序列时可能改动
+      const md3Unprotected = md3Restored.includes('\\$') ? unprotectExcelDollarRefs(md3Restored) : md3Restored
+      const md4 = normalizeTabIndentText(md3Unprotected)
       _lastMd = md4
-      try { _onChange?.(md4) } catch {}
+      // 序列化结果与上次已通知值相同（属性类事务/格式化抵消）时跳过 _onChange：
+      // 下游是 textarea 全量写 + 行号 O(n) diff，值相同则纯属空跑。
+      // rewriteLocalImagesToAsset / scheduleCodeCopyRefresh 保留在守卫外，
+      // 保留"上次执行瞬态失败、本次重试"的既有语义。
+      if (md4 !== _lastNotifiedMd) {
+        _lastNotifiedMd = md4
+        try { _onChange?.(md4) } catch {}
+      }
       try { setTimeout(() => { try { rewriteLocalImagesToAsset() } catch {} }, 0) } catch {}
       try { scheduleCodeCopyRefresh() } catch {}
       // Markdown 更新时，也刷新 Mermaid 渲染 - 已由 Milkdown 插件处理

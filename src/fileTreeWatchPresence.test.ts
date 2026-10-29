@@ -90,8 +90,10 @@ beforeEach(async () => {
 describe('refreshTree 增量失效（watch 路径 ≤64）', () => {
   it('单文件事件：立即以缓存渲染，refreshTree 不等待后台预取（NFR-3）', async () => {
     const p = hooks.refreshTree([ROOT + '/a.md'])
-    // 后台预取已发起（仅失效前缀集合是目标语义；Rust 暂不支持前缀参数，仍以 root 后台扫描）
+    // 后台预取已发起：Rust 侧已支持前缀参数，增量路径传前缀集合做子树扫描
     await vi.waitFor(() => expect(scanQueue.length).toBe(1))
+    // 前缀集合：自身 + 库根内祖先（祖先链在库根截断，不含 /lib）
+    expect(scanArgs[scanArgs.length - 1].prefixes).toEqual([ROOT + '/a.md'])
     // 关键断言：扫描未 resolve，渲染已先行发生
     await vi.waitFor(() => expect(renderCount).toBeGreaterThan(0), { timeout: 500 })
     // 关键断言：refreshTree 在后台预取 pending 期间已返回（不 hang）
@@ -106,6 +108,8 @@ describe('refreshTree 增量失效（watch 路径 ≤64）', () => {
     const many = Array.from({ length: 65 }, (_, i) => `${ROOT}/f${i}.md`)
     const p = hooks.refreshTree(many)
     await vi.waitFor(() => expect(scanQueue.length).toBe(1))
+    // 全扫路径不携带前缀参数
+    expect(scanArgs[scanArgs.length - 1].prefixes).toBeUndefined()
     const race = await Promise.race([
       p.then(() => 'resolved'),
       sleep(150).then(() => 'pending'),
@@ -232,5 +236,37 @@ describe('invalidateDirDocPresenceScan 前缀失效', () => {
     expect(hooks.dirDocPresenceScan.has(ROOT + '/sub')).toBe(true)
     hooks.invalidateDirDocPresenceScan([ROOT + '/sub/x.md', ROOT + '/sub'])
     expect(hooks.dirDocPresenceScan.has(ROOT + '/sub')).toBe(false)
+  })
+})
+
+describe('前缀扫描过期重排队（epoch 竞态，FR-3 最终一致）', () => {
+  it('被作废的前缀扫描结果重排队，由下一次增量预取捎带补扫', async () => {
+    // 第 1 次增量刷新：预取1（/lib/a.md 前缀）pending
+    const p1 = hooks.refreshTree([ROOT + '/a.md'])
+    await vi.waitFor(() => expect(scanQueue.length).toBe(1))
+    await p1
+    // 第 2 次增量刷新：invalidate 使预取1 过期，发起预取2（/lib/b.md 前缀）
+    const p2 = hooks.refreshTree([ROOT + '/b.md'])
+    await vi.waitFor(() => expect(scanQueue.length).toBe(2))
+    await p2
+    // 预取1 此刻才 resolve → epoch 已过期 → 其前缀集合进入重排队
+    scanQueue.shift()!.resolve([])
+    await sleep(20)
+    expect(hooks.dirDocPresencePendingPrefixes).toEqual([ROOT + '/a.md'])
+    // 预取2 正常落地
+    scanQueue.shift()!.resolve([])
+    await sleep(20)
+    // 第 3 次增量刷新：scanPrefixes = 自身前缀 ∪ 重排队前缀
+    const p3 = hooks.refreshTree([ROOT + '/c.md'])
+    await vi.waitFor(() => expect(scanQueue.length).toBe(1))
+    const args = scanArgs[scanArgs.length - 1]
+    expect(args.prefixes).toEqual(expect.arrayContaining([ROOT + '/a.md', ROOT + '/c.md']))
+    expect(hooks.dirDocPresencePendingPrefixes).toBeNull() // 取出即清空
+    // 前缀扫描结果正常合并（只写 true，不 clear）
+    scanQueue.shift()!.resolve([ROOT + '/x'])
+    await sleep(20)
+    expect(hooks.dirDocPresenceScan.get(ROOT + '/x')).toBe(true)
+    expect(hooks.dirDocPresenceDirty).toBe(false)
+    await p3
   })
 })

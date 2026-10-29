@@ -342,6 +342,11 @@ async function saveAllDirtyTabs(): Promise<boolean> {
 // ---- 会话保存/恢复 ----
 // key 派生与老 key 迁移逻辑见 ./sessionStorageKey（已抽为纯函数并单测）。
 
+// 上次写入的会话 payload（key + json）。只依据"本次序列化结果"判定是否落盘：
+// exportStateJSON 序列化覆盖全部持久化字段，不追踪变更来源 → 无漏写风险；
+// key 变化（切库/换窗口）必写。setItem 抛出（如配额满）时重置，避免下次误跳写。
+let _lastSessionWrite: { key: string; json: string } | null = null
+
 /**
  * @param opts.includeDirtyContent 是否把未保存内容一并持久化（discard 路径传 false）
  * @param opts.autoReschedule 传 false 可阻止本次保存重新排定自动保存定时器。
@@ -354,10 +359,19 @@ async function saveAllDirtyTabs(): Promise<boolean> {
  */
 function saveTabSession(opts?: { includeDirtyContent?: boolean; autoReschedule?: boolean }): void {
   try {
-    const state = tabManager.exportState(opts)
-    localStorage.setItem(getSessionStorageKey(), JSON.stringify(state))
+    const key = getSessionStorageKey()
+    // 序列化走 exportStateJSON：与 JSON.stringify(exportState()) 字节等价，
+    // 但闲置标签的 fragment 复用 + 相同 payload 跳写，消除 5s tick 的无谓写放大
+    const json = tabManager.exportStateJSON(
+      opts && opts.includeDirtyContent === false ? { includeDirtyContent: false } : undefined,
+    )
+    if (!_lastSessionWrite || _lastSessionWrite.key !== key || _lastSessionWrite.json !== json) {
+      localStorage.setItem(key, json)
+      _lastSessionWrite = { key, json }
+    }
   } catch (e) {
     console.warn('[Tabs] 保存会话失败:', e)
+    _lastSessionWrite = null
   }
   // 会话保存点（切换/关闭/自动保存/退出）顺带同步"当前文件"标识
   try { syncActiveFileMarkerToLibrary() } catch {}

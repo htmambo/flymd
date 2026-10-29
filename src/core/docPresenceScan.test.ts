@@ -97,6 +97,24 @@ describe('pathsToInvalidatePrefixes', () => {
     expect(pathsToInvalidatePrefixes(['C:/'])).toEqual(['C:'])
     expect(pathsToInvalidatePrefixes(['C:'])).toEqual(['C:'])
   })
+
+  it('boundRoot（库根）：祖先链在库根截断，库根本身不入集', () => {
+    expect(pathsToInvalidatePrefixes(['/lib/a/b/f.md'], '/lib')).toEqual([
+      '/lib/a/b/f.md', '/lib/a/b', '/lib/a',
+    ])
+    expect(pathsToInvalidatePrefixes(['/lib/x.md'], '/lib')).toEqual(['/lib/x.md'])
+    // Windows 形式同样截断
+    expect(pathsToInvalidatePrefixes(['C:/lib/a/b.md'], 'C:/lib')).toEqual(['C:/lib/a/b.md', 'C:/lib/a'])
+  })
+
+  it('boundRoot：事件路径恰为库根时保留自身条目（作为 full-scan 信号），不展开祖先', () => {
+    expect(pathsToInvalidatePrefixes(['/lib'], '/lib')).toEqual(['/lib'])
+    expect(pathsToInvalidatePrefixes(['/lib/'], '/lib')).toEqual(['/lib'])
+  })
+
+  it('boundRoot：路径在库外（防御性场景）不截断，行为与无 bound 一致', () => {
+    expect(pathsToInvalidatePrefixes(['/home/x/f.md'], '/lib')).toEqual(['/home/x/f.md', '/home/x', '/home'])
+  })
 })
 
 describe('resolveDocPresenceRefresh（阈值边界 64 vs 65）', () => {
@@ -135,6 +153,18 @@ describe('resolveDocPresenceRefresh（阈值边界 64 vs 65）', () => {
   it('incremental 携带祖先链前缀集合', () => {
     const s = resolveDocPresenceRefresh(['/lib/a/b.md'])
     expect(s).toEqual({ kind: 'incremental', prefixes: ['/lib/a/b.md', '/lib/a', '/lib'] })
+  })
+
+  it('boundRoot：事件命中库根本身 → full-scan（区间无法收敛）', () => {
+    expect(resolveDocPresenceRefresh(['/lib'], {}, '/lib').kind).toBe('full-scan')
+    expect(resolveDocPresenceRefresh(['/lib/'], {}, '/lib').kind).toBe('full-scan')
+    // 大小写不敏感（Windows 路径大小写不定）
+    expect(resolveDocPresenceRefresh(['/LIB'], {}, '/lib').kind).toBe('full-scan')
+  })
+
+  it('boundRoot：库内事件 → incremental 且前缀集不含库根', () => {
+    const s = resolveDocPresenceRefresh(['/lib/a/b.md'], {}, '/lib')
+    expect(s).toEqual({ kind: 'incremental', prefixes: ['/lib/a/b.md', '/lib/a'] })
   })
 })
 

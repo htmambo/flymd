@@ -34,9 +34,13 @@ export function normalizeWatchPaths(paths: string[]): string[] {
  * 每条路径 + 其所有祖先目录，去重后按长度降序输出（子代在前，利于前缀清理先处理深层）。
  * 祖先链在驱动器根（C:）与文件系统根（/）处截断——把二者当祖先等于全量清理，退化为整树失效；
  * 文件系统根截断同时防 UNC 路径（//server/share）向上退化出 "/" 前缀。
+ * 传 boundRoot（库根）时祖先链在库根截断：库根及其祖先不入集——库根 key 恒为 true 且
+ * 不会被增量失效（root invariant），入集等于把增量失效放大成全清。事件路径恰为库根时
+ * 自身条目仍保留（由 resolveDocPresenceRefresh 判定为 full-scan）。
  * 注：库根恰为驱动器根（如 C:）时，根行 hint 不会因截断而失效，属可接受罕见边界（下轮全扫恢复）。
  */
-export function pathsToInvalidatePrefixes(paths: string[]): string[] {
+export function pathsToInvalidatePrefixes(paths: string[], boundRoot?: string | null): string[] {
+  const bound = boundRoot ? normalizeWatchPath(boundRoot) : null
   const seen = new Set<string>()
   const out: string[] = []
   const add = (p: string) => {
@@ -49,6 +53,8 @@ export function pathsToInvalidatePrefixes(paths: string[]): string[] {
     const p = normalizeWatchPath(raw)
     if (!p) continue
     add(p)
+    // 事件路径就是库根：不展开祖先（祖先在库外），库根本身保留在集合里作为 full-scan 信号
+    if (bound && p === bound) continue
     let cur = p
     let idx = cur.lastIndexOf('/')
     while (idx > 0) {
@@ -56,6 +62,9 @@ export function pathsToInvalidatePrefixes(paths: string[]): string[] {
       // 驱动器根（C:）与文件系统根（/）作为祖先等于全量失效，截断。
       // 文件系统根截断同时防 UNC 路径（//server/share）向上退化出 "/" 前缀。
       if (parent === '/' || /^[a-zA-Z]:$/.test(parent)) break
+      // 库根截断：bound 及其祖先不入集（大小写不敏感比较；截断是优化，miss 只会
+      // 保守地多失效，不会漏失效）
+      if (bound && parent.toLowerCase() === bound.toLowerCase()) break
       add(parent)
       cur = parent
       idx = cur.lastIndexOf('/')
@@ -70,17 +79,28 @@ export type DocPresenceRefreshStrategy =
 
 /**
  * refreshTree 的 doc-presence 刷新策略决策：
- * - 缓存被标脏（后台预取曾失败，FR-3 兜底）/ 无路径上下文 / 去重后超阈值 → 全清 + root 全扫
- * - 否则 → 前缀集合增量失效 + 先以缓存渲染 + 后台预取
+ * - 缓存被标脏（后台预取曾失败，FR-3 兜底）/ 无路径上下文 / 去重后超阈值 / 事件命中库根本身
+ *   → 全清 + root 全扫
+ * - 否则 → 前缀集合增量失效（祖先链在库根截断）+ 先以缓存渲染 + 后台前缀扫描
  */
 export function resolveDocPresenceRefresh(
   paths: string[] | null | undefined,
   opts?: { dirty?: boolean },
+  boundRoot?: string | null,
 ): DocPresenceRefreshStrategy {
   if (opts?.dirty) return { kind: 'full-scan' }
   const normalized = normalizeWatchPaths(paths || [])
   if (normalized.length === 0 || normalized.length > WATCH_INVALIDATE_FULL_SCAN_THRESHOLD) {
     return { kind: 'full-scan' }
+  }
+  if (boundRoot) {
+    const bound = normalizeWatchPath(boundRoot)
+    // 事件命中库根本身（重命名/重建/配置变更）：失效区间无法收敛，直接全扫。
+    // 大小写不敏感比较（Windows 路径大小写不定）；误判方向安全——full-scan 是超集行为。
+    if (normalized.some((p) => p.toLowerCase() === bound.toLowerCase())) {
+      return { kind: 'full-scan' }
+    }
+    return { kind: 'incremental', prefixes: pathsToInvalidatePrefixes(normalized, boundRoot) }
   }
   return { kind: 'incremental', prefixes: pathsToInvalidatePrefixes(normalized) }
 }

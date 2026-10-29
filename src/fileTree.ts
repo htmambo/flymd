@@ -745,6 +745,11 @@ let _dirDocPresenceScanEpoch = 0
 // 全扫完成后由 refreshTree/refresh 消费复位。
 let _dirDocPresenceScanDirty = false
 
+// 过期前缀扫描的重排队集合：前缀模式下晚到的失效（epoch 竞态）会作废在途前缀扫描，
+// 其失效区域不在新一轮的扫描范围内 → 重排队，由下一次增量预取捎带补扫（FR-3 最终一致）。
+// full-scan 分支消费时清空（全扫覆盖一切）；预取失败走脏标记兜底，无需排队。
+let _dirDocPresencePendingPrefixes: string[] | null = null
+
 // 同一脏期内延迟单次全扫重试只排一次；脏标记被成功全扫消费时一并复位
 let _dirDocPresenceRetryScheduled = false
 
@@ -787,7 +792,11 @@ function invalidateDirDocPresenceScan(prefix?: string | string[]): void {
   }
 }
 
-async function prefetchDirDocPresence(root: string, baseline?: ReadonlyMap<string, boolean>): Promise<boolean> {
+async function prefetchDirDocPresence(
+  root: string,
+  baseline?: ReadonlyMap<string, boolean>,
+  prefixes?: string[] | null,
+): Promise<boolean> {
   if (typeof invoke !== 'function') return false
   // 扫描后缀恒为 内置默认 ∪ ASP 允许集：additionalSuffixAllow 填充后本身已含默认值,
   // 但缓存未填充/被清空(root 切换、refresh 早退)时不得把内置后缀从 Rust 扫描中丢掉
@@ -798,19 +807,35 @@ async function prefetchDirDocPresence(root: string, baseline?: ReadonlyMap<strin
   const t0 = Date.now()
   // Rust 端（scan_dirs_doc_presence）只返回"含受支持文档"的目录列表；
   // 未在列表中的目录视为"无文档"，避免返回全量 HashMap 造成的 IPC 体积浪费。
-  // 注意：Rust 端目前只支持 root 整树扫描，不支持按前缀扫描——增量失效后的后台预取
-  // 仍以 root 全树在后台运行（不阻塞渲染）；待 Rust 支持 prefix 参数后再收敛为前缀扫描。
+  // 传入 prefixes（增量路径）时 Rust 只扫描前缀子树；不传则 root 整树扫描（现状语义）。
+  const prefixMode = !!(prefixes && prefixes.length)
   const arr = await invoke<string[]>('scan_dirs_doc_presence', {
     root,
     exts: Array.from(allow),
     maxDepth: 20,
+    ...(prefixMode ? { prefixes } : {}),
   })
-  // 新一轮 prefetch/invalidate 已发起，旧结果丢弃。当前 prefetch 恒为 root 全量扫描，
-  // 作废轮次的失效范围必被新一轮覆盖；若未来 Rust 支持前缀扫描，此处需改为重新排队失效前缀。
-  if (myEpoch !== _dirDocPresenceScanEpoch) return false
-  _dirDocPresenceScan.clear()
-  for (const dir of arr || []) {
-    _dirDocPresenceScan.set(normDirKey(dir), true)
+  // 新一轮 prefetch/invalidate 已发起，旧结果丢弃。full-scan 模式新轮必覆盖旧轮；
+  // 前缀模式新轮只覆盖自己的前缀 → 本前缀集重排队，由下一次增量预取捎带（FR-3）。
+  if (myEpoch !== _dirDocPresenceScanEpoch) {
+    if (prefixMode) {
+      _dirDocPresencePendingPrefixes = Array.from(
+        new Set([...(_dirDocPresencePendingPrefixes || []), ...(prefixes || [])]),
+      )
+    }
+    return false
+  }
+  if (prefixMode) {
+    // 合并（不 clear）：失效侧已删被影响 key，本次只回填"仍含文档"的目录；
+    // 缓存不变量"只写 true"保持——被删文档的目录不会被重新写入
+    for (const dir of arr || []) {
+      _dirDocPresenceScan.set(normDirKey(dir), true)
+    }
+  } else {
+    _dirDocPresenceScan.clear()
+    for (const dir of arr || []) {
+      _dirDocPresenceScan.set(normDirKey(dir), true)
+    }
   }
   const cost = Date.now() - t0
   if (cost >= 300) {
@@ -1695,10 +1720,12 @@ async function refreshTree(paths?: string[] | null) {
   // NFR-3 / A5：有路径上下文且去重后 ≤64 条 → 前缀增量失效，立即以缓存渲染，
   // 后台预取不阻塞渲染；无路径上下文 / >64（写放大防护）/ 后台预取曾失败标脏 →
   // 全清 + root 全扫（现状语义）。
-  const strategy = resolveDocPresenceRefresh(paths, { dirty: _dirDocPresenceScanDirty })
+  const strategy = resolveDocPresenceRefresh(paths, { dirty: _dirDocPresenceScanDirty }, root)
   if (strategy.kind === 'full-scan') {
     // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
     try { invalidateDirDocPresenceScan() } catch {}
+    // 全扫覆盖一切，重排队的前缀集合一并作废
+    _dirDocPresencePendingPrefixes = null
     // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
     // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
     try {
@@ -1717,11 +1744,16 @@ async function refreshTree(paths?: string[] | null) {
   // —— 增量路径：失效前留基线快照（拷贝，与失效同步相邻，之间无 await）——
   const baseline = new Map(_dirDocPresenceScan)
   try { invalidateDirDocPresenceScan(strategy.prefixes) } catch {}
+  // 过期轮次遗留的前缀重排队集合随本次预取一并补扫（去重合并；取出即清空，
+  // 本次扫描若再被作废会重新排队）
+  const pendingPrefixes = _dirDocPresencePendingPrefixes
+  _dirDocPresencePendingPrefixes = null
+  const scanPrefixes = pendingPrefixes && pendingPrefixes.length
+    ? Array.from(new Set([...strategy.prefixes, ...pendingPrefixes]))
+    : strategy.prefixes
   // 后台预取先行启动（fire-and-forget，不阻塞返回）：即使下方渲染失败，
   // 失效前缀仍会被扫描结果回填（FR-3 最终一致）。
-  // 注：目标语义是仅失效前缀集合预取；Rust scan_dirs_doc_presence 暂不支持 prefix 参数，
-  // 当前仍以 root 全树在后台扫描（见 prefetchDirDocPresence 注释），待 Rust 支持后收敛。
-  void prefetchDirDocPresence(root, baseline)
+  void prefetchDirDocPresence(root, baseline, scanPrefixes)
     .then((hintsChanged) => {
       if (!hintsChanged) return
       // hint 与已渲染不一致：只更新受影响目录行 hint DOM 的定向刷新实现成本过高
@@ -1784,6 +1816,8 @@ async function refresh() {
   try { hasDocCache.clear(); hasDocPending.clear() } catch {}
   // 配套清理整树预扫描缓存（与 hasDocCache 语义一致；下一次 prefetch 会重新填充）
   try { invalidateDirDocPresenceScan() } catch {}
+  // 全扫覆盖一切，重排队的前缀集合一并作废
+  _dirDocPresencePendingPrefixes = null
   // 大库优化：渲染前在原生端一次性整树预扫描"目录是否含受支持文档"，
   // 避免渲染时逐目录递归 readDir 产生数千次 IPC（曾致启动后主线程被淹，操作卡 8~10 秒）
   try {
@@ -1944,10 +1978,12 @@ export const __fileTreeTestHooks = {
   prefetchDirDocPresence,
   get dirDocPresenceScan() { return _dirDocPresenceScan },
   get dirDocPresenceDirty() { return _dirDocPresenceScanDirty },
+  get dirDocPresencePendingPrefixes() { return _dirDocPresencePendingPrefixes },
   resetForTest() {
     resetWatchRefreshScheduler()
     _dirDocPresenceScanDirty = false
     _dirDocPresenceRetryScheduled = false
+    _dirDocPresencePendingPrefixes = null
     _dirDocPresenceScan.clear()
     hasDocCache.clear()
     hasDocPending.clear()

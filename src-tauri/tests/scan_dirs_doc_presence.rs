@@ -254,3 +254,186 @@ fn nonexistent_root_via_metadata() {
   let r = fs::metadata(p);
   assert!(r.is_err(), "不存在的路径应让 fs::metadata 返回 Err");
 }
+
+// ---- 前缀过滤（增量补扫）----
+// 与 main.rs 的 prefixes 参数逻辑同步：filter_entry 限定前缀子树；
+// 聚合以"最短匹配前缀"为上界；root 不做无条件包含（其 key 不被增量失效）。
+
+fn scan_prefix(
+  root: &Path,
+  allow: &HashSet<String>,
+  max_depth: usize,
+  max_entries: usize,
+  prefixes: &[PathBuf],
+) -> (Vec<String>, bool, usize) {
+  use walkdir::WalkDir;
+
+  let prefix_mode = !prefixes.is_empty();
+  let mut direct: HashSet<PathBuf> = HashSet::new();
+  let mut visited = 0usize;
+  let mut truncated = false;
+  let mut errors = 0usize;
+
+  let walker = WalkDir::new(root)
+    .follow_links(false)
+    .min_depth(1)
+    .max_depth(max_depth)
+    .into_iter()
+    .filter_entry(|e| {
+      if skip_dir_name(e.file_name().to_string_lossy().as_ref()) {
+        return false;
+      }
+      // 根条目（depth==0）豁免前缀检查；前缀的祖先目录也须放行——
+      // filter_entry 返回 false 会连子树剪掉，不放行则前缀成员不可达
+      if prefix_mode && e.depth() > 0 {
+        let path = e.path();
+        let under_prefix = prefixes.iter().any(|p| path.starts_with(p));
+        let ancestor_of_prefix = prefixes.iter().any(|p| p.starts_with(path));
+        if !under_prefix && !ancestor_of_prefix {
+          return false;
+        }
+      }
+      true
+    });
+
+  for entry in walker {
+    let entry = match entry { Ok(e) => e, Err(_) => { errors += 1; continue } };
+    visited += 1;
+    if visited > max_entries { truncated = true; break; }
+    let ft = entry.file_type();
+    let is_doc_file = if ft.is_file() { true }
+      else if ft.is_symlink() { fs::metadata(entry.path()).map(|m| m.is_file()).unwrap_or(false) }
+      else { false };
+    if !is_doc_file { continue; }
+    let ext = entry.path().extension().and_then(|s| s.to_str())
+      .map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    if allow.contains(&ext) {
+      if let Some(p) = entry.path().parent() {
+        if p.starts_with(root) { direct.insert(p.to_path_buf()); }
+      }
+    }
+  }
+
+  let mut positive: HashSet<PathBuf> = HashSet::new();
+  if prefix_mode {
+    for d in &direct {
+      let mut best: Option<&PathBuf> = None;
+      for p in prefixes {
+        if d.starts_with(p) {
+          let shorter = match best {
+            Some(b) => p.components().count() < b.components().count(),
+            None => true,
+          };
+          if shorter { best = Some(p); }
+        }
+      }
+      let boundary = match best { Some(b) => b, None => continue };
+      for a in d.ancestors() {
+        positive.insert(a.to_path_buf());
+        if a == boundary { break; }
+      }
+    }
+  } else {
+    positive.insert(root.to_path_buf());
+    for d in &direct {
+      for a in d.ancestors() {
+        if !a.starts_with(root) { break; }
+        positive.insert(a.to_path_buf());
+      }
+    }
+  }
+  let mut out: Vec<String> = positive.into_iter()
+    .map(|p| p.to_string_lossy().replace('\\', "/"))
+    .filter(|p| !p.is_empty())
+    .collect();
+  out.sort();
+  (out, truncated, errors)
+}
+
+fn root_str(tmp: &Path) -> String {
+  tmp.to_string_lossy().replace('\\', "/")
+}
+
+#[test]
+fn prefix_scan_limits_to_subtree() {
+  let tmp = std::env::temp_dir().join("flymd-scan-test-prefix-subtree");
+  let _ = fs::remove_dir_all(&tmp);
+  fs::create_dir_all(&tmp).unwrap();
+  fs::write(tmp.join("a.md"), "x").unwrap();
+  fs::create_dir_all(tmp.join("sub/deep")).unwrap();
+  fs::write(tmp.join("sub/b.md"), "x").unwrap();
+  fs::write(tmp.join("sub/deep/c.md"), "x").unwrap();
+  fs::create_dir_all(tmp.join("other")).unwrap();
+  fs::write(tmp.join("other/d.md"), "x").unwrap();
+
+  let allow = make_allow();
+  let prefix = vec![tmp.join("sub")];
+  let (result, _t, _e) = scan_prefix(&tmp, &allow, 20, 50_000, &prefix);
+  assert!(result.iter().any(|s| s.ends_with("/sub")), "sub 应在: {:?}", result);
+  assert!(result.iter().any(|s| s.ends_with("/deep")), "deep 应在: {:?}", result);
+  assert!(!result.iter().any(|s| s.ends_with("/other")), "other 不应在: {:?}", result);
+  assert!(!result.iter().any(|s| *s == root_str(&tmp)), "root 不应无条件包含: {:?}", result);
+  let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn prefix_scan_aggregates_up_to_boundary() {
+  let tmp = std::env::temp_dir().join("flymd-scan-test-prefix-boundary");
+  let _ = fs::remove_dir_all(&tmp);
+  fs::create_dir_all(tmp.join("A/B/C")).unwrap();
+  fs::write(tmp.join("A/B/C/deep.md"), "x").unwrap();
+  fs::write(tmp.join("top.md"), "x").unwrap();
+
+  let allow = make_allow();
+  // 前缀 = A/B：C（含文档）与 B（聚合边界）在结果；A 与 root 不越界回填
+  let prefix = vec![tmp.join("A/B")];
+  let (result, _t, _e) = scan_prefix(&tmp, &allow, 20, 50_000, &prefix);
+  assert!(result.iter().any(|s| s.ends_with("/C")), "C 应在: {:?}", result);
+  assert!(result.iter().any(|s| s.ends_with("/B")), "B 应在: {:?}", result);
+  assert!(!result.iter().any(|s| *s == root_str(&tmp)), "root 不应越界: {:?}", result);
+  assert!(!result.iter().any(|s| s.ends_with("/A") && !s.contains("/A/B")), "A 不应越界: {:?}", result);
+  let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn file_path_prefix_yields_empty_result() {
+  // 前缀为文件路径（前端对单文件事件的形态）：文档目录（root）不匹配任何前缀
+  // → 聚合跳过 → 空结果（前端合并 no-op，root 的 key 依赖 root invariant 恒真）
+  let tmp = std::env::temp_dir().join("flymd-scan-test-prefix-file");
+  let _ = fs::remove_dir_all(&tmp);
+  fs::create_dir_all(&tmp).unwrap();
+  fs::write(tmp.join("a.md"), "x").unwrap();
+
+  let allow = make_allow();
+  let prefix = vec![tmp.join("a.md")];
+  let (result, _t, _e) = scan_prefix(&tmp, &allow, 20, 50_000, &prefix);
+  assert!(result.is_empty(), "文件路径前缀应返回空: {:?}", result);
+  let _ = fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn invalid_prefixes_fall_back_to_full_scan_semantics() {
+  // 镜像 main.rs：非法前缀（相对/越界 root）被过滤；全非法 → prefix_mode=false → 全扫语义
+  let tmp = std::env::temp_dir().join("flymd-scan-test-prefix-invalid");
+  let _ = fs::remove_dir_all(&tmp);
+  fs::create_dir_all(&tmp).unwrap();
+  fs::write(tmp.join("a.md"), "x").unwrap();
+
+  let allow = make_allow();
+  let bad: Vec<PathBuf> = vec![
+    PathBuf::from("relative/path"),
+    PathBuf::from("/definitely/elsewhere"),
+  ];
+  let filtered: Vec<PathBuf> = bad
+    .into_iter()
+    .filter(|p| p.is_absolute() && p.starts_with(&tmp))
+    .collect();
+  assert!(filtered.is_empty(), "相对与越界前缀都应被过滤");
+  let (result, _t, _e) = scan_prefix(&tmp, &allow, 20, 50_000, &filtered);
+  assert!(
+    result.iter().any(|s| *s == root_str(&tmp)),
+    "全非法前缀退化为全扫（root 无条件包含）: {:?}",
+    result
+  );
+  let _ = fs::remove_dir_all(&tmp);
+}

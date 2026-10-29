@@ -167,4 +167,29 @@ describe('createWindowsCompositorPoke', () => {
     expect(api.isRunning()).toBe(false)
     expect(Object.values(win._listeners).flat().length).toBe(0)
   })
+
+  it('stop() unsubscribes all four Tauri window event handles', async () => {
+    const win = makeWinDom()
+    const wdouble = makeWinDouble()
+    const unlistens = [vi.fn(), vi.fn(), vi.fn(), vi.fn()]
+    let i = 0
+    wdouble.onMoved = vi.fn(async () => unlistens[i++])
+    wdouble.onResized = vi.fn(async () => unlistens[i++])
+    wdouble.onFocusChanged = vi.fn(async () => unlistens[i++])
+    wdouble.onScaleChanged = vi.fn(async () => unlistens[i++])
+    const api = createWindowsCompositorPoke({
+      isTauriRuntime: () => true,
+      getCurrentWindow: () => wdouble,
+      win,
+    })
+    api.start()
+    api.stop()
+    // UnlistenFn promise 在 stop 时可能尚未 resolve；补绑逻辑在其 resolve 后执行
+    for (let k = 0; k < 6; k++) await Promise.resolve()
+    expect(unlistens.every(fn => fn.mock.calls.length === 1)).toBe(true)
+    // 二次 stop 幂等：句柄列表已清空，不会重复解绑
+    api.stop()
+    for (let k = 0; k < 6; k++) await Promise.resolve()
+    expect(unlistens.every(fn => fn.mock.calls.length === 1)).toBe(true)
+  })
 })

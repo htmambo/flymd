@@ -87,6 +87,46 @@ describe('TabManager.exportState — discard 语义', () => {
   })
 })
 
+describe('TabManager.exportStateJSON — 与 exportState 字节等价', () => {
+  it('未初始化（空标签）时输出与 JSON.stringify(exportState()) 一致', () => {
+    const tm = new TabManager()
+    expect(tm.exportStateJSON()).toBe(JSON.stringify(tm.exportState()))
+  })
+
+  it('混合标签形态（脏草稿/干净文件/无路径）下逐字节一致', () => {
+    const tm = new TabManager()
+    const hooks = makeHooks({ dirty: true, content: '未保存草稿'.repeat(200) })
+    tm.init(hooks)
+    hooks.setDirty(false)
+    hooks.setCurrentFilePath('/tmp/a.md')
+    tm.openFile('/tmp/a.md')
+    hooks.setCurrentFilePath('/tmp/b.md')
+    tm.openFile('/tmp/b.md')
+    hooks.setCurrentFilePath(null)
+    tm.createNewTab()
+    hooks.setDirty(true)
+    hooks.setEditorContent('无路径草稿')
+
+    expect(tm.exportStateJSON()).toBe(JSON.stringify(tm.exportState()))
+    expect(tm.exportStateJSON({ includeDirtyContent: false }))
+      .toBe(JSON.stringify(tm.exportState({ includeDirtyContent: false })))
+  })
+
+  it('状态无变化时重复调用输出稳定；内容变化后输出随之更新', () => {
+    const tm = new TabManager()
+    const hooks = makeHooks({ dirty: true, content: 'v1' })
+    tm.init(hooks)
+
+    const first = tm.exportStateJSON()
+    expect(tm.exportStateJSON()).toBe(first)
+
+    hooks.setEditorContent('v2')
+    const second = tm.exportStateJSON()
+    expect(second).not.toBe(first)
+    expect(JSON.parse(second).tabs[0].content).toBe('v2')
+  })
+})
+
 describe('TabManager.importState — 活跃标签恢复', () => {
   it('恢复会话后激活的是导出时的活跃标签（tab id 跨会话复用）', async () => {
     // 第一段会话：打开 a/b 两个文件，最终 b 处于激活状态
