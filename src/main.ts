@@ -539,7 +539,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
 
 // Mermaid 工具（已拆分到 core/mermaid.ts）
 import { isMermaidCacheDisabled, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache } from './core/mermaid'
-import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from './plugins/strongBoundaryCompat'
+import { createPreviewMarkdownIt, renderMarkdownCore } from './core/previewRenderer'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
 let _currentPdfSrcUrl: string | null = null
 let _currentPdfIframe: HTMLIFrameElement | null = null
@@ -1336,7 +1336,7 @@ import { isOfficePreviewCachePath } from './core/officePreviewPath'
 // 已抽离到 src/utils/visualColumn.ts,仅 src/modes/wysiwygCaret.ts 复用,main.ts 无引用。
 import { splitYamlFrontMatter } from './core/frontMatter'
 import { resolvePreviewLocalDocPath } from './utils/previewPath'
-import { scanTaskList, hasTaskListCandidate, applyMdTaskListPlugin } from './plugins/markdownItTaskList'
+import { scanTaskList, hasTaskListCandidate } from './plugins/markdownItTaskList'
 import { onCalloutFoldClick, onCalloutCopyClick } from './plugins/calloutPreviewEvents'
 import {
   buildContextMenuContext,
@@ -2638,71 +2638,15 @@ async function ensureHljsCore(): Promise<any> {
 
 // 延迟加载高亮库并创建 markdown-it
 // 任务列表（阅读模式）：将 "- [ ]" / "- [x]" 渲染为复选框
+// （perf 批次 F：实例构建与纯字符串管线抽到 core/previewRenderer，此处为薄壳）
 async function ensureRenderer() {
   if (md) return
-  await ensureHljsCore()
-  const { default: MarkdownItCtor } = await import('markdown-it')
-  md = new MarkdownItCtor({
-    html: true,
-    linkify: true,
-    breaks: true, // 单个换行渲染为 <br>，与所见模式的“回车即提行”保持一致
-    highlight(code: string, lang: string): string {
-      // Mermaid 代码块保留为占位容器，稍后由 mermaid 渲染
-      // math / katex / latex 三个围栏代码块统一识别为数学公式，输出与 $$...$$ 相同的占位元素
-      // 由 renderKatexPlaceholders 二次渲染（与自定义 markdownItKatex 插件行为一致）
-      // flow / seq 别名：兼容老式 ```flow / ```seq 围栏，一并走 mermaid 渲染管线。
-      // 注意：mermaid 11 已不再支持 `st=>start:` / `Andrew->China:` 这类老式语法，
-      // 用户需改用 `flowchart TD` + `A-->B` / `sequenceDiagram` + `A->>B` 新式语法。
-      const escMap: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-      const esc = (s: string) => s.replace(/[&<>"']/g, (ch: string) => escMap[ch] || ch)
-      const lower = (lang || '').toLowerCase()
-      if (lower === 'mermaid' || lower === 'flow' || lower === 'seq') {
-        try { if (DEBUG_RENDER) console.log('[预处理] mermaid 代码块（lang=' + lower + '）') } catch {}
-        return `<pre class="mermaid">${esc(code)}</pre>`
-      }
-      if (lower === 'math' || lower === 'katex' || lower === 'latex') {
-        try { if (DEBUG_RENDER) console.log('[预处理] math 代码块（lang=' + lower + '）: 走 KaTeX 占位') } catch {}
-        return `<pre class="md-math-block" data-math="${esc(code)}"></pre>`
-      }
-      try {
-        const normalizedLang = lang ? normalizeHljsLang(lang) : ''
-        if (normalizedLang && hljsCore && hljsCore.getLanguage(normalizedLang)) {
-          const r = hljsCore.highlight(code, { language: normalizedLang, ignoreIllegals: true })
-          return `<pre><code class="hljs language-${lang}">${r.value}</code></pre>`
-        }
-      } catch {}
-      return `<pre><code class="hljs">${esc(code)}</code></pre>`
-    }
+  md = await createPreviewMarkdownIt({
+    getHljsCore: () => hljsCore,
+    normalizeHljsLang,
+    ensureHljsCore,
+    debugRender: DEBUG_RENDER,
   })
-    // 启用脚注支持（[^1] / [^name] 语法）
-    try {
-      const footnoteMod = await import('./plugins/markdownItFootnote')
-      const applyFootnote = (footnoteMod as any).default as ((m: any) => void) | undefined
-      if (typeof applyFootnote === 'function') applyFootnote(md)
-    } catch (e) {
-      console.warn('markdown-it-footnote 加载失败：', e)
-    }
-    // 启用 KaTeX 支持（$...$ / $$...$$）
-    try {
-      const katexPlugin = (await import('./plugins/markdownItKatex')).default as any
-      if (typeof katexPlugin === 'function') md.use(katexPlugin)
-      try { applyMdTaskListPlugin(md) } catch {}
-    } catch (e) {
-      console.warn('markdown-it-katex 加载失败：', e)
-    }
-
-    // 表格横向滚动支持：为所有表格添加包装器
-    md.renderer.rules.table_open = () => '<div class="table-wrapper">\n<table>\n'
-    md.renderer.rules.table_close = () => '</table>\n</div>\n'
-
-    // 启用 Obsidian Callout 支持（>[!type] 语法）
-    try {
-      const calloutMod = await import('./plugins/markdownItCallout')
-      const applyCallout = (calloutMod as any).default as ((m: any) => void) | undefined
-      if (typeof applyCallout === 'function') applyCallout(md)
-    } catch (e) {
-      console.warn('markdown-it-callout 加载失败：', e)
-    }
 }
 
 type RenderPreviewOptions = {
@@ -2888,21 +2832,10 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   try {
     if (previewMeta) previewMetaLabels = (await getActiveLibrary())?.metadataLabels || null
   } catch {}
-  // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整段当数学渲染
-  raw = protectExcelDollarRefs(raw)
-  // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被 CommonMark 分断的问题
-  try {
-    const { normalizeCalloutMarkdown } = await import('./plugins/markdownItCallout')
-    if (typeof normalizeCalloutMarkdown === 'function') {
-      raw = normalizeCalloutMarkdown(raw)
-    }
-  } catch {}
-  // 确保 highlight.js 核心已加载。
-  // 曾在此遍历 detectCodeLanguages(raw) 逐个调 ensureHljsLanguage，但该函数只 await
-  // ensureHljsCore()、完全忽略 lang 参数，等于每次渲染都白跑一遍全文件正则。
+  // Excel 公式保护 / callout 空行归一 / strong boundary 守卫 / md.render / 剥零宽守卫
+  // 已收敛到 renderMarkdownCore（perf 批次 F），顺序与原内联实现一致
   try { await ensureHljsCore() } catch {}
-  raw = guardStrongBoundaryForCommonMark(raw)
-  const html = stripStrongBoundaryGuard(md!.render(raw))
+  const html = await renderMarkdownCore(raw, md!)
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
   try {
     if (!katexCssLoaded && /katex/.test(html)) {

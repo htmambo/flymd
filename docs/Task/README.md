@@ -53,6 +53,10 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-30-perf-round6-plan.md](Archive/2026-10/2026-10-30-perf-round6-plan.md) — 性能优化批次 F：预览渲染管线抽取 + 快照锁定（完成 2026-10-30）
+  - **范围**：`core/previewRenderer`（createPreviewMarkdownIt + renderMarkdownCore 纯字符串管线，逐字自 main.ts 抽出）；main.ts ensureRenderer/renderPreview 换薄壳；15 例快照+显式断言锁定 FR-2 输出
+  - **意义**：P0-7 块级缓存/增量渲染的前置安全网就位；DOM 增强段抽取留后续批次
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 794/794 / build+闭包 / cargo 31/31）
 - ✅ [2026-10-30-perf-round5-plan.md](Archive/2026-10/2026-10-30-perf-round5-plan.md) — 性能优化批次 E：fileTree 异步门面（完成 2026-10-30）
   - **范围**：fileTree 整体懒加载（入口静态闭包移出 ~36KB，闭包门禁固化约束）、newFileSafe/newFolderSafe 收敛到 libraryFileOps 单一来源、fileTreeFacade 单例门面 + 4 例单测
   - **关键发现**：原 manualChunks 强制命名会把共享依赖吸进 chunk 使懒加载失效（闭包门禁 FAIL 抓住），已删规则交 rolldown 自动拆分
