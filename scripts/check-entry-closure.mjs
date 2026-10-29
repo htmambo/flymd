@@ -11,7 +11,10 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const distDir = path.join(projectRoot, 'dist')
 const htmlPath = path.join(distDir, 'index.html')
 
-const VIOLATION_RE = /assets\/(?:yaml|diff)-[^/]*\.js$/
+// 黑名单：yaml/diff（perf-2026-10 T2 起动态化）+ fileTree（perf 批次 E 起懒加载；
+// 产物 chunk 名大小写不定，用 i 标志匹配）。任何人重新静态引入这些模块，
+// build 会在本门禁直接失败
+const VIOLATION_RE = /assets\/(?:yaml|diff|filetree)-[^/]*\.js$/i
 
 function fail(msg) {
   console.error(`[check-entry-closure] FAIL: ${msg}`)
@@ -102,4 +105,4 @@ if (violations.length > 0) {
   process.exit(1)
 }
 
-console.log(`[check-entry-closure] OK: 入口静态闭包 ${closure.size} 个文件,不含 yaml/diff chunk`)
+console.log(`[check-entry-closure] OK: 入口静态闭包 ${closure.size} 个文件,不含 yaml/diff/filetree chunk`)

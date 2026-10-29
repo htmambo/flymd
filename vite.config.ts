@@ -118,8 +118,11 @@ export default defineConfig(({ mode }) => ({
             // wysiwyg→milkdown→mermaid 链就会被拖成启动即加载
             // （dist/index.html 里 mermaid 6.6MB 的 modulepreload 就是这么来的）。
             // 交给 rolldown 按动态 import 边界自动拆分即可。
-            // 文件树（入口静态依赖，独立 chunk 便于缓存）
-            if (id.includes('/fileTree')) return 'filetree'
+            // 文件树不设 manualChunks（perf 批次 E）：原规则强制命名 fileTree.ts 为
+            // 独立 chunk，但会把它的静态依赖（i18n/libraryConfig 等）一并吸进该 chunk，
+            // 入口反向静态导入这些共享模块后整个 chunk 退回静态依赖，懒加载失效。
+            // 交给 rolldown 按动态 import 边界自动拆分即可；闭包门禁以
+            // /filetree/i（大小写不敏感）匹配产物 chunk 名兜底把关
             // HTML 转 Markdown
             if (id.includes('/html2md')) return 'html2md'
           }

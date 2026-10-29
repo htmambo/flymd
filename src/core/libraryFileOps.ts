@@ -8,7 +8,7 @@
 // - newFileSafe 自动选 separator、避免文件名冲突(末尾加 " N"),确保父目录存在,默认内容 "# 标题\n\n"
 
 import { invoke } from '@tauri-apps/api/core'
-import { exists, readDir, remove, stat, writeTextFile } from '@tauri-apps/plugin-fs'
+import { exists, mkdir, readDir, remove, stat, writeTextFile } from '@tauri-apps/plugin-fs'
 import { ensureDir, isInside } from './fsSafe'
 
 /**
@@ -109,5 +109,26 @@ export async function newFileSafe(dir: string, name = '新建文档.md', content
   const full = dir + sep + n
   await ensureDir(dir)
   await writeTextFile(full, content ?? '# 标题\n\n', {} as any)
+  return full
+}
+
+/**
+ * 安全创建新文件夹:自动检测 separator、避免与已有目录冲突(末尾加 " N" 序号)。
+ * 创建占位 README.md 使文件夹在库侧栏中可见。
+ * （自 fileTree.ts 收敛至此单一来源——两处实现逐语义相同,见 perf 批次 E1）
+ * @returns 最终创建的全路径
+ */
+export async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<string> {
+  const sep = dir.includes('\\') ? '\\' : '/'
+  let n = name
+  let i = 1
+  while (await exists(dir + sep + n)) {
+    n = `${name} ${++i}`
+  }
+  const full = dir + sep + n
+  await mkdir(full, { recursive: true } as any)
+  // 创建一个占位文件，使文件夹在库侧栏中可见
+  const placeholder = full + sep + 'README.md'
+  await writeTextFile(placeholder, '# ' + n + '\n\n', {} as any)
   return full
 }

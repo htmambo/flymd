@@ -53,6 +53,10 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-30-perf-round5-plan.md](Archive/2026-10/2026-10-30-perf-round5-plan.md) — 性能优化批次 E：fileTree 异步门面（完成 2026-10-30）
+  - **范围**：fileTree 整体懒加载（入口静态闭包移出 ~36KB，闭包门禁固化约束）、newFileSafe/newFolderSafe 收敛到 libraryFileOps 单一来源、fileTreeFacade 单例门面 + 4 例单测
+  - **关键发现**：原 manualChunks 强制命名会把共享依赖吸进 chunk 使懒加载失效（闭包门禁 FAIL 抓住），已删规则交 rolldown 自动拆分
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 779/779 / build+闭包不含 filetree / cargo 31/31）
 - ✅ [2026-10-30-perf-round4-plan.md](Archive/2026-10/2026-10-30-perf-round4-plan.md) — 性能优化批次 D：缓存与持久化收尾 D1-D3（完成 2026-10-30）
   - **范围**：docPos 相同内容跳写（签名绑定库根 + 失败不记签）、mermaid SVG 缓存字节上限 16M units（LRU 淘汰）、状态栏行列回退免分配计数
   - **验证**：五门禁全绿（tsc 0 错 / vitest 775/775 / build+闭包 / cargo check / cargo test 31/31）

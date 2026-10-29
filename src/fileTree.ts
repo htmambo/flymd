@@ -1,4 +1,4 @@
-import { readDir, stat, mkdir, rename, remove, exists, writeTextFile, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
+import { readDir, stat, mkdir, rename, remove, exists, writeFile, readFile, watch } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
 import { t } from './i18n'
 import { findTemplateForFolder, resolveTemplateContent } from './core/folderTemplates'
@@ -440,30 +440,9 @@ async function moveFileSafe(src: string, dst: string): Promise<void> {
   }
 }
 
-export async function newFileSafe(dir: string, hint = '新建文档.md', content?: string): Promise<string> {
-  const s = sep(dir)
-  let n = hint, i = 1
-  while (await exists(dir + s + n)) {
-    const m = hint.match(/^(.*?)(\.[^.]+)$/); const stem = m ? m[1] : hint; const ext = m ? m[2] : ''
-    n = `${stem} ${++i}${ext}`
-  }
-  const full = dir + s + n
-  await ensureDir(dir)
-  await writeTextFile(full, content ?? '# 标题\n\n', {} as any)
-  return full
-}
-
-export async function newFolderSafe(dir: string, hint = '新建文件夹'): Promise<string> {
-  const s = sep(dir)
-  let n = hint, i = 1
-  while (await exists(dir + s + n)) { n = `${hint} ${++i}` }
-  const full = dir + s + n
-  await mkdir(full, { recursive: true } as any)
-  // 创建一个占位文件，使文件夹在库侧栏中可见
-  const placeholder = full + s + 'README.md'
-  await writeTextFile(placeholder, '# ' + n + '\n\n', {} as any)
-  return full
-}
+// 安全新建帮助函数已收敛到 core/libraryFileOps 单一来源（perf 批次 E1，原为本文件的
+// 重复实现）；libraryContextMenu 也从 libraryFileOps 直接导入，使本模块可以整体懒加载
+import { newFileSafe, newFolderSafe } from './core/libraryFileOps'
 
 function saveSelection(path: string, isDir: boolean, row: HTMLElement) {
   state.selected = path

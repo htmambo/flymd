@@ -4,7 +4,9 @@
 import { t } from '../i18n'
 import type { LibSortMode } from '../core/librarySort'
 import { openRenameDialog } from './linkDialogs'
-import { newFileSafe, newFolderSafe } from '../fileTree'
+// 安全新建帮助函数来自 core/libraryFileOps（perf 批次 E1）：本模块是入口静态链的
+// 一员，从 fileTree 导入会把整个 fileTree 模块拖回入口闭包，阻碍其整体懒加载
+import { newFileSafe, newFolderSafe } from '../core/libraryFileOps'
 import { showLibraryDeleteDialog } from '../dialog'
 import { dispatchPathDeleted } from '../core/pathEvents'
 import { registerMenuCloser, closeAllMenus } from './menuManager'

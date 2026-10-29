@@ -48,7 +48,9 @@ import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { appLocalDataDir } from '@tauri-apps/api/path'
-import fileTree from './fileTree'
+// fileTree 异步门面（perf 批次 E）：模块整体懒加载，首个 init 在 reveal 后的阶段B；
+// 门面签名与真实模块同型（FileTreeAPI），27 个调用点零改动
+import { fileTreeFacade as fileTree, ensureFileTree } from './fileTreeFacade'
 import type { AnyUploaderConfig } from './uploader/types'
 import { uploadImageToCloud } from './uploader/upload'
 import { parseUploaderConfigEnabledOnly, parseUploaderConfigForManagement, getUploaderRaw } from './uploader/storeConfig'
@@ -8625,6 +8627,10 @@ function bindEvents() {
         setTimeout(() => { try { clearInterval(_lagIv) } catch {} }, 60000)
       } catch {}
     }
+
+    // fileTree chunk 预取（perf 批次 E）：与 initStore/阶段A 并行拉取，首个实际使用
+    // （阶段B 的 fileTree.init）时通常已就绪；ensureFileTree 为单例，重复调用无代价
+    void ensureFileTree()
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
