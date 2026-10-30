@@ -4,14 +4,16 @@
  */
 
 import { save } from '@tauri-apps/plugin-dialog'
+import { lsGetStringCached } from './lsCache'
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
 
 // Mermaid 缓存开关：默认暂时关闭缓存以排查"图片很小"的问题；可用 localStorage 覆盖
 const DISABLE_MERMAID_CACHE_DEFAULT = false
 
+// perf 批次 H3：读走内存缓存（渲染路径每次调用）
 export function isMermaidCacheDisabled(): boolean {
   try {
-    const v = localStorage.getItem('flymd:disableMermaidCache')
+    const v = lsGetStringCached('flymd:disableMermaidCache')
     if (v === '1' || (v || '').toLowerCase() === 'true') return true
     if (v === '0' || (v || '').toLowerCase() === 'false') return false
   } catch {}

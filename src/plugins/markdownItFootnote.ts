@@ -182,10 +182,10 @@ function onFocusOut(ev: FocusEvent): void {
 }
 
 // 供 main.ts 调用：在每次预览渲染后刷新脚注映射并绑定事件
-export function enhanceFootnotes(previewRoot: HTMLElement): void {
+export function enhanceFootnotes(previewRoot: HTMLElement, mapRoot?: HTMLElement | null): void {
   try {
     if (!previewRoot) return
-    _footnoteMap = collectFootnoteMap(previewRoot)
+    _footnoteMap = collectFootnoteMap(mapRoot || previewRoot)
     if (_footnoteMap.size === 0) {
       hideTooltipImmediate()
     }

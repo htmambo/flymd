@@ -928,3 +928,49 @@ body.dark-mode .container.md-minimalist .callout {
   }
 }
 
+.virtual-preview-spacer {
+  flex: none;
+  pointer-events: none;
+}
+
+.virtual-preview-content {
+  width: 100%;
+}
+
+.virtual-block {
+  min-width: 0;
+}
+
+.virtual-block-oversized {
+  max-height: 360px;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
+.virtual-block-oversized-label {
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.virtual-block-oversized-controls {
+  position: sticky;
+  top: 0;
+  display: flex;
+  gap: 6px;
+  padding: 0 10px 8px;
+  background: var(--code-bg);
+}
+
+.virtual-block-oversized-source {
+  margin: 0;
+  padding: 12px;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+

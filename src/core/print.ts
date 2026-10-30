@@ -1,6 +1,8 @@
 // 打印工具：把指定 DOM 克隆到隔离 iframe 再打印
 // 目的：避免把整个应用 UI/通知一起打印，且确保打印完整内容（不受滚动容器限制）
 
+import { releaseClonedContentVisibility } from './contentVisibility'
+
 export type PrintElementOptions = {
   title?: string
   baseHref?: string
@@ -278,6 +280,8 @@ export async function printElement(el: HTMLElement, opt?: PrintElementOptions): 
   const root = doc.createElement('div')
   root.className = 'preview flymd-print-preview'
   const clone = el.cloneNode(true) as HTMLElement
+  // 离屏代码块跳过渲染的优化不能带进打印稿（perf 批次 I）
+  releaseClonedContentVisibility(clone)
   root.appendChild(clone)
   doc.body.appendChild(root)
 

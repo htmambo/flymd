@@ -11,7 +11,8 @@ import type { Store } from '@tauri-apps/plugin-store'
 import type { InstallableItem } from './market'
 import { PLUGINS_DIR } from '../core/configBackup'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from '../core/libraryConfig'
-import { logInfo } from '../core/logger'
+import { logInfo, logDebug } from '../core/logger'
+import { raceWithHardBudget } from '../core/hardBudget'
 
 // 插件运行时基础：类型 + 目录保证 + 仓库输入解析 + 版本比较 + HTTP 工具 + 更新检测
 // 尽量保持无副作用，方便 main.ts 以及其他扩展模块复用
@@ -241,26 +242,22 @@ export async function getHttpClient(): Promise<{
 
 const HTTP_TEXT_TIMEOUT_MS = 8000
 const HTTP_BINARY_TIMEOUT_MS = 30000
+/**
+ * 文本抓取的总预算（perf 批次 I）：覆盖 tauri http 主路径 + 浏览器 fetch 回退路径。
+ * 真机实测：raw.githubusercontent.com 的 manifest 请求耗时 47,728ms，而单路径预算是
+ * 8s —— 两次路径叠加 + 主线程阻塞导致远超预算。改为"一条请求、总预算封顶"。
+ */
+const HTTP_TEXT_TOTAL_BUDGET_MS = 12000
 
 async function httpFetchWithTimeout(fetcher: any, url: string, init: any, timeoutMs: number): Promise<any> {
-  let timer: number | undefined
-  const timeout = new Promise((_resolve, reject) => {
-    timer = window.setTimeout(() => {
-      reject(new Error('http timeout'))
-    }, timeoutMs)
-  })
-  try {
-    return await Promise.race([fetcher(url, init), timeout])
-  } finally {
-    if (timer != null) window.clearTimeout(timer)
-  }
+  return raceWithHardBudget(Promise.resolve().then(() => fetcher(url, init)), timeoutMs)
 }
 
 // 文本抓取：优先 tauri http，失败回退到浏览器 fetch
 export async function fetchTextSmart(url: string): Promise<string> {
   const _t0 = Date.now()
   try {
-    return await fetchTextSmartInner(url)
+    return await raceWithHardBudget(fetchTextSmartInner(url), HTTP_TEXT_TOTAL_BUDGET_MS)
   } finally {
     const cost = Date.now() - _t0
     if (cost >= 1000) {
@@ -272,13 +269,19 @@ export async function fetchTextSmart(url: string): Promise<string> {
 }
 
 async function fetchTextSmartInner(url: string): Promise<string> {
+  const _t0 = Date.now()
+  const _mark = (at: string) => {
+    try { logDebug('[诊断] fetchTextSmart 分段', { url: String(url).slice(0, 120), 阶段: at, 累计ms: Date.now() - _t0 }) } catch {}
+  }
   try {
     const http = await getHttpClient()
+    _mark('httpClient就绪')
     if (http && http.fetch) {
       const resp = await httpFetchWithTimeout(http.fetch, url, {
         method: 'GET',
         responseType: http.ResponseType?.Text,
       }, HTTP_TEXT_TIMEOUT_MS)
+      _mark('tauri http 返回')
       if (
         resp &&
         (resp.ok === true ||
@@ -295,6 +298,7 @@ async function fetchTextSmartInner(url: string): Promise<string> {
     }
   } catch {
     // 回退到原始 fetch
+    _mark('tauri http 失败')
   }
   const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
   const timer = ctl ? window.setTimeout(() => ctl.abort(), HTTP_TEXT_TIMEOUT_MS) : undefined

@@ -253,6 +253,9 @@ export class TabManager {
     if (tab.wysiwygEnabled) {
       await this.hooks.setWysiwygEnabled(true)
       if (superseded() || noLongerActive()) return
+      // 大文件守卫可能拒绝自动启用；读取此时的实际状态，既避免重复重试，
+      // 也不会用 await 前的旧值覆盖恢复期间的用户手动切换。
+      tab.wysiwygEnabled = this.hooks.getWysiwygEnabled()
     }
 
     // 重要：所见模式切换可能会因内容规范化差异错误触发 dirty = true

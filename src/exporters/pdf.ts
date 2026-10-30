@@ -3,6 +3,7 @@
 
 import { resolveLocalImageAbsPathFromSrc } from '../utils/localImageSrcResolve'
 import { guessSyncedDocImageAbsPath } from '../utils/localImagePath'
+import { releaseClonedContentVisibility } from '../core/contentVisibility'
 
 function waitMs(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -586,6 +587,8 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
   applyLightThemeVars(exportRoot)
 
   const clone = el.cloneNode(true) as HTMLElement
+  // 离屏代码块跳过渲染的优化不能带进导出稿（perf 批次 I）
+  releaseClonedContentVisibility(clone)
 
   // 强制展开所有 callout + 隐藏交互按钮：PDF 不支持点击交互，折叠态会丢内容，按钮也无意义。
   // 改在 clone 上而非原 el 上，避免 live UI 闪烁。

@@ -6,9 +6,12 @@
 const CODE_WRAP_KEY = 'flymd:codeWrap:enabled'
 export const CODE_WRAP_CHANGED_EVENT = 'flymd:codeWrap:changed'
 
+// perf 批次 H3：走内存缓存（WebKitGTK 大 DB 下每次 getItem ~26ms，decorate 逐块调用）
+import { lsGetStringCached, lsSetStringCached } from './lsCache'
+
 export function isCodeWrapEnabled(): boolean {
   try {
-    return localStorage.getItem(CODE_WRAP_KEY) === 'true'
+    return lsGetStringCached(CODE_WRAP_KEY) === 'true'
   } catch {
     return false
   }
@@ -22,7 +25,7 @@ function applyCodeWrapClass(enabled: boolean): void {
 
 export function setCodeWrapEnabled(enabled: boolean): void {
   try {
-    localStorage.setItem(CODE_WRAP_KEY, enabled ? 'true' : 'false')
+    lsSetStringCached(CODE_WRAP_KEY, enabled ? 'true' : 'false')
   } catch {}
   applyCodeWrapClass(enabled)
   try {

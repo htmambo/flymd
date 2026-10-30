@@ -674,6 +674,16 @@ body > .block-menu { display: none !important; }
   animation: caret-blink 1s steps(1, end) infinite;
 }
 
+/* 窗口失焦时暂停光标闪烁（perf 批次 I）
+   闪烁是 1s 周期的 opacity 动画，窗口不可见时它仍在跑：白白占用主线程，
+   并直接加重"窗口重新激活"时的迟滞感。.wysiwyg-blurred 由 dotBlink 在
+   blur / visibilitychange 时挂到 .container 上，聚焦后移除。
+   选择器不限定 .wysiwyg / .wysiwyg-v2 ——两代所见模式的光标元素都覆盖到。 */
+.container.wysiwyg-blurred .wysiwyg-caret.show,
+.container.wysiwyg-blurred .preview .caret-dot {
+  animation-play-state: paused;
+}
+
 /* 取消预览正文的居中与段落外边距，使与 textarea 行基线更贴合 */
 .container.wysiwyg .preview-body { max-width: none; margin: 0; }
 .container.wysiwyg .preview p { margin: 0; }

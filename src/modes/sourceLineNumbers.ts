@@ -1,3 +1,6 @@
+import { logInfo, logDebug } from '../core/logger'
+import { lsGetStringCached } from '../core/lsCache'
+
 type EditorMode = 'edit' | 'preview'
 
 type Metrics = {
@@ -129,9 +132,10 @@ function findLineByYOffset(rowOffsets: number[], offset: number, totalHeight: nu
   return Math.max(0, Math.min(hi, rowOffsets.length - 1))
 }
 
+// perf 批次 H3：读走内存缓存（与 theme.ts 的同名读取共用一份缓存）
 function getSourceLineNumbersEnabled(): boolean {
   try {
-    return localStorage.getItem(SOURCE_LINE_NUMBERS_KEY) !== 'false'
+    return lsGetStringCached(SOURCE_LINE_NUMBERS_KEY) !== 'false'
   } catch {
     return true
   }
@@ -285,6 +289,37 @@ function measureLineHeight(
 ): number {
   probe.textContent = lineText || '\u200b'
   return Math.max(metrics.lineHeight, probe.offsetHeight || 0)
+}
+
+/**
+ * 批量行高测量（perf 批次 H）：把行文本作为 editor-line-measure-row 挂入与单 probe
+ * 同继承样式的容器，分块"一次挂行 → 一次读取"，把 O(N) 次强制布局压成 ⌈N/块⌉ 次。
+ * 测量公式与 measureLineHeight 逐字一致：max(lineHeight, offsetHeight || 0)。
+ * 返回值与 texts 一一对应；调用后容器恢复原状（行全部移除）。
+ */
+export function measureLineHeightsBatched(
+  container: HTMLElement,
+  texts: string[],
+  lineHeight: number,
+  batchSize = 4096,
+): number[] {
+  const out: number[] = []
+  for (let base = 0; base < texts.length; base += batchSize) {
+    const chunk = texts.slice(base, base + batchSize)
+    const rows: HTMLDivElement[] = []
+    for (const text of chunk) {
+      const row = document.createElement('div')
+      row.className = 'editor-line-measure-row'
+      row.textContent = text || '\u200b'
+      container.appendChild(row)
+      rows.push(row)
+    }
+    for (let i = 0; i < chunk.length; i++) {
+      out.push(Math.max(lineHeight, rows[i].offsetHeight || 0))
+    }
+    for (const row of rows) row.remove()
+  }
+  return out
 }
 
 function setActiveRow(
@@ -492,13 +527,47 @@ function installLineNumbers(): void {
       return true
     }
 
+    // 大范围测量分块（perf 批次 H）：每块行一次性挂入 measure 容器再统一读取，
+    // 一次强制布局测一整块；打字等小范围仍走单 probe 路径（更廉价）
+    const REMEASURE_BATCH_MIN_RANGE = 16
+
     const remeasureRange = (startLine: number, count: number, metrics: Metrics) => {
       if (!rowHeights.length) return false
       const safeStart = Math.max(0, Math.min(startLine, lines.length))
       const safeEnd = Math.max(safeStart, Math.min(lines.length, safeStart + Math.max(0, count)))
       let changedFrom = -1
-      // 同字体、同宽度下等文本行必等高：一次 pass 内按行文本去重，每条唯一文本只做
-      // 一次 write+offsetHeight 强制回流；全唯一行的最坏情况与原逐行测量等价
+      const rangeSize = safeEnd - safeStart
+
+      if (rangeSize > REMEASURE_BATCH_MIN_RANGE) {
+        // —— 批量路径：打开超大文件/整体重测时，逐行 write+offsetHeight 是
+        // O(N) 次强制布局（真机复现：35k 行文档启动冻结数分钟）。同字体同宽度下
+        // 等文本行必等高：先按文本去重，再交由批量测量（每块只触发一次强制布局，
+        // 测量值与单 probe 逐字等价）
+        const pendingTexts: string[] = []
+        const textIndex = new Map<string, number>()
+        for (let i = safeStart; i < safeEnd; i++) {
+          const lineText = lines[i] || ''
+          if (!textIndex.has(lineText)) {
+            textIndex.set(lineText, pendingTexts.length)
+            pendingTexts.push(lineText)
+          }
+        }
+        const heights = measureLineHeightsBatched(measure, pendingTexts, metrics.lineHeight)
+        for (let i = safeStart; i < safeEnd; i++) {
+          const measured = heights[textIndex.get(lines[i] || '') as number]
+          if (rowHeights[i] !== measured) {
+            rowHeights[i] = measured
+            if (changedFrom < 0) changedFrom = i
+          }
+        }
+        if (changedFrom >= 0) {
+          totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, changedFrom)
+          return true
+        }
+        return false
+      }
+
+      // —— 小范围路径：单 probe 逐行测量（含按文本去重）——
       const heightByText = new Map<string, number>()
       for (let i = safeStart; i < safeEnd; i++) {
         const lineText = lines[i] || ''
@@ -529,6 +598,9 @@ function installLineNumbers(): void {
 
     const applyTextPatch = (text: string, metrics: Metrics | null, hint: InputPatchHint | null) => {
       if (text === lastText) return
+      // perf 批次 H 分相观测：大文档补丁（含批测/offsets 重建）≥300ms 时记录
+      try { logDebug('[行号栏] applyTextPatch 开始', { 行数: text.split('\n').length }) } catch {}
+      const _tPatch = performance.now()
       const patch = (hint ? createLinePatchFromHint(lastText, text, hint) : null)
         || createLinePatch(lastText, text, lines, lineStarts)
       if (!patch) {
@@ -555,9 +627,22 @@ function installLineNumbers(): void {
       rowHeights.splice(startLine, oldLineCount, ...new Array<number>(newLineCount).fill(metrics.lineHeight))
       totalHeight = rebuildRowOffsetsFrom(rowHeights, rowOffsets, startLine)
       // composing 期间跳过 DOM 测量（measureLineHeight 会触发回流）；compositionend 后只测量变化行
+      let _msBatch = 0
       if (!_composing || _needsRemeasureAfterComposing) {
         _needsRemeasureAfterComposing = false
+        const _tBatch = performance.now()
         remeasureRange(startLine, newLineCount, metrics)
+        _msBatch = Math.round(performance.now() - _tBatch)
+      }
+      const _msPatch = Math.round(performance.now() - _tPatch)
+      if (_msPatch >= 300) {
+        try {
+          logInfo('[启动耗时] 行号栏文本同步', {
+            行数: newLineCount,
+            补丁ms: _msPatch,
+            测量ms: _msBatch,
+          })
+        } catch {}
       }
     }
 

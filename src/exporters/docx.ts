@@ -1,6 +1,8 @@
 // src/exporters/docx.ts
 // 使用 html-docx-js（UMD 全局）将 HTML/Element 导出为 DOCX 字节，动态加载 public/vendor/html-docx.js，避免打包器兼容问题
 
+import { releaseClonedContentVisibility } from '../core/contentVisibility'
+
 async function ensureHtmlDocx(): Promise<any> {
   const g: any = (globalThis as any)
   if (g.htmlDocx && typeof g.htmlDocx.asBlob === 'function') return g.htmlDocx
@@ -431,6 +433,8 @@ async function svgToPngDataUrl(svgEl: SVGElement): Promise<string> {
 
 async function preprocessElementForDocx(el: HTMLElement): Promise<string> {
   const clone = el.cloneNode(true) as HTMLElement
+  // 离屏代码块跳过渲染的优化不能带进导出稿（perf 批次 I）
+  releaseClonedContentVisibility(clone)
 
   console.log('[DOCX导出] 开始预处理HTML')
 

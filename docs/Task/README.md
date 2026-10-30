@@ -53,6 +53,30 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-30-viewport-cm6-rendering.md](Archive/2026-10/2026-10-30-viewport-cm6-rendering.md) — 阅读模式视口渲染与 CM6 大文档编辑改造（完成 2026-10-30）
+  - **Stage 1**：markdown-it 全文解析 + 顶层块视口挂载；真实文件 10,894 块仅挂载 34 块、255 DOM 元素，预览约 424–678ms
+  - **Stage 2**：大文档默认 CM6，小文档保留 Milkdown；同步文本、撤销、IME、标签恢复、CRLF 映射、可见公式/Mermaid widget 与目录树边界
+  - **验证**：925 前端测试 + 31 Rust 测试 + typecheck/build/入口闭包全绿；阅读虚拟化、CM6 生命周期、行尾映射和 Live Preview 均通过源码审查
+- ✅ [2026-10-30-large-file-tab-restore-guard.md](Archive/2026-10/2026-10-30-large-file-tab-restore-guard.md) — 大文件标签恢复绕过所见模式守卫修复（完成 2026-10-30）
+  - **真机缺口**：批次 I 的打开/启动守卫未覆盖标签恢复，旧会话的 `wysiwygEnabled:true` 仍触发 17 秒与 11 秒自动 `Editor.create`
+  - **修复**：所有自动启用默认在唯一构建入口前检查大文件；仅真实菜单/快捷键/通知动作豁免；标签恢复按实际模式收敛，避免重复重试并保留等待期间手动操作
+  - **验证**：883 前端测试 + 31 Rust 测试 + typecheck/build 全绿；两次真机启动均无大文件自动构建；整篇预览约 4.2–4.4 秒与启动二次渲染留作后续优化
+- ✅ [2026-10-30-perf-round9-plan.md](Archive/2026-10/2026-10-30-perf-round9-plan.md) — 性能优化批次 I：大文件三症状根治（完成 2026-10-30）
+  - **诊断**（真机日志）：预览渲染管线已修复（134,896 → 4,383-7,600ms）；剩余三处根因 = 所见模式 Editor.create 同步阻塞 11.9-24.0s + 插件远端 manifest 拉取 47,728ms 被 await 在启动链上（HTTP 超时用主线程 setTimeout，主线程被阻塞时预算失效）+ 3,352 代码块全量布局绘制
+  - **修复**：F1 落地上一轮"声称已加实则从未落地"的 `.codebox{content-visibility:auto}`（阈值门控 >200 块、**测量后才打标**、占位高度按块实测、打印/PDF/DOCX 三处克隆体解除裁剪）；F2 超大文档（≥200KB UTF-8 或 ≥10,000 行）不自动启用所见模式（非阻断提示 + 手动入口，三处守卫 + 提交前二次校验）；F3 扩展更新检查脱离就绪关键路径 + 12s 总预算 + 状态锁 + 插件就绪门控；F4 清除 bisect 脚手架；F5 失焦暂停 caret 动画
+  - **自查修正**：首版把 content-visibility 挂在容器类上会破坏 Pass B 的超高块测量（离屏子树跳过布局 → 读数为 0）→ 改为逐块、测量后才打标
+  - **外部审查 11 轮**（需求/计划/9 轮代码）：review_code 间歇空响应的真因是**载荷参数名大小写写错**（`CODE`/`REQUIREMENTS`）；分片送审后 4 份复审确认核心修复有效，残留建议逐条处置（采纳 8 / 驳回 5 / 列下迭代 3）
+  - **实测结论**：与 Obsidian 的差距是架构性的——FlyMD 整篇渲染（装饰后 ≈44,400 个 DOM 元素），Obsidian 块级虚拟化（离屏块不入 DOM），约 40 倍量级；本批把差距从"分钟级不可用"拉回"秒级可用"，彻底对齐需独立立项做预览块级虚拟化（文档含 5 项前置问题清单）
+  - **Chrome 155 实测**：离屏裁剪布局成本 23.6ms vs 155.3ms（**快 6.6 倍**）；固定 120px 占位会让文档高度虚高 1.59 倍 → 改为按块实测后高度比回到 **1.0000**；并证实本应用用自有 TreeWalker 查找面板（非原生 find），查找命中不受裁剪影响
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 879/879 / build+闭包 8 文件 / cargo 31/31）；**真机复测待用户执行**
+- ✅ [2026-10-30-perf-round8-plan.md](Archive/2026-10/2026-10-30-perf-round8-plan.md) — 真机回归修复：超大文件启动冻结（完成 2026-10-30）
+  - **诊断**：应用日志定位冻结在 renderPreview DOM 层——35k 行行号测量 O(N) 强制布局 + 3352 代码块 decorateCodeBlocks 单任务（既有成本，1MB 文件跨过阈值）；管线实测 134ms 无罪；Gdk height>0 为窗口创建期噪音待观察
+  - **修复**：decorateCodeBlocks 每 100 块分片让出主线程（data-codebox 幂等）；行号栏批量测量 measureLineHeightsBatched（O(N) 布局 → ⌈N/4096⌉ 次，测量值逐字等价）
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 808/808 / build+闭包 / cargo 31/31）；待真机确认
+- ✅ [2026-10-30-perf-round7-plan.md](Archive/2026-10/2026-10-30-perf-round7-plan.md) — 性能优化批次 G：预览 DOM 增强段抽取（完成 2026-10-30）
+  - **范围**：`core/previewDomEnhance`（enhancePreviewLinks 外链安全 / enhancePreviewImages 懒加载+资产 URL+两级失败回退，逐字自 main.ts 抽出，MIME 映射抽纯函数）；光标 nudging 经回调留在调用方；8 例 jsdom 测试锁定
+  - **意义**：P0-7 路线第二步完成——两段 DOM 增强具备独立可测形态，块级缓存可按块粒度接入
+  - **验证**：五门禁全绿（tsc 0 错 / vitest 802/802 / build+闭包 / cargo 31/31）
 - ✅ [2026-10-30-perf-round6-plan.md](Archive/2026-10/2026-10-30-perf-round6-plan.md) — 性能优化批次 F：预览渲染管线抽取 + 快照锁定（完成 2026-10-30）
   - **范围**：`core/previewRenderer`（createPreviewMarkdownIt + renderMarkdownCore 纯字符串管线，逐字自 main.ts 抽出）；main.ts ensureRenderer/renderPreview 换薄壳；15 例快照+显式断言锁定 FR-2 输出
   - **意义**：P0-7 块级缓存/增量渲染的前置安全网就位；DOM 增强段抽取留后续批次

@@ -11,11 +11,16 @@ import { initThemeUI, applySavedTheme, updateChromeColorsForMode } from './theme
 import { t, fmtStatus, getLocalePref, setLocalePref, getLocale, tLocale } from './i18n'
 import { getPasteUrlTitleFetchEnabled } from './core/pasteUrlTitle'
 import { getPasteRemoteImagesEnabled } from './core/pasteRemoteImages'
+import { isOversizedDocumentSize, describeDocumentSize, formatDocumentSize, createOversizedNoticeDedup } from './core/largeDoc'
 import { getSymbolAutoCompletionEnabled } from './core/symbolAutoCompletion'
 // KaTeX 样式改为按需动态加载（首次检测到公式时再加载）
 // markdown-it 和 DOMPurify 改为按需动态 import，类型仅在编译期引用
 import type MarkdownIt from 'markdown-it'
 import type { LocalePref } from './i18n'
+import type { VirtualPreview } from './core/virtualPreview'
+import type { MarkdownBlockModelCache } from './core/markdownBlocks'
+import type { Cm6ModeHost } from './modes/cm6ModeHost'
+import { getLargeDocEnginePreference, resolveEditorEngine } from './modes/editorEngine'
 // WYSIWYG: 锚点插件与锚点同步（用于替换纯比例同步）
 import {
   enableWysiwygV2,
@@ -58,7 +63,6 @@ import { openUploaderDialog as openUploaderDialogInternal, testUploaderConnectiv
 import { uploadImageFromContextMenu } from './uploader/manualImageUpload'
 import { transcodeToWebpIfNeeded } from './utils/image'
 import { protectExcelDollarRefs } from './utils/excelFormula'
-import { guessSyncedDocImageAbsPath } from './utils/localImagePath'
 import { resolveLocalImageAbsPathFromSrc, toDocRelativeImagePathIfInImages } from './utils/localImageSrcResolve'
 import { TAB_INDENT, applyTabIndentEdit, normalizeTabIndentText, getLeadingTabIndentLength, getTabIndentLengthEndingAt } from './utils/tabIndent'
 import { nowMs, scheduleAfterFirstPaint } from './utils/scheduling'
@@ -190,7 +194,7 @@ import { createKatexCriticalStyle, KATEX_CRITICAL_STYLE_ID, type KatexCriticalSt
 import { createDotBlink, type DotBlinkApi } from './modes/dotBlink'
 import { createDeferredStartup, type DeferredStartupApi } from './core/deferredStartup'
 import { extIsImage, fileToDataUrl } from './core/imageUtils'
-import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId } from './core/previewAnchor'
+import { ensurePreviewHeadingIds, isPreviewHashLink, scrollPreviewAnchorIntoView, makePreviewHeadingId, normalizePreviewAnchorText } from './core/previewAnchor'
 import {
   initFocusModeEventsImpl,
   updateFocusSidebarBgImpl,
@@ -540,6 +544,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
 // Mermaid 工具（已拆分到 core/mermaid.ts）
 import { isMermaidCacheDisabled, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache } from './core/mermaid'
 import { createPreviewMarkdownIt, renderMarkdownCore } from './core/previewRenderer'
+import { enhancePreviewLinks, enhancePreviewImages } from './core/previewDomEnhance'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
 let _currentPdfSrcUrl: string | null = null
 let _currentPdfIframe: HTMLIFrameElement | null = null
@@ -681,6 +686,8 @@ let _suppressRecentPush = false
 // 注：批量还原的"跳过逐文件预览渲染/刷面板"语义已迁移为 openFile2(p, { quiet: true })
 // 显式参数（替代此前的全局 _batchRestoringTabs 标志），避免隐式副作用。
 let _batchOpenWantsWysiwyg = false
+// perf 批次 I：批量打开收尾时的超大文档守卫只拦**自动**启用；
+// 用户手动切换走 setWysiwygEnabled，不经过批量收尾路径。
 // 启动早期（插件运行时/ASP 规则尚未注册）被跳过的 Office 文档路径，
 // 待 Word 预览扩展注册完成后由 ric 初始化块补打开。防止二进制 docx 被当纯文本渲染。
 let _pendingOfficeOpenRetry: string | null = null
@@ -763,6 +770,8 @@ katexCriticalStyleApi = createKatexCriticalStyle({
 // 所见模式光标点闪烁工厂实例化(800ms 周期,状态机)
 dotBlinkApi = createDotBlink({
   intervalMs: 800,
+  // perf 批次 I：失焦时给 .container 打标记，CSS 侧暂停闪烁动画，降低后台 CPU
+  getHost: () => document.querySelector('.container') as HTMLElement | null,
 })
 
 // 启动期非关键模块延迟加载调度工厂实例化
@@ -1528,6 +1537,13 @@ function ensurePreviewLinkHandlingBound(): void {
         const href = String(link.getAttribute('href') || '').trim()
         if (!href) return
         if (isPreviewHashLink(href)) {
+          if (_virtualPreview?.isActive) {
+            ev.preventDefault()
+            try { ev.stopPropagation() } catch {}
+            const id = normalizePreviewAnchorText(href.slice(1))
+            void _virtualPreview.scrollToAnchor(id)
+            return
+          }
           if (scrollPreviewAnchorIntoView(href, preview)) {
             ev.preventDefault()
             try { ev.stopPropagation() } catch {}
@@ -1807,6 +1823,17 @@ titlebarStatusApi = createTitlebarStatus({
 
 function scheduleWysiwygRender() {
   try {
+    if (_cm6Host) {
+      if (_wysiwygRaf) cancelAnimationFrame(_wysiwygRaf)
+      _wysiwygRaf = requestAnimationFrame(() => {
+        _wysiwygRaf = 0
+        try { _cm6Host?.syncFromTextarea() } catch (e) {
+          try { logWarn('[CM6] 外部内容同步失败，回退源码模式', { err: String(e) }) } catch {}
+          void setWysiwygEnabled(false)
+        }
+      })
+      return
+    }
     if (!wysiwyg || !wysiwygV2Active) return
     if (_wysiwygRaf) cancelAnimationFrame(_wysiwygRaf)
     _wysiwygRaf = requestAnimationFrame(() => {
@@ -1935,6 +1962,82 @@ type SetWysiwygOptions = {
   background?: boolean
   // 后台任务完成前可能已经打开了另一个文档；此时不允许提交 UI 切换
   shouldCommit?: () => boolean
+  // 标记真实用户操作
+  userInitiated?: boolean
+  // 用户明确要求承担 Milkdown 大文档构建成本时使用
+  forceMilkdown?: boolean
+}
+
+let _cm6Host: Cm6ModeHost | null = null
+
+function isCm6Active(): boolean {
+  return !!_cm6Host
+}
+
+try {
+  ;(window as any).flymdIsCm6Active = isCm6Active
+  ;(window as any).flymdCm6ScrollToOffset = (offset: number) => {
+    if (!_cm6Host || !Number.isFinite(offset)) return
+    _cm6Host.setSelection(Math.max(0, offset))
+    _cm6Host.focus()
+  }
+} catch {}
+
+function isCm6LivePreviewEnabled(): boolean {
+  try { return localStorage.getItem('flymd:cm6LivePreview') !== 'false' } catch { return true }
+}
+
+async function enableCm6Mode(notifyLargeDocument: boolean): Promise<void> {
+  const started = performance.now()
+  const container = document.querySelector('.container') as HTMLDivElement | null
+  if (!container) throw new Error('CM6 宿主容器不存在')
+  const [{ Cm6ModeHost }, { createCm6LivePreview }] = await Promise.all([
+    import('./modes/cm6ModeHost'),
+    import('./modes/cm6LivePreview'),
+  ])
+  const livePreview = isCm6LivePreviewEnabled() ? createCm6LivePreview({
+    render: async (element, kind, source) => {
+      if (kind === 'mermaid') {
+        const pre = document.createElement('pre')
+        pre.className = 'mermaid'
+        pre.textContent = source
+        element.replaceChildren(pre)
+        await renderMermaidIn(element)
+      } else {
+        const math = document.createElement('div')
+        math.className = 'md-math-block'
+        math.setAttribute('data-math', source)
+        element.replaceChildren(math)
+        await renderKatexPlaceholders(element, true, _renderPreviewSeq)
+      }
+    },
+  }) : []
+  _cm6Host = await Cm6ModeHost.create({ container, editor, extensions: livePreview })
+  wysiwyg = true
+  wysiwygV2Active = false
+  mode = 'edit'
+  container.classList.remove('wysiwyg-v2-loading')
+  container.classList.add('wysiwyg-v2', 'wysiwyg-cm6')
+  try { preview.classList.add('hidden') } catch {}
+  try { applyUiZoom() } catch {}
+  try { updateChromeColorsForMode('wysiwyg') } catch {}
+  try { applyLibraryLayout() } catch {}
+  try { rescanScrollContainers() } catch {}
+  try { titlebarStatusApi?.restoreScrollPosition(3, 100) } catch {}
+  try { titlebarStatusApi?.syncToggleButton() } catch {}
+  try { window.dispatchEvent(new CustomEvent('flymd:mode:changed', { detail: { wysiwyg, engine: 'cm6' } })) } catch {}
+  const size = autoWysiwygBlockedBySize()
+  try { logInfo('[CM6] 流畅编辑模式已启用', { 耗时ms: Math.round(performance.now() - started), 字节: size.bytes, 行数: size.lines, 路径: currentFilePath || '' }) } catch {}
+  if (notifyLargeDocument) notifyOversizedDocSkipped(size.bytes, size.lines)
+}
+
+function destroyCm6Mode(): void {
+  if (!_cm6Host) return
+  try { _cm6Host.destroy() } catch (e) {
+    try { logWarn('[CM6] 销毁失败，保留 textarea 同步镜像', { err: String(e) }) } catch {}
+  }
+  _cm6Host = null
+  try { document.querySelector('.container')?.classList.remove('wysiwyg-cm6') } catch {}
 }
 
 async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
@@ -1947,13 +2050,32 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
       notifyOfficeReadonlyBlocked()
       return
     }
-    if (wysiwyg === enable) return
+    if (wysiwyg === enable) {
+      if (enable && _cm6Host && opts?.forceMilkdown) await setWysiwygEnabled(false)
+      else return
+    }
+    if (enable && !opts?.forceMilkdown) {
+      const size = autoWysiwygBlockedBySize()
+      const engine = resolveEditorEngine(size, getLargeDocEnginePreference())
+      if (engine === 'cm6') {
+        try {
+          await enableCm6Mode(size.blocked)
+        } catch (e) {
+          try { destroyCm6Mode() } catch {}
+          wysiwyg = false
+          try { logWarn('[CM6] 启用失败，回退源码模式', { err: String(e) }) } catch {}
+          try { NotificationManager.show('plugin-error', '流畅编辑模式启用失败，已回退源码模式') } catch {}
+        }
+        return
+      }
+    }
     titlebarStatusApi?.saveScrollPosition()  // 保存当前滚动位置到全局缓存
     const container = document.querySelector('.container') as HTMLDivElement | null
     // 旧所见模式已移除：不要再添加 .wysiwyg，否则容器会被隐藏
     if (container) container.classList.remove('wysiwyg')
 
     if (!enable) {
+      destroyCm6Mode()
       wysiwyg = false
       if (container) { container.classList.remove('wysiwyg-v2-loading'); container.classList.remove('wysiwyg-v2'); }
     } else if (!opts?.background) {
@@ -2089,8 +2211,87 @@ async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
 }
 
 async function toggleWysiwyg() {
-  await setWysiwygEnabled(!wysiwyg)
+  await setWysiwygEnabled(!wysiwyg, { userInitiated: true })
   try { notifyModeChange() } catch {}
+}
+
+/**
+ * 大文档引擎判定：统一在 setWysiwygEnabled 入口选择 CM6 或 Milkdown。
+ * CM6 大文档路径避免 Milkdown Editor.create 的同步整篇构建；
+ * auto 在达到阈值时使用 CM6，小文档继续使用 Milkdown。
+ * 所有打开 / 批量收尾 / 启动 / 标签恢复 / 默认设置都经过同一路由。
+ * 用户仍可通过 forceMilkdown 明确选择完整 Milkdown。
+ */
+function autoWysiwygBlockedBySize(): { blocked: boolean; bytes: number; lines: number } {
+  try {
+    const content = readEditorContent()
+    const size = describeDocumentSize(content)
+    return { blocked: isOversizedDocumentSize(size), bytes: size.bytes, lines: size.lines }
+  } catch (e) {
+    // 性能守卫必须 fail-closed：判定失败时宁可不让用户进所见模式，
+    // 也不要放行一次十几秒的界面冻结。bytes/lines 记 0，提示语会走
+    // "无法确认文档大小"分支，不给出误导性的尺寸。
+    try { console.error('[autoWysiwygBlockedBySize] 体积判定失败，保守阻断:', e) } catch {}
+    return { blocked: true, bytes: 0, lines: 0 }
+  }
+}
+
+/**
+ * 读取编辑器当前内容。
+ * `editor` 是模块级的 textarea 常量，但这里仍做运行时类型校验：
+ * 万一将来换成非 textarea 的编辑器，读到的"空串"会让守卫静默放行
+ * （fail-open）——那正是守卫要防的后果。读不到就抛异常，由上面的
+ * fail-closed 分支处理。
+ */
+function readEditorContent(): string {
+  const el = editor as unknown
+  if (!el || typeof el !== 'object') throw new Error('editor 不可用')
+  const value = (el as { value?: unknown }).value
+  if (typeof value !== 'string') throw new Error('editor.value 不是字符串，无法判定体积')
+  return value
+}
+
+// perf 批次 I：打开路径与启动路径都可能触发"跳过所见模式"，同一文档只提示一次
+// （按路径去重：换一个大文档仍会再次提示）
+// 去重逻辑在 core/largeDoc.ts（可单测）：空路径用哨兵值参与比较，
+// 避免"从未提示"与"已对未保存文档提示过"撞车导致反复弹提示。
+const _oversizedNoticeDedup = createOversizedNoticeDedup()
+
+/** 超大文档提示的停留时长：给用户读完尺寸说明并决定是否手动开启的时间 */
+const OVERSIZED_NOTICE_DURATION_MS = 12000
+
+/** 非阻断提示：告知大文档已进入 CM6，并保留完整 Milkdown 逃生入口 */
+function notifyOversizedDocSkipped(bytes: number, lines: number): void {
+  try {
+    if (!_oversizedNoticeDedup.consume(currentFilePath || '', bytes + ':' + lines)) return
+    const known = bytes > 0 || lines > 0
+    NotificationManager.showWithActions(
+      'mode-wysiwyg',
+      known
+        ? `文档较大（${formatDocumentSize(bytes)} / ${lines} 行），已使用流畅编辑模式`
+        : '无法确认文档大小，已使用流畅编辑模式',
+      {
+        duration: OVERSIZED_NOTICE_DURATION_MS,
+        actions: [
+          {
+            label: '使用完整所见（可能卡顿）',
+            onClick: () => {
+              void (async () => {
+                try {
+                  await setWysiwygEnabled(true, { userInitiated: true, forceMilkdown: true })
+                } catch (err) {
+                  console.error('[notifyOversizedDocSkipped] 手动启用所见模式失败:', err)
+                  try { NotificationManager.show('plugin-error', '所见模式启用失败，请稍后重试') } catch {}
+                }
+              })()
+            },
+          },
+        ],
+      },
+    )
+  } catch (e) {
+    try { console.error('[notifyOversizedDocSkipped] 提示失败:', e) } catch {}
+  }
 }
 
 // WYSIWYG caret 反馈 5 个函数(updateWysiwygLineHighlight / measureCharWidth /
@@ -2701,22 +2902,135 @@ function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
   } catch {}
 }
 
+let _virtualPreview: VirtualPreview | null = null
+let _virtualPreviewCache: MarkdownBlockModelCache | null = null
+let _virtualFindTotal = 0
+let _virtualFindIndex = -1
+let _virtualFindRequestSeq = 0
+
+function getReadingRendererPreference(): 'virtual' | 'legacy' {
+  try { return localStorage.getItem('flymd:readingRenderer') === 'legacy' ? 'legacy' : 'virtual' } catch { return 'virtual' }
+}
+
+function isVirtualPreviewActive(): boolean {
+  return !!_virtualPreview?.isActive
+}
+
+try { (window as any).flymdIsVirtualPreview = isVirtualPreviewActive } catch {}
+try {
+  ;(window as any).flymdVirtualPreviewScrollToOffset = async (offset: number) => {
+    const model = _virtualPreview?.currentModel
+    if (!model || !Number.isFinite(offset)) return null
+    const line = String(model.originalSource.slice(0, Math.max(0, offset))).split('\n').length - 1
+    return await _virtualPreview?.scrollToSourceLine(Math.max(0, line - model.originalLineOffset))
+  }
+  ;(window as any).flymdVirtualPreviewScrollToAnchor = async (id: string) => {
+    return await _virtualPreview?.scrollToAnchor(normalizePreviewAnchorText(id))
+  }
+} catch {}
+
+async function renderVirtualPreview(
+  raw: string,
+  mdHost: HTMLDivElement,
+  seq: number,
+  previewMeta: any,
+  previewMetaLabels: MetadataLabelMap | null,
+  originalLineOffset: number,
+): Promise<boolean> {
+  const started = performance.now()
+  try {
+    const [{ VirtualPreview: Renderer }, blocks] = await Promise.all([
+      import('./core/virtualPreview'),
+      import('./core/markdownBlocks'),
+    ])
+    if (seq !== _renderPreviewSeq) return true
+    if (!_virtualPreviewCache) _virtualPreviewCache = new blocks.MarkdownBlockModelCache()
+    const originalSource = String(editor.value || '')
+    let model = _virtualPreviewCache.get(raw)
+    if (!model || model.originalSource !== originalSource || model.originalLineOffset !== originalLineOffset) {
+      model = await blocks.createMarkdownBlockModel(raw, md!, { originalSource, originalLineOffset })
+      _virtualPreviewCache.set(raw, model)
+    }
+    if (model.requiresLegacy) return false
+    if (seq !== _renderPreviewSeq) return true
+
+    if (!_virtualPreview) {
+      _virtualPreview = new Renderer(preview, mdHost, {
+        md: md!,
+        sanitize: sanitizePreviewHtml,
+        enhance: async (root, _model, _generation) => {
+          try { await renderMermaidIn(root) } catch {}
+          try { await decorateCodeBlocks(root) } catch {}
+          try { void renderKatexPlaceholders(root, false, _renderPreviewSeq) } catch {}
+          try {
+            const footnoteMod = await import('./plugins/markdownItFootnote')
+            const enhance = (footnoteMod as any).enhanceFootnotes as ((root: HTMLElement, mapRoot?: HTMLElement | null) => void) | undefined
+            if (typeof enhance === 'function') enhance(root, _virtualPreview?.currentFootnoteRoot)
+          } catch {}
+          try { enhancePreviewLinks(root, { currentFilePath }) } catch {}
+          try { enhancePreviewImages(root, { currentFilePath, forPrint: false }) } catch {}
+        },
+      })
+    }
+
+    const accepted = await _virtualPreview.setDocument(model)
+    if (!accepted || seq !== _renderPreviewSeq) return true
+    const metaHost = _virtualPreview.currentMetaHost
+    if (metaHost) {
+      metaHost.replaceChildren()
+      try { injectPreviewMeta(metaHost as HTMLDivElement, previewMeta, { metadataLabels: previewMetaLabels, currentFilePath }) } catch {}
+    }
+    _taskMapLast = hasTaskListCandidate(originalSource) ? scanTaskList(originalSource) : []
+    if (!_taskEventsBound) {
+      try { preview.addEventListener('click', onTaskCheckboxChange as any, true); preview.addEventListener('change', onTaskCheckboxChange, true) } catch {}
+      _taskEventsBound = true
+    }
+    if (!_calloutFoldEventsBound) { try { preview.addEventListener('click', onCalloutFoldClick as any, true) } catch {} ; _calloutFoldEventsBound = true }
+    if (!_calloutCopyEventsBound) { try { preview.addEventListener('click', onCalloutCopyClick as any, true) } catch {} ; _calloutCopyEventsBound = true }
+    try { outlineApi.renderOutlinePanel() } catch {}
+    const elapsed = Math.round(performance.now() - started)
+    if (elapsed >= 100) {
+      try { logInfo('[渲染] 视口预览', { 耗时ms: elapsed, ..._virtualPreview.stats }) } catch {}
+    }
+    return true
+  } catch (e) {
+    try { logWarn('[渲染] 视口预览失败，回退整篇渲染', { err: String(e) }) } catch {}
+    try { _virtualPreview?.destroy() } catch {}
+    _virtualPreview = null
+    return false
+  }
+}
+
 // 渲染预览（带安全消毒）
 async function renderPreview(opts?: RenderPreviewOptions) {
   const seq = ++_renderPreviewSeq
+  // perf 批次 H：入口段（caret 注入/front matter/ensureRenderer）从函数顶部起算
+  const _fnStart = performance.now()
   _nudgedCaretForThisRender = false
   try { if (DEBUG_RENDER) console.log('=== 开始渲染预览 ===') } catch {}
   // 首次预览开始打点
   try { if (!(renderPreview as any)._firstLogged) { (renderPreview as any)._firstLogged = true; logInfo('打点:首次预览开始') } } catch {}
+  // perf 批次 H 定位打点：模式与入口段推进（DEBUG 级，仅调试日志开启时落盘）
+  try { logDebug('[renderPreview] 开始', { wysiwyg, mode, forPrint: !!opts?.forPrint }) } catch {}
   try { if ((currentFilePath || '').toLowerCase().endsWith('.pdf')) return } catch {}
+  // perf 批次 H：纯编辑模式（未开分屏预览）时预览面板不可见——623KB 文档单次渲染
+  // ~4.6s，编辑期间每个击键都全量渲染纯属浪费（真机实测：编辑模式 20 秒内 13 次
+  // 连续渲染）。跳过渲染，大纲改走源码路径更新；切到阅读/分屏时照常全量渲染。
+  if (mode === 'edit' && !(window as any).flymdGetSplitPreviewEnabled?.() && !opts?.forPrint) {
+    try { outlineApi?.scheduleOutlineUpdateFromSource() } catch {}
+    try { logDebug('[renderPreview] 纯编辑模式跳过渲染') } catch {}
+    return
+  }
   try { setPreviewKind('md') } catch {}
   const { mdHost } = ensurePreviewHosts()
   await ensureRenderer()
+  try { logDebug('[renderPreview] ensureRenderer 完成') } catch {}
   if (seq !== _renderPreviewSeq) return
   let raw = editor.value
-  // 所见模式：用一个“.”标记插入点，优先不破坏 Markdown 结构
+  // 所见模式：用一个”.”标记插入点，优先不破坏 Markdown 结构
   try {
     if (wysiwyg && mode !== 'preview' && !opts?.forPrint) {
+      try { logDebug('[renderPreview] caret 注入开始') } catch {}
       const st = editor.selectionStart >>> 0
       const before = raw.slice(0, st)
       const lineStart = before.lastIndexOf('\n') + 1
@@ -2823,11 +3137,15 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   // 阅读模式/所见模式预览：渲染时剥离 YAML Front Matter，仅显示正文；若存在 Front Matter，则解析用于预览元数据条
   let previewMeta: any | null = null
   let previewMetaLabels: MetadataLabelMap | null = null
+  let originalLineOffset = 0
   try {
+    const beforeSplit = raw
     const r = splitYamlFrontMatter(raw)
     // js-yaml 依赖方,动态 import 避免进入入口静态闭包(NFR-2)
     previewMeta = (await import('./core/frontMatterMeta')).parseFrontMatterMeta(r.frontMatter)
     raw = r.body
+    const removed = beforeSplit.slice(0, Math.max(0, beforeSplit.length - raw.length))
+    originalLineOffset = removed ? removed.split('\n').length - 1 : 0
   } catch {}
   try {
     if (previewMeta) previewMetaLabels = (await getActiveLibrary())?.metadataLabels || null
@@ -2835,7 +3153,26 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   // Excel 公式保护 / callout 空行归一 / strong boundary 守卫 / md.render / 剥零宽守卫
   // 已收敛到 renderMarkdownCore（perf 批次 F），顺序与原内联实现一致
   try { await ensureHljsCore() } catch {}
+  if (!opts?.forPrint && !wysiwyg && mode === 'preview' && getReadingRendererPreference() === 'virtual') {
+    try { preview.classList.add('rendering') } catch {}
+    const handled = await renderVirtualPreview(raw, mdHost, seq, previewMeta, previewMetaLabels, originalLineOffset)
+    if (seq === _renderPreviewSeq) { try { preview.classList.remove('rendering') } catch {} }
+    if (handled) {
+      try { if (!(renderPreview as any)._firstDone) { (renderPreview as any)._firstDone = true; logInfo('打点:首次预览完成') } } catch {}
+      return
+    }
+    try { _virtualPreview?.destroy() } catch {}
+    _virtualPreview = null
+  }
+  // perf 批次 H：分段耗时观测（总计 ≥300ms 才记录，避免刷屏）；真机卡顿可直接归因
+  const _segStart = performance.now()
+  try { logDebug('[renderPreview] 入口段结束，管线开始') } catch {}
+  let _tSeg = _segStart
+  let _msPipeline = 0, _msSanitize = 0, _msMermaid = 0, _msMount = 0, _msDecorate = 0
   const html = await renderMarkdownCore(raw, md!)
+  _msPipeline = Math.round(performance.now() - _tSeg)
+  const _msEntry = Math.round(_segStart - _fnStart)
+  _tSeg = performance.now()
   // 按需加载 KaTeX 样式：检测渲染结果是否包含 katex 片段
   try {
     if (!katexCssLoaded && /katex/.test(html)) {
@@ -2846,6 +3183,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   try { if (DEBUG_RENDER) console.log('Markdown 渲染后的 HTML 片段:', html.substring(0, 500)) } catch {}
 
   const safe = await sanitizePreviewHtml(html)
+  _msSanitize = Math.round(performance.now() - _tSeg)
+  _tSeg = performance.now()
   // WYSIWYG 防闪烁：使用离屏容器完成 Mermaid 替换后一次性提交
   try {
     preview.classList.add('rendering')
@@ -2869,12 +3208,16 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       }
     } catch {}
     try { await renderMermaidIn(buf) } catch {}
+    _msMermaid = Math.round(performance.now() - _tSeg)
+    _tSeg = performance.now()
     // 一次性替换预览 DOM
     try {
       try { injectPreviewMeta(buf, previewMeta, { metadataLabels: previewMetaLabels, currentFilePath }) } catch {}
       if (seq !== _renderPreviewSeq) return
       mdHost.innerHTML = ''
       mdHost.appendChild(buf)
+      _msMount = Math.round(performance.now() - _tSeg)
+      _tSeg = performance.now()
       // 预览脚注增强：跳转 + 悬浮
       try {
         const footnoteMod = await import('./plugins/markdownItFootnote')
@@ -2883,7 +3226,10 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       } catch {}
       // 代码块装饰只在挂载后的 mdHost 上做（依赖 getComputedStyle/getBoundingClientRect 像素测量；
       // 原先对游离 buf 的调用测量全为 0 且会置 data-codebox=1 让本次调用被守卫跳过，已删除）
-      try { decorateCodeBlocks(mdHost) } catch {}
+      // perf 批次 H：分相重构后（纯写分片 → 单次布局读齐 → 纯写应用），数千代码块不再冻结
+      try { await decorateCodeBlocks(mdHost) } catch {}
+      _msDecorate = Math.round(performance.now() - _tSeg)
+      _tSeg = performance.now()
       // 公式多的文档（例如 solag.md）这里是主要性能瓶颈：切片渲染避免 UI “假死”。
       try {
         if (opts?.forPrint) await renderKatexPlaceholders(buf, true, seq)
@@ -2895,128 +3241,53 @@ async function renderPreview(opts?: RenderPreviewOptions) {
       try { outlineApi.renderOutlinePanel() } catch {}
     } catch {}
   } catch {} finally { try { if (seq === _renderPreviewSeq) preview.classList.remove('rendering') } catch {} }
-  // 外链安全属性
-  mdHost.querySelectorAll('a[href]').forEach((a) => {
-    const el = a as HTMLAnchorElement
-    const href = el.getAttribute('href') || ''
-    // 页内锚点链接：保持在当前预览中滚动，不打开新窗口。
-    if (isPreviewHashLink(href)) {
-      el.removeAttribute('target')
-      el.removeAttribute('rel')
-      return
-    }
-    if (resolvePreviewLocalDocPath(href, currentFilePath)) {
-      el.removeAttribute('target')
-      el.removeAttribute('rel')
-      return
-    }
-    el.target = '_blank'
-    el.rel = 'noopener noreferrer'
-  })
-  // 处理本地图片路径为 asset: URL，确保在 Tauri 中可显示
+  // 外链安全属性 + 本地图片处理：已抽到 core/previewDomEnhance（perf 批次 G），
+  // wysiwyg 光标 nudging 依赖本文件状态，经 onImageRendered 回调留在本文件
+  enhancePreviewLinks(mdHost, { currentFilePath })
   try {
-    mdHost.querySelectorAll('img[src]').forEach((img) => {
-      // WYSIWYG: nudge caret after image render when editor has no scroll space
-      try {
-        const el = img as HTMLImageElement
-        const maybeNudge = () => {
-          try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
-          if (_nudgedCaretForThisRender || !wysiwyg) return
-          try {
-            const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
-            const pr = Math.max(0, preview.scrollHeight - preview.clientHeight)
-            if (er <= 0 && pr > 0 && editor.selectionStart === editor.selectionEnd) {
-              const st = window.getComputedStyle(editor)
-              const fs = parseFloat(st.fontSize || '16') || 16
-              const v = parseFloat(st.lineHeight || '')
-              const lh = (Number.isFinite(v) && v > 0 ? v : fs * 1.6)
-              const approx = Math.round(((el.clientHeight || 0) / (lh || 16)) * 0.3)
-              const lines = Math.max(4, Math.min(12, approx || 0))
-              const moved = wysiwygCaretApi.moveWysiwygCaretByLines(lines, wysiwygCaretApi.getVisualColumn())
-              if (moved !== 0) {
-                _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
-            }
-          } catch {}
-        }
-        if (el.complete) { setTimeout(maybeNudge, 0) } else { el.addEventListener('load', () => setTimeout(maybeNudge, 0), { once: true }) }
-      } catch {}
-      try {
-        const el = img as HTMLImageElement
-        // 非打印/导出预览时，对图片启用懒加载，减少长文档首屏网络请求。
+    enhancePreviewImages(mdHost, {
+      currentFilePath,
+      forPrint: opts?.forPrint,
+      onImageRendered: (el) => {
+        // WYSIWYG: nudge caret after image render when editor has no scroll space
+        try { wysiwygCaretApi.updateWysiwygVirtualPadding() } catch {}
+        if (_nudgedCaretForThisRender || !wysiwyg) return
         try {
-          if (!opts?.forPrint && !el.hasAttribute('loading')) {
-            el.setAttribute('loading', 'lazy')
+          const er = Math.max(0, editor.scrollHeight - editor.clientHeight)
+          const pr = Math.max(0, preview.scrollHeight - preview.clientHeight)
+          if (er <= 0 && pr > 0 && editor.selectionStart === editor.selectionEnd) {
+            const st = window.getComputedStyle(editor)
+            const fs = parseFloat(st.fontSize || '16') || 16
+            const v = parseFloat(st.lineHeight || '')
+            const lh = (Number.isFinite(v) && v > 0 ? v : fs * 1.6)
+            const approx = Math.round(((el.clientHeight || 0) / (lh || 16)) * 0.3)
+            const lines = Math.max(4, Math.min(12, approx || 0))
+            const moved = wysiwygCaretApi.moveWysiwygCaretByLines(lines, wysiwygCaretApi.getVisualColumn())
+            if (moved !== 0) {
+              _nudgedCaretForThisRender = true; wysiwygCaretApi.updateWysiwygLineHighlight(); wysiwygCaretApi.updateWysiwygCaretDot(); dotBlinkApi!.start(); try { wysiwygCaretApi.ensureWysiwygCaretDotInView() } catch {} }
           }
         } catch {}
-        const src = el.getAttribute('src') || ''
-        const abs0 = resolveLocalImageAbsPathFromSrc(src, currentFilePath)
-        if (!abs0) return
-        let abs: string = abs0
-        // 若图片路径来自其他设备（WebDAV 同步后常见）：旧绝对路径会失效。
-        // 这里在加载失败时，尝试把它映射到“当前文档同目录 images/”下的同名文件。
-        let triedRemap = false
-        let triedDataFallback = false
-        const onError = async () => {
-          try {
-            if (!triedRemap && currentFilePath) {
-              const remapped = guessSyncedDocImageAbsPath(currentFilePath, abs)
-              triedRemap = true
-              if (remapped && remapped !== abs) {
-                try {
-                  if (typeof exists === 'function' && (await exists(remapped as any))) {
-                    abs = remapped
-                    const u2 = typeof convertFileSrc === 'function' ? convertFileSrc(remapped) : remapped
-                    try { (el as any).setAttribute('data-abs-path', remapped) } catch {}
-                    el.addEventListener('error', onError, { once: true })
-                    el.src = u2
-                    return
-                  }
-                } catch {}
-              }
-            }
-          } catch {}
-          // 仍失败：回退为 data: URL（用于某些环境 asset: 也无法加载的情况）
-          if (triedDataFallback) return
-          triedDataFallback = true
-          try {
-            if (typeof readFile !== 'function') return
-            const bytes = await readFile(abs as any)
-            const mime = (() => {
-              const m = (abs || '').toLowerCase().match(/\.([a-z0-9]+)$/)
-              switch (m?.[1]) {
-                case 'jpg':
-                case 'jpeg': return 'image/jpeg'
-                case 'png': return 'image/png'
-                case 'gif': return 'image/gif'
-                case 'webp': return 'image/webp'
-                case 'bmp': return 'image/bmp'
-                case 'avif': return 'image/avif'
-                case 'ico': return 'image/x-icon'
-                case 'svg': return 'image/svg+xml'
-                default: return 'application/octet-stream'
-              }
-            })()
-            const blob = new Blob([bytes], { type: mime })
-            const dataUrl = await new Promise<string>((resolve, reject) => {
-              try {
-                const fr = new FileReader()
-                fr.onerror = () => reject(fr.error || new Error('读取图片失败'))
-                fr.onload = () => resolve(String(fr.result || ''))
-                fr.readAsDataURL(blob)
-              } catch (e) { reject(e as any) }
-            })
-            el.src = dataUrl
-          } catch {}
-        }
-        el.addEventListener('error', onError, { once: true })
-
-        const url = typeof convertFileSrc === 'function' ? convertFileSrc(abs) : abs
-          try { (el as any).setAttribute('data-abs-path', abs) } catch {}
-          try { if (typeof src === 'string') (el as any).setAttribute('data-raw-src', src) } catch {}
-        el.src = url
-      } catch {}
+      },
     })
   } catch {}
+  const _msLinksImages = Math.round(performance.now() - _tSeg)
+  const _msTotal = Math.round(performance.now() - _segStart)
+  // perf 批次 H：分段耗时观测——总计 ≥300ms 才记录，真机卡顿直接看日志归因
+  if (_msTotal >= 300) {
+    try {
+      logInfo('[启动耗时] 预览渲染分段', {
+        总计ms: _msTotal,
+        入口ms: _msEntry,
+        管线ms: _msPipeline,
+        消毒ms: _msSanitize,
+        mermaidms: _msMermaid,
+        挂载ms: _msMount,
+        装饰ms: _msDecorate,
+        链接图片ms: _msLinksImages,
+        文档长度: raw.length,
+      })
+    } catch {}
+  }
 
   // 阅读/预览模式：在 Mermaid 渲染完成后统一依据当前全局缩放重算一次 SVG 宽度
   // 等价于用户手动点击一次工具条上的“R”，但不会修改缩放值本身，避免每次打开都需要手动复位
@@ -3717,6 +3988,9 @@ async function openFile2(preset?: unknown, opts?: { quiet?: boolean }) {
       wysiwygDefault = localStorage.getItem(WYSIWYG_DEFAULT_KEY) === 'true'
     } catch {}
     const shouldEnableWysiwyg = wysiwygDefault || wasWysiwyg
+    // perf 批次 I：所有**自动**启用都受超大文档阈值限制（无论来源是"默认所见偏好"
+    // 还是"上次就处于所见模式"）——Editor.create 的同步阻塞与触发来源无关。
+    // 用户手动切换走 setWysiwygEnabled，不经过下面的守卫。
     // Office 转换预览副本（doc/docx 的临时 md）：强制阅读模式，
     // 两个 bypass 在此收敛——"默认源码模式"打开后落编辑、默认所见/打开前所见自动开所见
     const officePreviewTab = isOfficePreviewCachePath(selectedPath)
@@ -3836,7 +4110,7 @@ async function openFile2(preset?: unknown, opts?: { quiet?: boolean }) {
     // 打开后视图策略：若最终会进入所见，则中间态强制用预览（更接近所见，且不会露出 textarea）
     if (shouldEnableWysiwyg && !officePreviewTab) {
       // quiet（批量还原）期间只做标记，等批量结束统一为最终激活标签切入所见
-      if (opts?.quiet) _batchOpenWantsWysiwyg = true
+      if (opts?.quiet) { _batchOpenWantsWysiwyg = true }
       mode = 'preview'
       try { preview.classList.remove('hidden') } catch {}
       // quiet 期间跳过逐文件渲染：只有最终激活标签需要渲染，批量结束后统一补一次
@@ -3868,6 +4142,7 @@ async function openFile2(preset?: unknown, opts?: { quiet?: boolean }) {
             })
           } catch (e) {
             console.error('[WYSIWYG] 打开文档后启用所见模式失败:', e)
+            try { NotificationManager.show('plugin-error', '所见模式自动启用失败，可从模式菜单手动开启') } catch {}
           }
         })()
       }, 0)
@@ -4417,13 +4692,18 @@ async function openRecentSetAsTabs(paths: string[], active: string | null): Prom
   _batchOpenWantsWysiwyg = false
   try {
     for (const p of paths) {
+      // perf 批次 H：当前激活文件已在启动首波打开并渲染完毕——批量重开同文件会
+      // 触发一次完整的 623KB 重渲染（真机实测启动序列同文件被渲染 3 遍 ≈ 30s）
+      try { if (p === currentFilePath) continue } catch {}
       try { await openFile2(p, { quiet: true }) } catch (e) { console.warn('打开最近文件失败:', p, e) }
     }
   } finally {
     _suppressOpenSwitchConfirm = false
     _suppressRecentPush = false
   }
-  if (active) {
+  // perf 批次 H：激活目标就是当前文件（首波已渲染）时跳过切换——
+  // switchToTab → restoreTabState → refreshPreview 会对同一文件再触发一次全量渲染
+  if (active && active !== currentFilePath) {
     try { const m = await import('./tabs/integration'); await m.activateTabByPathIfOpen(active) } catch {}
   }
   // 统一收尾高亮：批量打开期间逐文件触发的文件树高亮同步是异步的
@@ -4453,6 +4733,7 @@ async function openRecentSetAsTabs(paths: string[], active: string | null): Prom
           }))
         } catch (e) {
           console.error('[WYSIWYG] 批量还原后启用所见模式失败:', e)
+          try { NotificationManager.show('plugin-error', '所见模式自动启用失败，可从模式菜单手动开启') } catch {}
         }
       })()
     }, { timeout: 1500 })
@@ -6478,6 +6759,11 @@ function bindEvents() {
     // 设置选区并将其滚动到视口中间附近（仅源码模式 textarea）
     function setSel(s: number, e: number) {
       try {
+        if (_cm6Host) {
+          _cm6Host.setSelection(s >>> 0, e >>> 0)
+          _cm6Host.focus()
+          return
+        }
         const ta = editor as HTMLTextAreaElement
         const len = String(ta.value || '').length >>> 0
         const start = s >>> 0
@@ -6528,9 +6814,11 @@ function bindEvents() {
       try {
         // 阅读模式：优先使用预览 DOM 的匹配信息
         if (mode === 'preview' && !wysiwyg) {
-          const total = _previewFindMatches.length
+          const virtual = isVirtualPreviewActive()
+          const total = virtual ? _virtualFindTotal : _previewFindMatches.length
           if (!total) { lblCount.textContent = '未找到'; return }
-          const cur = _previewFindIndex >= 0 ? (_previewFindIndex + 1) : 0
+          const foundIndex = virtual ? _virtualFindIndex : _previewFindIndex
+          const cur = foundIndex >= 0 ? (foundIndex + 1) : 0
           lblCount.textContent = cur > 0 ? `${cur}/${total}` : `${total}个`
           return
         }
@@ -6549,6 +6837,17 @@ function bindEvents() {
 
     function findInPreview(term: string, caseSensitive: boolean, forward: boolean) {
       try {
+        const virtual = _virtualPreview
+        if (virtual?.isActive) {
+          const request = ++_virtualFindRequestSeq
+          void virtual.find(term, caseSensitive, forward).then(result => {
+            if (request !== _virtualFindRequestSeq) return
+            _virtualFindTotal = result.total
+            _virtualFindIndex = result.index
+            updateFindCountLabel()
+          }).catch(() => {})
+          return true
+        }
         // 清除之前的高亮
         const sel = window.getSelection()
         if (sel) sel.removeAllRanges()
@@ -6638,7 +6937,7 @@ function bindEvents() {
         return
       }
 
-      if (wysiwyg) { try { wysiwygV2FindNext(term, !!_findCase?.checked) } catch {} ; updateFindCountLabel(); return }
+      if (wysiwyg && !_cm6Host) { try { wysiwygV2FindNext(term, !!_findCase?.checked) } catch {} ; updateFindCountLabel(); return }
       const val = String(editor.value || '')
       const hay = norm(val)
       const needle = norm(term)
@@ -6665,7 +6964,7 @@ function bindEvents() {
         return
       }
 
-      if (wysiwyg) { try { wysiwygV2FindPrev(term, !!_findCase?.checked) } catch {} ; updateFindCountLabel(); return }
+      if (wysiwyg && !_cm6Host) { try { wysiwygV2FindPrev(term, !!_findCase?.checked) } catch {} ; updateFindCountLabel(); return }
       const val = String(editor.value || '')
       const hay = norm(val)
       const needle = norm(term)
@@ -8877,7 +9176,12 @@ function bindEvents() {
             })
           } catch (e) { console.warn('[Extensions] Word 预览初始化失败:', e) }
           await nextIdle()
-          await timedStep('激活全部已启用插件', () => pluginRuntime!.loadAndActivateEnabledPlugins())
+          try {
+            await timedStep('激活全部已启用插件', () => pluginRuntime!.loadAndActivateEnabledPlugins())
+          } finally {
+            // perf 批次 I：插件就绪状态暴露给 UI（竞态窗口内触发插件命令会排队等待）
+            try { (window as any).flymdPluginsReady = true } catch {}
+          }
           // 插件可能注册了额外后缀（ASP），刷新文件树以应用过滤与图标规则
           await nextIdle()
           try { if (fileTreeReady) await timedStep('插件后缀生效后刷新文件树', () => fileTree.refresh()) } catch {}
@@ -8900,8 +9204,16 @@ function bindEvents() {
           await nextIdle()
           await timedStep('核心扩展启动后检查', () => coreExtensionsMod.ensureCoreExtensionsAfterStartup(store, APP_VERSION, (p) => pluginRuntime!.activatePlugin(p)))
           // 启动后后台检查一次扩展更新（仅提示，不自动更新）
+          //
+          // perf 批次 I：这一步**必须脱离启动关键路径**。真机实测该检查会拉取
+          // raw.githubusercontent.com 上的 manifest，单次耗时 47,728ms；它原本被
+          // await 在启动链上，把"应用就绪"从秒级拖到分钟级。
+          // 它本来就是后台提示型任务（失败只提示、不影响任何已装插件的使用），
+          // 因此改为不再 await ——检查自行在后台完成，结果仍以通知呈现。
           await nextIdle()
-          await timedStep('扩展更新检查', () => pluginRuntime!.checkPluginUpdatesOnStartup())
+          void timedStep('扩展更新检查', () => pluginRuntime!.checkPluginUpdatesOnStartup()).catch((e) => {
+            try { console.warn('[Extensions] 扩展更新检查失败:', e) } catch {}
+          })
         } catch (e) {
           console.warn('[Extensions] 延迟初始化失败:', e)
         }
@@ -9096,11 +9408,15 @@ function bindEvents() {
       const ric: any = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 200))
       ric(async () => {
         try {
-          await Promise.allSettled([
+          const modules: Promise<unknown>[] = [
             import('markdown-it'),
             import('dompurify'),
             import('highlight.js/lib/core'),
-          ])
+          ]
+          if (autoWysiwygBlockedBySize().blocked) {
+            modules.push(import('./modes/cm6ModeHost'), import('./modes/cm6LivePreview'))
+          }
+          await Promise.allSettled(modules)
         } catch {}
       })
     } catch {}
@@ -9138,8 +9454,7 @@ function bindEvents() {
       const shouldEnableWysiwyg = wysiwygDefault && !sourcemodeDefault && !hasCurrentPdf
 
       if (shouldEnableWysiwyg && !wysiwyg && !stickyNoteMode) {
-        // Milkdown 初始化（加载 chunk + remark 全量解析文档）是重活，
-        // 放空闲期执行，避免与用户启动后的首次操作抢主线程
+        // 具体引擎由 setWysiwygEnabled 统一路由：大文档 CM6，小文档 Milkdown。
         const ricW: any = (window as any).requestIdleCallback || ((cb: any) => setTimeout(cb, 800))
         ricW(async () => {
           try {
@@ -9399,6 +9714,18 @@ async function applyExternalContentToEditor(content: string): Promise<void> {
   if (!currentFilePath) return
   const ed = document.getElementById('editor') as HTMLTextAreaElement | null
   if (!ed) return
+  // perf 批次 H：磁盘内容与编辑器完全一致时（外部监视器的启动期首次比对、
+  // 自身写盘后迟到的事件），整个重载+预览重渲（大文档实测 ~20s 双渲染）纯属
+  // 浪费——跳过写入与渲染，仅复位 dirty/标题并同步标签簿记。
+  // 注意：所见模式下 ed.value 是最后一次序列化结果，磁盘一致即无外部变更，
+  // PM 文档无需重建。
+  if (ed.value === content) {
+    try { dirty = false } catch {}
+    try { titlebarStatusApi?.refreshTitle() } catch {}
+    try { window.dispatchEvent(new CustomEvent('flymd-file-reloaded')) } catch {}
+    try { logDebug('[applyExternalContent] 内容与编辑器一致，跳过重载与渲染', { path: currentFilePath, length: content.length }) } catch {}
+    return
+  }
   const prevStart = ed.selectionStart
   const prevEnd = ed.selectionEnd
   const prevScroll = ed.scrollTop

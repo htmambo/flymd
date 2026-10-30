@@ -93,6 +93,10 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
 
   function getOutlineContext(needHeads = true): { mode: 'wysiwyg'|'preview'|'source'; scrollEl: HTMLElement | null; bodyEl: HTMLElement | null; heads: HTMLElement[] } {
     try {
+      if ((window as any).flymdIsCm6Active?.()) {
+        const scrollEl = document.querySelector('#md-cm6-root .cm-scroller') as HTMLElement | null
+        return { mode: 'source', scrollEl, bodyEl: null, heads: [] }
+      }
       if (deps.getWysiwyg()) {
         const rootEl = document.getElementById('md-wysiwyg-root') as HTMLElement | null
         if (rootEl) {
@@ -185,7 +189,8 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
       const ctx = getOutlineContext(true)
       const heads = ctx.heads
       const items: { level: number; id: string; text: string; offset?: number }[] = []
-      const useDomHeads = (deps.getWysiwyg() || deps.getMode() === 'preview') && heads.length > 0
+      const virtualPreview = !!(window as any).flymdIsVirtualPreview?.()
+      const useDomHeads = (deps.getWysiwyg() || deps.getMode() === 'preview') && heads.length > 0 && !virtualPreview
       if (useDomHeads) {
         heads.forEach((h, idx) => {
           const tag = (h.tagName || 'H1').toUpperCase()
@@ -303,6 +308,18 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
           const offsetStr = div.dataset.offset
 
           if (deps.getWysiwyg() || deps.getMode() === 'preview') {
+            if ((window as any).flymdIsCm6Active?.() && offsetStr) {
+              try { (window as any).flymdCm6ScrollToOffset?.(Number(offsetStr)) } catch {}
+              return
+            }
+            if (virtualPreview && offsetStr) {
+              try { void (window as any).flymdVirtualPreviewScrollToOffset?.(Number(offsetStr)) } catch {}
+              return
+            }
+            if (virtualPreview) {
+              try { void (window as any).flymdVirtualPreviewScrollToAnchor?.(id) } catch {}
+              return
+            }
             if (!id) return
             try {
               const target = document.getElementById(id)

@@ -169,3 +169,74 @@ describe('TabManager.importState — 活跃标签恢复', () => {
     expect(tm.getActiveTab()?.filePath).toBe('/tmp/a.md')
   })
 })
+
+describe('TabManager.restoreTabState — 所见模式实际状态收敛', () => {
+  function savedWysiwygTab() {
+    return {
+      tabs: [{
+        id: 'tab-large',
+        filePath: '/tmp/large.md',
+        content: '大文档内容',
+        dirty: true,
+        mode: 'edit',
+        wysiwygEnabled: true,
+      }],
+      activeTabId: 'tab-large',
+    } as any
+  }
+
+  it('自动启用被守卫拒绝后收敛为 false，重复恢复不再尝试且文档状态不变', async () => {
+    const tm = new TabManager()
+    const hooks = makeHooks()
+    const setWysiwygEnabled = vi.fn(async () => {})
+    hooks.setWysiwygEnabled = setWysiwygEnabled
+    tm.init(hooks)
+
+    await tm.importState(savedWysiwygTab(), async () => '')
+
+    const tab = tm.getActiveTab()!
+    expect(tab.wysiwygEnabled).toBe(false)
+    expect(tab.content).toBe('大文档内容')
+    expect(tab.filePath).toBe('/tmp/large.md')
+    expect(tab.dirty).toBe(true)
+    expect(hooks.getEditorContent()).toBe('大文档内容')
+    expect(hooks.getDirty()).toBe(true)
+    expect(setWysiwygEnabled).toHaveBeenCalledTimes(1)
+
+    await tm.applyTabState(tab.id)
+    expect(setWysiwygEnabled).toHaveBeenCalledTimes(1)
+  })
+
+  it('小文档自动启用成功后保持 true', async () => {
+    const tm = new TabManager()
+    const hooks = makeHooks()
+    let actual = false
+    hooks.getWysiwygEnabled = () => actual
+    hooks.setWysiwygEnabled = vi.fn(async (enabled: boolean) => { actual = enabled })
+    tm.init(hooks)
+
+    await tm.importState(savedWysiwygTab(), async () => '')
+
+    expect(tm.getActiveTab()?.wysiwygEnabled).toBe(true)
+    expect(hooks.setWysiwygEnabled).toHaveBeenCalledWith(true)
+  })
+
+  it('恢复等待期间的用户手动开启不被迟到的旧状态覆盖', async () => {
+    const tm = new TabManager()
+    const hooks = makeHooks()
+    let actual = false
+    let releaseEnable = () => {}
+    const pending = new Promise<void>((resolve) => { releaseEnable = resolve })
+    hooks.getWysiwygEnabled = () => actual
+    hooks.setWysiwygEnabled = vi.fn(async () => { await pending })
+    tm.init(hooks)
+
+    const restoring = tm.importState(savedWysiwygTab(), async () => '')
+    expect(hooks.setWysiwygEnabled).toHaveBeenCalledWith(true)
+    actual = true
+    releaseEnable()
+    await restoring
+
+    expect(tm.getActiveTab()?.wysiwygEnabled).toBe(true)
+  })
+})

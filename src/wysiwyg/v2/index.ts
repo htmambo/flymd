@@ -2,6 +2,7 @@
 // 暴露 enable/disable 与 setMarkdown/getMarkdown 能力，供主流程挂接
 
 import { history } from '@milkdown/plugin-history'
+import { logDebug } from '../../core/logger'
 import { isCodeContentClipped } from '../../ui/codeExpandClip'
 import { acquireEditLockAsync, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
@@ -528,6 +529,13 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   // 保护 Excel 公式里的 `$`，避免被 remark-math / 输入规则误识别为行内数学
   const contentForEditor = guardStrongBoundaryForCommonMark(protectExcelDollarRefs(content))
   console.log('[WYSIWYG V2] enableWysiwygV2 called, content length:', content.length)
+  // perf 批次 H4 定位：启用链路各阶段 console.error 直写 stderr（同步块内可观测）
+  const _wT0 = performance.now()
+  // 文件 logger 版本：await 边界之间可落盘（console 版本仅同步块内可见）
+  const _wMarkF = (at: string) => { try { logDebug('[WYSIWYG 启用链]', `${at} ${Math.round(performance.now() - _wT0)}ms`) } catch {} }
+  const _wMark = (at: string) => { try { console.error('[WYSIWYG diag]', at, Math.round(performance.now() - _wT0) + 'ms') } catch {} }
+  _wMark('预处理完成(guard/protect)')
+  _wMarkF('预处理完成(guard/protect)');
 
   // 仅销毁旧编辑器与观察器，保留外层传入的 root（避免被移除导致空白）
   cleanupEditorOnly()
@@ -539,6 +547,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   _lastRawSerializedMd = null
   _lastRawSerializedDoc = null
 
+  _wMark('cleanup/状态复位完成')
+  _wMarkF('cleanup/状态复位完成');
   const editor = await Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, root)
@@ -604,6 +614,8 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
     .use(listener)
     .use(history)
     .create()
+  _wMark('Editor.create 完成(milkdown 解析+PM 文档构建)')
+  _wMarkF('Editor.create 完成(milkdown 解析+PM 文档构建)');
 
   // 文档边界规范化：当文档末尾是 code_block/math_block 等"无文本入口"的块时，
   // plugin-trailing 需要通过一次事务在末尾补空段落（否则点击块下方/按↓无法逃出）。
@@ -833,6 +845,9 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       // 注：ListenerManager 上原方法名是 'updated'，原代码误写为 'docChanged'
       // （老版本 listener API 曾有同名方法，新版本已合并到 updated）
       lm.updated((_ctx) => {
+        // 临时诊断（perf 批次 H4）：同步失控循环无法被异步 logger 观测，
+        // console.error 直写进程 stderr 可在同步块内实时落盘
+        try { (window as any).__flymdTxDiag = ((window as any).__flymdTxDiag || 0) + 1; console.error('[tx-diag] updated', (window as any).__flymdTxDiag) } catch {}
         if (_suppressInitialUpdate) return
         // 捕获当前文档对象引用（C3）：与 markdownUpdated 的原始序列化配对，
         // 供 reparse 定时器做新鲜度判定；两处各捕获一次，先后顺序无关
@@ -910,12 +925,16 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
   } catch {}
   _suppressInitialUpdate = false
   _editor = editor
+  _wMark('listener 注册完成')
+  _wMarkF('listener 注册完成');
   // 把 editor 引用注入 editLock,使浮层源码编辑期间可以冻结整个编辑器
   try { bindEditLockEditor(() => _editor) } catch {}
   // 初次内容渲染完成后再刷一次代码块按钮覆盖层，避免“打开文件按钮不出现直到首次编辑”
   try { setTimeout(() => { try { scheduleCodeCopyRefresh() } catch {} }, 0) } catch {}
   // 围栏 math/katex/latex 代码块转换为 math_block 节点,让所见模式正确显示公式
   try { void transformMathFencesToMathBlocks(editor) } catch {}
+  _wMark('enableWysiwygV2 全链路完成')
+  _wMarkF('enableWysiwygV2 全链路完成');
 }
 
 // 围栏 math/katex/latex 代码块 → math_block 节点转换
@@ -1927,17 +1946,23 @@ function measureCodeCopyPlacement(
 
 function applyCodeCopyPlacement(p: CodeCopyPlacement, wrap: HTMLDivElement, rootRc: DOMRect) {
   try {
+    // perf 批次 H：每帧对 3255 个 wrap 重写样式 = 每帧上万次样式失效（滚动卡顿主因）。
+    // 值未变化时不写入（display/left/top 绝大多数帧保持不变）。
     if (!p.visible) {
-      wrap.style.display = 'none'
+      if (wrap.style.display !== 'none') wrap.style.display = 'none'
       return
     }
-    wrap.style.display = 'flex'
+    if (wrap.style.display !== 'flex') wrap.style.display = 'flex'
     // 使用整个容器的宽度（包含 Delete + Copy 按钮）；新建 wrap 此刻补测（低频路径）
     const wrapW = p.wrapW ?? (wrap.offsetWidth || 60)
     // 所见模式下滚动发生在内部 scrollView，pre 与 root 的相对位置已经包含滚动偏移
     const left = Math.max(0, (p.preRc.left - rootRc.left) + Math.max(0, p.preRc.width - wrapW - 6))
-    wrap.style.left = left + 'px'
-    wrap.style.top = p.top + 'px'
+    const posKey = left + ':' + p.top
+    if ((wrap as any).__lastPos !== posKey) {
+      wrap.style.left = left + 'px'
+      wrap.style.top = p.top + 'px'
+      ;(wrap as any).__lastPos = posKey
+    }
   } catch {}
 }
 
@@ -2064,7 +2089,8 @@ function refreshCodeCopyButtonsNow() {
       // 刷新缩放按钮显隐：已展开时保持显示（供收回）；限高中内容超高才显示
       const expandBtn = wrap.querySelector('button.code-expand') as HTMLButtonElement | null
       if (expandBtn) {
-        expandBtn.style.display = plan.overflowable ? '' : 'none'
+        const want = plan.overflowable ? '' : 'none'
+        if (expandBtn.style.display !== want) expandBtn.style.display = want
       }
     }
     for (const [pre, wrap] of Array.from(_codeCopyWraps.entries())) {

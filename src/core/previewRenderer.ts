@@ -101,6 +101,17 @@ export async function createPreviewMarkdownIt(deps: PreviewRendererDeps): Promis
   return md
 }
 
+export async function preprocessMarkdownCore(raw: string): Promise<string> {
+  raw = protectExcelDollarRefs(raw)
+  try {
+    const { normalizeCalloutMarkdown } = await import('../plugins/markdownItCallout')
+    if (typeof normalizeCalloutMarkdown === 'function') {
+      raw = normalizeCalloutMarkdown(raw)
+    }
+  } catch {}
+  return guardStrongBoundaryForCommonMark(raw)
+}
+
 /**
  * 纯字符串渲染管线。顺序与原 renderPreview 2892-2905 完全一致：
  * protectExcelDollarRefs → normalizeCalloutMarkdown → guardStrongBoundaryForCommonMark
@@ -108,15 +119,6 @@ export async function createPreviewMarkdownIt(deps: PreviewRendererDeps): Promis
  * 之前 await，纯加载器无字符串交互，次序无行为影响）。
  */
 export async function renderMarkdownCore(raw: string, md: MarkdownIt): Promise<string> {
-  // Excel 公式里的 `$` 不是行内数学分隔符：先转义，避免 KaTeX 把整段当数学渲染
-  raw = protectExcelDollarRefs(raw)
-  // 修复 Obsidian callout 内无 > 前缀的空行导致 blockquote 被 CommonMark 分断的问题
-  try {
-    const { normalizeCalloutMarkdown } = await import('../plugins/markdownItCallout')
-    if (typeof normalizeCalloutMarkdown === 'function') {
-      raw = normalizeCalloutMarkdown(raw)
-    }
-  } catch {}
-  raw = guardStrongBoundaryForCommonMark(raw)
+  raw = await preprocessMarkdownCore(raw)
   return stripStrongBoundaryGuard(md.render(raw))
 }

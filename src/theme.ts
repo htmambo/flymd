@@ -9,6 +9,7 @@
 
 // 运行期依赖（仅在需要时使用）
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
+import { lsGetStringCached, lsSetStringCached } from './core/lsCache'
 import { readFile, writeFile, mkdir, exists, remove, BaseDirectory } from '@tauri-apps/plugin-fs'
 import { homeDir, desktopDir, join } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
@@ -88,9 +89,10 @@ let _themeUiBound = false
 let _themePanelReady = false
 let _themeRuntimeBootstrapped = false
 
+// perf 批次 H3：读走内存缓存（与 sourceLineNumbers.ts 的同名读取共用一份缓存）
 function getSourceLineNumbersEnabled(): boolean {
   try {
-    return localStorage.getItem(SOURCE_LINE_NUMBERS_KEY) !== 'false'
+    return lsGetStringCached(SOURCE_LINE_NUMBERS_KEY) !== 'false'
   } catch {
     return true
   }
@@ -98,7 +100,7 @@ function getSourceLineNumbersEnabled(): boolean {
 
 function setSourceLineNumbersEnabled(enabled: boolean): void {
   try {
-    localStorage.setItem(SOURCE_LINE_NUMBERS_KEY, enabled ? 'true' : 'false')
+    lsSetStringCached(SOURCE_LINE_NUMBERS_KEY, enabled ? 'true' : 'false')
   } catch {}
   try {
     const ev = new CustomEvent('flymd:sourceLineNumbers:changed', { detail: { enabled } })

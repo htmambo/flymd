@@ -26,6 +26,7 @@ import {
   type PluginDockPanelState,
 } from './pluginHost'
 import { addToPluginsMenu } from './pluginMenu'
+import { createPluginReadyGate } from '../core/pluginReady'
 import type { PluginContextMenuItem } from '../ui/contextMenus'
 import type { NotificationType } from '../core/uiNotifications'
 import { t } from '../i18n'
@@ -101,6 +102,10 @@ export type PluginRuntimeHandles = {
   removePluginDir: (dir: string) => Promise<void>
 
   loadAndActivateEnabledPlugins: () => Promise<void>
+  /** 插件是否已完成启动期激活（perf 批次 I） */
+  isPluginsActivated: () => boolean
+  /** 等待插件激活完成（perf 批次 I） */
+  whenPluginsReady: () => Promise<void>
 }
 
 export function initPluginRuntime(
@@ -114,6 +119,9 @@ export function initPluginRuntime(
   const pluginAPIRegistry = new Map<string, PluginAPIRecord>() // namespace -> { pluginId, api }
   const additionalSuffixRegistry = new Map<string, any>() // ext -> rule
   const pluginContextMenuItems: PluginContextMenuItem[] = [] // 所有插件注册的右键菜单项
+  // perf 批次 I：插件激活在启动后台进行（不再阻塞"应用就绪"）。
+  // 用户可能在激活链跑完之前就触发插件命令——此时应"排队等待"而非直接失败。
+  const readyGate = createPluginReadyGate()
   const pluginSelectionHandlers = new Map<string, PluginSelectionHandler>()
   const pluginDockPanels = new Map<string, PluginDockPanelState>()
 
@@ -265,7 +273,8 @@ export function initPluginRuntime(
   }
 
   async function activatePlugin(p: InstalledPlugin): Promise<void> {
-    return pluginHost.activatePlugin(p)
+    // perf 批次 I：等待启动期的插件激活链完成（激活循环内部调用不走等待，避免自锁）
+    return readyGate.wait(() => pluginHost.activatePlugin(p))
   }
 
   async function deactivatePlugin(id: string): Promise<void> {
@@ -423,6 +432,8 @@ export function initPluginRuntime(
   }
 
   async function loadAndActivateEnabledPlugins(): Promise<void> {
+    if (readyGate.isReady()) return
+    readyGate.begin()
     try {
       const map = await getInstalledPlugins()
       // 按库隔离：有效启用 = 库覆盖 ?? 全局
@@ -444,7 +455,9 @@ export function initPluginRuntime(
       for (const p of toEnable) {
         const t0 = performance.now()
         try {
-          await activatePlugin(p)
+          // 激活循环内部**直接**调 pluginHost.activatePlugin，绕过就绪门控：
+          // 门控是给"外部调用"用的，内部调用若经过门控会等待自己 → 自锁。
+          await pluginHost.activatePlugin(p)
         } catch (e) {
           console.warn('插件激活失败', p.id, e)
         }
@@ -487,7 +500,20 @@ export function initPluginRuntime(
           } catch {}
         }
       } catch {}
-    } catch {}
+    } catch {} finally {
+      // 无论成败都视为就绪：激活失败不应永久阻塞外部调用
+      readyGate.finish()
+    }
+  }
+
+  /** 插件是否已完成启动期激活（perf 批次 I：供 UI 判定竞态窗口） */
+  function isPluginsActivated(): boolean {
+    return readyGate.isReady()
+  }
+
+  /** 等待插件激活完成（已激活则立即返回） */
+  async function whenPluginsReady(): Promise<void> {
+    await readyGate.wait(async () => {})
   }
 
   // 切库后按库覆盖状态对齐激活集：新库中禁用的停用、启用的激活
@@ -560,5 +586,7 @@ export function initPluginRuntime(
     updateInstalledPlugin,
     removePluginDir,
     loadAndActivateEnabledPlugins,
+    isPluginsActivated,
+    whenPluginsReady,
   }
 }

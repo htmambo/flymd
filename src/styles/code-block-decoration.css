@@ -1,6 +1,30 @@
 /* === 代码块装饰：语言角标、行号、复制 === */
 
 .codebox { position: relative; margin: 4px 0; --code-lang-gap: 28px; }
+
+/* 大文档代码块渲染裁剪（perf 批次 I）
+   真机实测：3352 个代码围栏的文档，滚动时 WebKit 需对全部代码块做布局+绘制，
+   掉帧明显。content-visibility: auto 让离屏代码块跳过布局与绘制。
+   门控：仅当代码块数量超阈值时，由 decorate.ts 在**测量完成之后**逐块打
+   .codebox-cv，普通文档完全不受影响（避免波及打印/导出等默认路径）。
+   打标时机很关键：content-visibility 生效后离屏子树跳过布局，此时读取
+   scrollHeight/clientHeight 会得到 0，超高块判定会失真——所以必须在测量后再打。
+   引擎不支持 content-visibility 时 @supports 整块失效，行为回落到当前状态。
+
+   占位高度（contain-intrinsic-size）必须与真实内容盒高度一致，否则整个文档的
+   滚动比例失真：Chrome 155 实测（3000 块）固定 120px 占位会让文档高度虚高
+   1.59 倍；decorate.ts 在打标前测出每块真实高度并写入内联样式后，高度比回到
+   1.0000。这里的 120px 只是 Pass C 之前的兜底，正常路径总是被内联值覆盖。
+   内联值带 auto 关键字（浏览器记忆上次渲染尺寸）；若引擎只支持
+   contain-intrinsic-size 而不认 auto，内联声明会被丢弃，此时下面这条
+   不带 auto 的兜底仍然生效（不会因占位缺失导致高度塌陷）。 */
+@supports (content-visibility: auto) {
+  .codebox.codebox-cv {
+    content-visibility: auto;
+    contain-intrinsic-size: 120px;
+  }
+}
+
 .codebox .code-lang {
   position: absolute;
   top: 4px;

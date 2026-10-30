@@ -210,6 +210,17 @@ describe('showModeMenu', () => {
     expect(renderPreview).toHaveBeenCalled()
   })
 
+  it('wysiwyg action marks only the real click as user initiated', async () => {
+    const setWysiwygEnabled = vi.fn()
+    const menus = createMainTopMenus(makeDeps({ setWysiwygEnabled }))
+    menus.showModeMenu()
+    expect(setWysiwygEnabled).not.toHaveBeenCalled()
+
+    const wysiwygItem = lastItems.find(it => it.label === 'mode.wysiwyg')
+    await wysiwygItem?.action()
+    expect(setWysiwygEnabled).toHaveBeenCalledWith(true, { userInitiated: true })
+  })
+
   it('split action falls back to alert when window.flymdToggleSplitPreview missing', () => {
     const alertSpy = vi.fn()
     ;(globalThis as any).alert = alertSpy

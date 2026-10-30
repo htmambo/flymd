@@ -31,7 +31,7 @@ export interface MainTopMenusDeps {
   // 模式/滚动
   saveScrollPosition: () => void
   restoreScrollPosition: () => void
-  setWysiwygEnabled: (v: boolean) => Promise<void> | void
+  setWysiwygEnabled: (v: boolean, opts?: { userInitiated?: boolean }) => Promise<void> | void
   notifyModeChange: () => void
   syncToggleButton: () => void
   updateChromeColorsForMode: (mode: 'edit' | 'preview') => void
@@ -140,7 +140,7 @@ export function createMainTopMenus(deps: MainTopMenusDeps): MainTopMenus {
         try { deps.notifyModeChange() } catch {}
       } },
       { label: deps.t('mode.wysiwyg'), accel: 'Ctrl+W', disabled: officeLocked, action: async () => {
-        try { await deps.setWysiwygEnabled(true) } catch {}
+        try { await deps.setWysiwygEnabled(true, { userInitiated: true }) } catch {}
         try { deps.notifyModeChange() } catch {}
       } },
       {

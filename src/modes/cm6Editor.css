@@ -1,0 +1,52 @@
+#md-cm6-root,
+#md-cm6-root * {
+  box-sizing: border-box;
+}
+
+.cm6-editor-host {
+  position: absolute;
+  top: 0;
+  bottom: var(--workspace-bottom-gap, 0px);
+  left: var(--workspace-left-gap, 0px);
+  right: var(--workspace-right-gap, 0px);
+  z-index: 2;
+  width: auto;
+  overflow: hidden;
+  background: var(--wysiwyg-bg, var(--bg));
+  color: var(--fg);
+  transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cm6-editor-host .cm-editor {
+  background: var(--wysiwyg-bg, var(--bg));
+  color: var(--fg);
+}
+
+.cm6-editor-host .cm-gutters {
+  background: var(--wysiwyg-bg, var(--bg));
+  color: var(--muted);
+}
+
+.cm6-editor-host .cm-activeLine,
+.cm6-editor-host .cm-activeLineGutter {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.cm6-editor-host .cm-cursor,
+.cm6-editor-host .cm-dropCursor {
+  border-left-color: var(--fg);
+}
+
+.cm6-editor-host .cm-selectionBackground,
+.cm6-editor-host.cm-focused .cm-selectionBackground {
+  background: rgba(100, 140, 220, 0.24) !important;
+}
+
+.cm6-rendered-block {
+  margin: 8px 12px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(127, 127, 127, 0.04);
+}
