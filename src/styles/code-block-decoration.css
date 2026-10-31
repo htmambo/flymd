@@ -173,9 +173,6 @@ body.dark-mode .codebox .code-lnums {
 /* 提升角标/复制按钮层级，避免被行号列覆盖 */
 .codebox .code-lang, .codebox .code-copy { z-index: 2; }
 
-/* 阅读模式：移除代码块边框，仅保留背景，不要出现内部横向分隔线 */
-.container:not(.wysiwyg) .preview pre { border: none; }
-
 /* 移除阅读模式内所有“横线”式分割视觉（保留背景与内边距） */
 .container:not(.wysiwyg) .preview pre * { border: 0 !important; box-shadow: none !important; }
 
@@ -206,7 +203,7 @@ body.dark-mode .codebox .code-lnums {
 }
 
 /* 所见模式：覆盖预览背景为专用色 */
-.container.wysiwyg .preview { background: var(--wysiwyg-bg); }
+.container.wysiwyg .preview { background: var(--preview-bg); }
 
 /* 所见模式下渲染中：隐藏预览层，避免原始 mermaid 代码短暂闪现 */
 .container.wysiwyg .preview.rendering { visibility: hidden; }
@@ -229,23 +226,19 @@ body.dark-mode .codebox .code-lnums {
 .container.wysiwyg .wysiwyg-status.show { display: inline-flex; }
 
 /* 所见模式：为状态条让出上内边距 */
-.container.wysiwyg .preview { background: var(--wysiwyg-bg); padding-top: 14px; }
+.container.wysiwyg .preview { background: var(--preview-bg); padding-top: 14px; }
 .container.wysiwyg .editor { padding-top: 14px; }
 
-/* ===== 代码块自动换行（全局开关 body.code-wrap，设置弹窗控制） ===== */
-/* 阅读模式：code 换行，隐藏横向滚动条；行号列高度由 decorate.ts 逐行测量同步 */
-body.code-wrap .preview pre { overflow-x: hidden; }
-body.code-wrap .preview pre code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-body.code-wrap .codebox .code-lnums { overflow: hidden; }
-/* 可见模式（WYSIWYG v2）：高亮层与编辑层是镜像双层，必须同时换行；
-   内联样式 whiteSpace='pre' 需 !important 覆盖（highlight.ts 写死） */
-body.code-wrap .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
+/* ===== 代码块自动换行（全局开关 body.code-wrap，设置弹窗控制）===== */
+/* 共享作用域：阅读与所见两模式一起换行；所见模式的高亮层/编辑层是镜像双层，
+   必须同时换行，且内联样式 whiteSpace='pre'（highlight.ts 写死）需 !important 覆盖。 */
+body.code-wrap .md-content pre { overflow-x: hidden; }
+body.code-wrap .md-content pre code {
   white-space: pre-wrap !important;
   overflow-wrap: anywhere;
 }
+body.code-wrap .codebox .code-lnums { overflow: hidden; }
+/* 可见模式（WYSIWYG v2）：滚动容器在 .code-scroll-box 上，pre 自身不滚动 */
 body.code-wrap .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-scroll-box {
   overflow-x: hidden;
 }

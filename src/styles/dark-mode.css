@@ -3,15 +3,16 @@ body.dark-mode {
   --bg: #0b0c0e;
   --fg: #e5e7eb;
   --preview-bg: #12100d;
-  --wysiwyg-bg: #0b1016;
   --border: #2d3748;
   --border-strong: #4a5568;
   --muted: #9ca3af;
-  --code-bg: #0f1114;
+  --code-bg: #1a1f27;
   --code-border: #1f2937;
   --code-fg: #e5e7eb;
-  /* 表格颜色变量 */
-  --table-border: #4b5563;
+  /* 表格颜色变量
+     --table-border 与 base.css 的系统暗色块保持同值（slate-500）：
+     旧值 #4b5563 在 #12100d 上对比度仅 2.4:1，暗色表格边框几乎不可见。 */
+  --table-border: #64748b;
   --table-header-bg: #374151;
   --table-header-fg: #ffffff;
   --table-row-hover: rgba(55, 65, 81, 0.3);
@@ -233,81 +234,20 @@ body.dark-mode .library-tabs button.active {
   color: #fff !important;
 }
 
-/* 夜间模式 - 所见模式(WYSIWYG/ProseMirror) */
-body.dark-mode .ProseMirror,
+/* 夜间模式 - 所见模式容器
+   正文排版的暗色覆盖已统一到 .md-content（与阅读模式共用同一份规则）；
+   这里只保留所见模式容器自身与代码块外壳这两处结构差异。
+   纸面背景统一走 --preview-bg（与阅读模式同一张纸），不再有独立的所见纸面色。 */
+body.dark-mode .container.wysiwyg-v2,
+body.dark-mode .container.wysiwyg-v2 .ProseMirror,
 body.dark-mode .wysiwyg,
 body.dark-mode [class*="wysiwyg"] {
-  background: #0b1016 !important;
+  background: var(--preview-bg) !important;
   color: #e5e7eb !important;
 }
 
-body.dark-mode .ProseMirror p,
-body.dark-mode .ProseMirror h1,
-body.dark-mode .ProseMirror h2,
-body.dark-mode .ProseMirror h3,
-body.dark-mode .ProseMirror h4,
-body.dark-mode .ProseMirror h5,
-body.dark-mode .ProseMirror h6,
-body.dark-mode .ProseMirror li,
-body.dark-mode .ProseMirror span {
-  color: #e5e7eb !important;
-}
-
-body.dark-mode .ProseMirror code {
-  background: #440420 !important;
-  color: #f3f4f6 !important;
-}
-
-body.dark-mode .ProseMirror pre {
-  background: #0f1114 !important;
-  border: none !important;
-}
-
-body.dark-mode .ProseMirror blockquote {
-  border-left-color: #4b5563 !important;
-  color: #9ca3af !important;
-}
-
-body.dark-mode .ProseMirror a {
-  color: #60a5fa !important;
-}
-
-body.dark-mode .ProseMirror table {
-  border-color: var(--table-border) !important;
-  border-width: 1.5px !important;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.4) !important;
-}
-
-body.dark-mode .ProseMirror table th,
-body.dark-mode .ProseMirror table td {
-  border-color: var(--table-border) !important;
-}
-
-body.dark-mode .ProseMirror table td {
-  color: #e5e7eb !important;
-}
-
-body.dark-mode .ProseMirror table th {
-  background: var(--table-header-bg) !important;
-  color: var(--table-header-fg) !important;
-  font-weight: 600 !important;
-}
-
-body.dark-mode .ProseMirror tbody tr:nth-child(even) {
-  background: rgba(31, 41, 55, 0.4) !important;
-}
-
-body.dark-mode .ProseMirror tbody tr:hover {
-  background: var(--table-row-hover) !important;
-}
-
-body.dark-mode .ProseMirror hr {
-  border-color: #374151 !important;
-}
-
-body.dark-mode .ProseMirror img {
-  border-color: #374151 !important;
-}
+/* 代码块外壳：阅读与所见两模式共用下面的 .md-content pre 规则，
+   所见模式不再单独剥离边框（否则代码块在暗色下永远没有边框，与阅读模式不一致）。 */
 
 /* 夜间模式 - 主题面板 */
 body.dark-mode .theme-panel {
@@ -550,7 +490,7 @@ body.dark-mode .CodeMirror-cursor {
 
 /* 夜间模式 - 预览区域 */
 body.dark-mode .preview,
-body.dark-mode .preview-body {
+body.dark-mode .md-content {
   background: var(--preview-bg) !important;
   color: #e5e7eb !important;
 }
@@ -561,75 +501,78 @@ body.dark-mode .md-footnote-tooltip {
 }
 
 /* 夜间模式 - 仅为阅读模式中的“行内代码”设置底色，避免覆盖代码块语法高亮 */
-body.dark-mode .preview :not(pre) > code {
+body.dark-mode .md-content :not(pre) > code {
   background: #440420 !important;
   color: #f3f4f6 !important;
 }
 
-body.dark-mode .preview pre {
-  background: #0f1114 !important;
+body.dark-mode .md-content pre {
+  /* 代码块外壳背景走 --code-bg（暗色下 #1a1f27）：必须与内容区背景
+     （阅读 #12100d / 所见 #0b1016）明确区分，否则代码块会与页面底色融为一体。
+     旧值硬编码 #0f1114，与内容区仅差 3/1/9 个色阶，肉眼无法分辨。 */
+  background: var(--code-bg) !important;
   border-color: #2d3748 !important;
 }
 
 /* 夜间模式 - 阅读模式代码高亮样式（使用 !important 覆盖 --code-fg 的纯白色）*/
-body.dark-mode .preview code.hljs .hljs-keyword,
-body.dark-mode .preview code.hljs .hljs-selector-tag,
-body.dark-mode .preview code.hljs .hljs-built_in { color: #a78bfa !important; }
-body.dark-mode .preview code.hljs .hljs-title,
-body.dark-mode .preview code.hljs .hljs-section,
-body.dark-mode .preview code.hljs .hljs-function { color: #f472b6 !important; }
-body.dark-mode .preview code.hljs .hljs-string,
-body.dark-mode .preview code.hljs .hljs-attr,
-body.dark-mode .preview code.hljs .hljs-template-variable { color: #60a5fa !important; }
-body.dark-mode .preview code.hljs .hljs-number,
-body.dark-mode .preview code.hljs .hljs-literal,
-body.dark-mode .preview code.hljs .hljs-bullet { color: #34d399 !important; }
-body.dark-mode .preview code.hljs .hljs-comment,
-body.dark-mode .preview code.hljs .hljs-quote { color: #6b7280 !important; font-style: italic; }
-body.dark-mode .preview code.hljs .hljs-variable,
-body.dark-mode .preview code.hljs .hljs-params,
-body.dark-mode .preview code.hljs .hljs-property { color: #9cdcfe !important; }
-body.dark-mode .preview code.hljs .hljs-class,
-body.dark-mode .preview code.hljs .hljs-type { color: #4ec9b0 !important; }
-body.dark-mode .preview code.hljs .hljs-operator,
-body.dark-mode .preview code.hljs .hljs-punctuation { color: #d4d4d4 !important; }
+body.dark-mode .md-content code.hljs .hljs-keyword,
+body.dark-mode .md-content code.hljs .hljs-selector-tag,
+body.dark-mode .md-content code.hljs .hljs-built_in { color: #a78bfa !important; }
+body.dark-mode .md-content code.hljs .hljs-title,
+body.dark-mode .md-content code.hljs .hljs-section,
+body.dark-mode .md-content code.hljs .hljs-function { color: #f472b6 !important; }
+body.dark-mode .md-content code.hljs .hljs-string,
+body.dark-mode .md-content code.hljs .hljs-attr,
+body.dark-mode .md-content code.hljs .hljs-template-variable { color: #60a5fa !important; }
+body.dark-mode .md-content code.hljs .hljs-number,
+body.dark-mode .md-content code.hljs .hljs-literal,
+body.dark-mode .md-content code.hljs .hljs-bullet { color: #34d399 !important; }
+body.dark-mode .md-content code.hljs .hljs-comment,
+body.dark-mode .md-content code.hljs .hljs-quote { color: #6b7280 !important; font-style: italic; }
+body.dark-mode .md-content code.hljs .hljs-variable,
+body.dark-mode .md-content code.hljs .hljs-params,
+body.dark-mode .md-content code.hljs .hljs-property { color: #9cdcfe !important; }
+body.dark-mode .md-content code.hljs .hljs-class,
+body.dark-mode .md-content code.hljs .hljs-type { color: #4ec9b0 !important; }
+body.dark-mode .md-content code.hljs .hljs-operator,
+body.dark-mode .md-content code.hljs .hljs-punctuation { color: #d4d4d4 !important; }
 
-body.dark-mode .preview blockquote {
+body.dark-mode .md-content blockquote {
   border-left-color: #4b5563 !important;
   color: #9ca3af !important;
 }
 
-body.dark-mode .preview table {
+body.dark-mode .md-content table {
   border-color: var(--table-border) !important;
   border-width: 1.5px !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
 }
 
-body.dark-mode .preview table th,
-body.dark-mode .preview table td {
+body.dark-mode .md-content table th,
+body.dark-mode .md-content table td {
   border-color: var(--table-border) !important;
 }
 
-body.dark-mode .preview table td {
+body.dark-mode .md-content table td {
   color: var(--fg) !important;
 }
 
-body.dark-mode .preview table th {
+body.dark-mode .md-content table th {
   background: var(--table-header-bg) !important;
   color: var(--table-header-fg) !important;
   font-weight: 600 !important;
   border-bottom-width: 2px !important;
 }
 
-body.dark-mode .preview table tbody tr:nth-child(even) {
+body.dark-mode .md-content table tbody tr:nth-child(even) {
   background: rgba(31, 41, 55, 0.3) !important;
 }
 
-body.dark-mode .preview tbody tr:hover td {
+body.dark-mode .md-content tbody tr:hover td {
   background: var(--table-row-hover) !important;
 }
 
-body.dark-mode .preview hr {
+body.dark-mode .md-content hr {
   border-color: #374151 !important;
 }
 

@@ -1,7 +1,5 @@
-/* 预览正文容器：定宽居中，类似 Typora/Word 的阅读宽度 */
+/* 预览正文容器：定宽居中（max-width / margin / 排版上下文见 markdown-content.css） */
 .preview-body {
-  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));   /* 与所见模式一致 */
-  margin: 0 auto;
   padding: 14px var(--layout-content-pad-x, 16px) 20px var(--layout-content-pad-x, 16px); /* 与所见模式保持一致；自适应时两侧 20px */
   /* 添加过渡动画，配合侧栏展开 */
   transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -103,84 +101,14 @@
   }
 }
 
-/* Markdown 基础排版（预览） */
-.preview h1 {
-  margin: 1.8em 0 0.8em;
-  font-size: 2.2em;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-  border-bottom: 2px solid var(--border);
-  padding-bottom: 0.3em;
-}
-.preview h2 {
-  margin: 1.6em 0 0.7em;
-  font-size: 1.8em;
-  font-weight: 700;
-  line-height: 1.3;
-  letter-spacing: -0.01em;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.25em;
-}
-.preview h3 {
-  margin: 1.4em 0 0.6em;
-  font-size: 1.4em;
-  font-weight: 600;
-  line-height: 1.4;
-}
-.preview h4 {
-  margin: 1.2em 0 0.5em;
-  font-size: 1.2em;
-  font-weight: 600;
-  line-height: 1.4;
-}
-.preview h5 {
-  margin: 1.1em 0 0.4em;
-  font-size: 1.05em;
-  font-weight: 600;
-  line-height: 1.5;
-}
-.preview h6 {
-  margin: 1em 0 0.4em;
-  font-size: 1em;
-  font-weight: 600;
-  line-height: 1.5;
-  color: var(--muted);
-}
-/* 任务列表（GFM） */
+/* 任务列表（GFM）：阅读模式用 <input> 实现勾选框；
+   所见模式的对应实现见 styles/editor.css（li[data-item-type="task"] 伪元素）。 */
 .preview-body ul.task-list, .preview-body ol.task-list { list-style: none; padding-left: 1.2em; }
 .preview-body li.task-list-item { list-style: none; }
 .preview-body input.task-list-item-checkbox { margin-right: .5em; vertical-align: middle; }
-.preview p {
-  margin: var(--layout-paragraph-spacing, 1em) 0;
-  text-align: justify;
-  text-justify: inter-character;
-}
-/* 首行缩进：只对 preview-body 的直接子段落生效，避免影响 mermaid/代码块等 */
-.preview-body > p {
-  text-indent: var(--layout-text-indent, 0);
-}
-/* 预览模式代码样式在后面统一定义，这里暂时保留基础样式 */
-.preview blockquote {
-  border-left: 4px solid var(--border-strong);
-  margin: 1.2em 0;
-  padding: 0.8em 1.2em;
-  background: rgba(127,127,127,0.04);
-  border-radius: 0 8px 8px 0;
-  color: var(--fg);
-  font-style: italic;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
-}
-.preview blockquote p {
-  margin: 0.4em 0;
-}
-.preview blockquote p:first-child {
-  margin-top: 0;
-}
-.preview blockquote p:last-child {
-  margin-bottom: 0;
-}
-/* 表格包装器：处理横向滚动 */
+/* 段落 / 标题 / 列表 / 链接 / 图片 / 分割线 / 引用 / 表格 的排版规则已上移到
+   styles/markdown-content.css，由阅读与所见两种模式共用（唯一事实源）。 */
+/* 表格包装器：处理横向滚动（阅读模式专属，所见模式的表格无此包装层） */
 .preview .table-wrapper {
   overflow-x: auto;
   margin: 1.5em 0;
@@ -214,49 +142,8 @@
   border-bottom-right-radius: 7px;
 }
 
-/* 单元格样式（保持不变） */
-.preview table th {
-  border-right: 1px solid var(--table-border);
-  border-bottom: 2px solid var(--table-border);
-  padding: 12px 16px;
-  background: var(--table-header-bg);
-  font-weight: 600;
-  text-align: left;
-  color: var(--table-header-fg);
-}
-.preview table th:last-child {
-  border-right: none;
-}
-.preview table td {
-  border-right: 1px solid var(--table-border);
-  border-bottom: 1px solid var(--table-border);
-  padding: 10px 16px;
-  transition: background var(--transition-fast);
-}
-.preview table td:last-child {
-  border-right: none;
-}
-.preview table tr:last-child td {
-  border-bottom: none;
-}
-.preview table tr:hover td {
-  background: var(--table-row-hover);
-}
-.preview table tbody tr:nth-child(even) {
-  background: rgba(127,127,127,0.02);
-}
-
-/* 表格内代码和图片处理 */
-.preview table td code,
-.preview table th code {
-  word-break: break-all;
-  white-space: pre-wrap;
-}
-.preview table td img,
-.preview table th img {
-  max-width: 100%;
-  height: auto;
-}
+/* 表格内部单元格样式已上移到 markdown-content.css（阅读/所见两模式共用）。
+   上面只保留阅读模式专属的圆角裁剪（外框圆角在 wrapper 上，落在首尾单元格）。 */
 
 /* 滚动条样式优化 */
 
@@ -331,67 +218,8 @@
 }
 .mmd-tools button:hover { background: rgba(255,255,255,0.12); }
 .mmd-tools button:active { background: rgba(255,255,255,0.18); }
-/* 列表样式优化 */
-.preview ul,
-.preview ol {
-  margin: 1em 0;
-  padding-left: 2em;
-  line-height: 1.8;
-}
-.preview li {
-  margin: 0.4em 0;
-}
-.preview ul ul,
-.preview ol ol,
-.preview ul ol,
-.preview ol ul {
-  margin: 0.3em 0;
-}
-
-/* 链接样式 */
-.preview a {
-  color: var(--accent);
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: all var(--transition-normal);
-  font-weight: 500;
-}
-.preview a:hover {
-  color: #1e40af;
-  border-bottom-color: #1e40af;
-}
-@media (prefers-color-scheme: dark) {
-  body:not(.light-mode) .preview a {
-    color: var(--accent);
-  }
-  body:not(.light-mode) .preview a:hover {
-    color: #93c5fd;
-    border-bottom-color: #93c5fd;
-  }
-}
-
-/* 图片样式优化 */
-.preview img {
-  display: block;
-  margin: 1.5em auto;
-  border-radius: var(--radius-lg);
-  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-.preview img:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-}
-.preview img:not([width]):not([height]) { max-width: 70%; height: auto; }
-
-/* 分割线样式 */
-.preview hr {
-  border: none;
-  height: 2px;
-  background: linear-gradient(to right, transparent, var(--border-strong), transparent);
-  margin: 2em 0;
-  opacity: 0.6;
-}
+/* 列表 / 链接 / 图片 / 分割线 的排版规则已上移到 styles/markdown-content.css，
+   由阅读与所见两种模式共用（唯一事实源）。 */
 
 /* 最近文件 面板 */
 .recent-panel {
@@ -503,37 +331,37 @@
   transition: opacity 0.2s ease;
 }
 
-/* 强调文本样式优化 */
-.preview strong,
-.preview b {
+/* 强调文本样式优化（共享作用域：阅读与所见两模式共用） */
+.md-content strong,
+.md-content b {
   font-weight: 700;
   color: var(--fg);
 }
-.preview em,
-.preview i {
+.md-content em,
+.md-content i {
   font-style: italic;
   color: var(--fg);
 }
-.preview mark {
+.md-content mark {
   background: rgba(250, 204, 21, 0.3);
   padding: 2px 4px;
   border-radius: 3px;
 }
 @media (prefers-color-scheme: dark) {
-  body:not(.light-mode) .preview mark {
+  body:not(.light-mode) .md-content mark {
     background: rgba(250, 204, 21, 0.2);
   }
 }
 
 /* 删除线文本 */
-.preview del,
-.preview s {
+.md-content del,
+.md-content s {
   text-decoration: line-through;
   opacity: 0.7;
 }
 
 /* 键盘按键样式 */
-.preview kbd {
+.md-content kbd {
   display: inline-block;
   padding: 3px 8px;
   font-size: 0.85em;
@@ -548,44 +376,26 @@
 }
 
 /* 注脚样式 */
-.preview sup,
-.preview sub {
+.md-content sup,
+.md-content sub {
   font-size: 0.75em;
   line-height: 0;
   position: relative;
   vertical-align: baseline;
 }
-.preview sup {
+.md-content sup {
   top: -0.5em;
 }
-.preview sub {
+.md-content sub {
   bottom: -0.25em;
 }
 
 /* 缩写文本 */
-.preview abbr[title] {
+.md-content abbr[title] {
   text-decoration: underline dotted;
   cursor: help;
 }
 
-/* 所见模式 sub/sup/abbr 样式 */
-.container.wysiwyg-v2 .ProseMirror sub,
-.container.wysiwyg-v2 .ProseMirror sup {
-  font-size: 0.75em;
-  line-height: 0;
-  position: relative;
-  vertical-align: baseline;
-}
-.container.wysiwyg-v2 .ProseMirror sup {
-  top: -0.5em;
-}
-.container.wysiwyg-v2 .ProseMirror sub {
-  bottom: -0.25em;
-}
-.container.wysiwyg-v2 .ProseMirror abbr[title] {
-  text-decoration: underline dotted;
-  cursor: help;
-}
 /* ========== Obsidian Callout 样式 ========== */
 
 /* 基础结构 */

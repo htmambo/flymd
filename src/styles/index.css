@@ -1,4 +1,5 @@
 @import "./base.css";
+@import "./markdown-content.css";
 @import "./focus-mode.css";
 @import "./print.css";
 @import "./sticky-note.css";

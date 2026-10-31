@@ -527,7 +527,6 @@ export async function exportPdf(el: HTMLElement, opt?: any): Promise<Uint8Array>
     '--preview-bg': '#fafafa',
     '--border-strong': '#d1d5db',
     '--panel-bg': '#f9fafb',
-    '--wysiwyg-bg': '#f3f4f6',
     '--wysiwyg-status-bg': '#e5e7eb',
     '--code-bg': '#f3f4f6',
     '--table-border': '#cbd5e1',

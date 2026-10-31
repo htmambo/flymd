@@ -1,5 +1,10 @@
 import type { Extension } from '@codemirror/state'
 import { Cm6Editor, type Cm6Snapshot } from './cm6Editor'
+import {
+  SOURCE_LINE_NUMBERS_CHANGED_EVENT,
+  getSourceLineNumbersEnabled,
+  type SourceLineNumbersChangedDetail,
+} from '../core/sourceLineNumbersPref'
 
 export interface Cm6ModeHostDeps {
   container: HTMLElement
@@ -14,11 +19,20 @@ export class Cm6ModeHost {
   private destroyed = false
   private lastSnapshot: Cm6Snapshot | null = null
 
+  // 「源码行号」偏好变更 → 行号栏即时显隐（大文件 CM6 视图与源码模式共用同一个开关）
+  private readonly onLineNumbersPrefChanged = (event: Event): void => {
+    if (this.destroyed) return
+    const detail = (event as CustomEvent<SourceLineNumbersChangedDetail>).detail
+    const enabled = typeof detail?.enabled === 'boolean' ? detail.enabled : getSourceLineNumbersEnabled()
+    this.engine.setLineNumbersEnabled(enabled)
+  }
+
   private constructor(readonly root: HTMLDivElement, private readonly textarea: HTMLTextAreaElement, extensions: Extension[] = []) {
     this.engine = new Cm6Editor({
       parent: root,
       document: textarea.value,
       extensions,
+      lineNumbers: getSourceLineNumbersEnabled(),
       onChange: ({ text, external }) => {
         if (this.destroyed || this.syncing) return
         this.syncing = true
@@ -41,6 +55,7 @@ export class Cm6ModeHost {
       this.pendingSync = false
       this.syncFromTextarea()
     })
+    window.addEventListener(SOURCE_LINE_NUMBERS_CHANGED_EVENT, this.onLineNumbersPrefChanged)
   }
 
   static async create(deps: Cm6ModeHostDeps): Promise<Cm6ModeHost> {
@@ -103,6 +118,7 @@ export class Cm6ModeHost {
   destroy(): Cm6Snapshot {
     if (this.destroyed) return this.lastSnapshot!
     this.destroyed = true
+    window.removeEventListener(SOURCE_LINE_NUMBERS_CHANGED_EVENT, this.onLineNumbersPrefChanged)
     const pendingSnapshot: Cm6Snapshot | null = this.pendingSync ? {
       text: this.textarea.value,
       anchor: this.textarea.selectionStart,

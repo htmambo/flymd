@@ -51,7 +51,7 @@ export async function exportFileToPdf(options: PdfExportOptions): Promise<void> 
     container.style.cssText = 'position:absolute;left:0;top:0;width:210mm;overflow:visible;background:#ffffff;opacity:0;pointer-events:none;z-index:-9999'
 
     const previewBody = document.createElement('div')
-    previewBody.className = 'preview-body'
+    previewBody.className = 'preview-body md-content'
     container.appendChild(previewBody)
     document.body.appendChild(container)
 

@@ -17,7 +17,6 @@
   --border-strong: #d1d5db;
   --panel-bg: #f9fafb;
   /* 所见模式变量 */
-  --wysiwyg-bg: #f3f4f6;
   --wysiwyg-status-h: 24px;
   --wysiwyg-status-bg: #e5e7eb;
   --code-bg: #f3f4f6;
@@ -94,11 +93,13 @@
     --border-strong: #374151;      /* slate-700 */
     --panel-bg: #0e1217;
     /* 深色所见模式变量 */
-    --wysiwyg-bg: #0b1016;         /* 更深的蓝黑 */
     --wysiwyg-status-bg: #0f1a24;  /* 状态条背景 */
-    --code-bg: #111827;            /* 代码块背景（暗） */
-    /* 深色表格颜色变量 */
-    --table-border: #4b5563;
+    --code-bg: #1a1f27;            /* 代码块背景（暗）：需明显亮于内容区背景 #12100d */
+    /* 深色表格颜色变量
+       --table-border 用 slate-500：旧值 #4b5563 在 #12100d 背景上对比度只有 2.4:1，
+       1px 单元格边框几乎看不见（用户反馈「暗色下表格边框看不到」）。
+       slate-500 对阅读背景 #12100d 约 4.2:1（所见模式与阅读模式共用同一纸面背景）。 */
+    --table-border: #64748b;
     --table-header-bg: #374151;
     --table-header-fg: #ffffff;
     --table-row-hover: rgba(55, 65, 81, 0.3);
@@ -137,7 +138,6 @@ body.light-mode {
   --preview-bg: #fafafa;
   --border-strong: #d1d5db;
   --panel-bg: #f9fafb;
-  --wysiwyg-bg: #f3f4f6;
   --wysiwyg-status-bg: #e5e7eb;
   --code-bg: #f3f4f6;
   --table-border: #cbd5e1;
@@ -238,13 +238,13 @@ body.platform-windows #app {
   background: rgba(37, 99, 235, 0.2);
 }
 
-/* 代码块内选中样式 */
-.preview pre ::selection,
-.preview code ::selection {
+/* 代码块内选中样式（共享作用域：阅读与所见两模式一致） */
+.md-content pre ::selection,
+.md-content code ::selection {
   background: rgba(37, 99, 235, 0.3);
 }
-.preview pre ::-moz-selection,
-.preview code ::-moz-selection {
+.md-content pre ::-moz-selection,
+.md-content code ::-moz-selection {
   background: rgba(37, 99, 235, 0.3);
 }
 /* === 额外的视觉增强 === */

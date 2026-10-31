@@ -1,12 +1,18 @@
-import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
+import { Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, drawSelection, highlightActiveLine, keymap, lineNumbers } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands'
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { Annotation, Transaction } from '@codemirror/state'
+import { getSourceLineNumbersEnabled } from '../core/sourceLineNumbersPref'
 import './cm6Editor.css'
 
 const externalTransaction = Annotation.define<boolean>()
+
+/** 空扩展集：用于关闭 CM6 行号栏（Compartment 重配置的目标） */
+const NO_EXTENSIONS: Extension = []
+/** 行号扩展缓存：复用同一实例，避免每次切换都重建扩展并触发全量 facet 重算 */
+const LINE_NUMBERS_EXTENSION: Extension = lineNumbers()
 
 export interface Cm6Change {
   text: string
@@ -26,6 +32,8 @@ export interface Cm6EditorDeps {
   onChange: (change: Cm6Change) => void
   onSelectionChange?: (anchor: number, head: number) => void
   extensions?: Extension[]
+  /** 行号栏开关；缺省按「源码行号」偏好 */
+  lineNumbers?: boolean
 }
 
 export function isCm6TextCompatible(text: string): boolean {
@@ -61,15 +69,20 @@ export class Cm6Editor {
   private readonly view: EditorView
   private lineSeparator: string
   private destroyed = false
+  /** 行号栏扩展单独占一个 compartment：偏好变更时可随时增删，不动文档与选择区 */
+  private readonly lineNumbersCompartment = new Compartment()
+  private lineNumbersEnabled = false
 
   constructor(deps: Cm6EditorDeps) {
     if (!isCm6TextCompatible(deps.document)) throw new Error('CM6 不支持混合行尾，请使用源码模式')
     this.lineSeparator = lineSeparatorFor(deps.document)
+    const lineNumbersEnabled = deps.lineNumbers ?? getSourceLineNumbersEnabled()
+    this.lineNumbersEnabled = lineNumbersEnabled
     const state = EditorState.create({
       doc: deps.document,
       extensions: [
         EditorState.lineSeparator.of(this.lineSeparator),
-        lineNumbers(),
+        this.lineNumbersCompartment.of(lineNumbersEnabled ? LINE_NUMBERS_EXTENSION : NO_EXTENSIONS),
         highlightActiveLine(),
         drawSelection(),
         history(),
@@ -126,6 +139,15 @@ export class Cm6Editor {
     const safeHead = Math.max(0, Math.min(source.length, head))
     this.view.dispatch({
       selection: EditorSelection.single(cmOffsetFor(source, safeAnchor), cmOffsetFor(source, safeHead)),
+    })
+  }
+
+  /** 显隐 CM6 行号栏：重配置行号扩展本身，而不是用 CSS 藏掉（藏掉会留下 gutter 占位空白） */
+  setLineNumbersEnabled(enabled: boolean): void {
+    if (this.destroyed || enabled === this.lineNumbersEnabled) return
+    this.lineNumbersEnabled = enabled
+    this.view.dispatch({
+      effects: this.lineNumbersCompartment.reconfigure(enabled ? LINE_NUMBERS_EXTENSION : NO_EXTENSIONS),
     })
   }
 

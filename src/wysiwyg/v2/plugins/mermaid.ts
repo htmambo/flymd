@@ -257,7 +257,7 @@ class MermaidNodeView implements NodeView {
     this.editBtn.style.width = '22px'
     this.editBtn.style.height = '22px'
     this.editBtn.style.borderRadius = '11px'
-    this.editBtn.style.background = 'var(--wysiwyg-bg, #fff)'
+    this.editBtn.style.background = 'var(--preview-bg)'
     this.editBtn.style.border = '1px solid var(--border-color, #d0d0d0)'
     this.editBtn.style.color = 'var(--text-color, #555)'
     this.editBtn.style.cursor = 'pointer'

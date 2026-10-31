@@ -12,18 +12,18 @@
   z-index: 2;
   width: auto;
   overflow: hidden;
-  background: var(--wysiwyg-bg, var(--bg));
+  background: var(--bg);
   color: var(--fg);
   transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .cm6-editor-host .cm-editor {
-  background: var(--wysiwyg-bg, var(--bg));
+  background: var(--bg);
   color: var(--fg);
 }
 
 .cm6-editor-host .cm-gutters {
-  background: var(--wysiwyg-bg, var(--bg));
+  background: var(--bg);
   color: var(--muted);
 }
 

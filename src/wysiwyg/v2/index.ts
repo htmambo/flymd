@@ -36,6 +36,7 @@ import { taskListTogglePlugin } from './plugins/taskList'
 import { docBoundaryEscapePlugin, trailingParagraphPlugin } from './plugins/docBoundaryEscape'
 import { clearExpandedCodeBlocks, codeBlockIndexFromDom, setCodeBlockExpandedByIndex, codeExpandDecorationPlugin, isCodeBlockExpandedByIndex } from './plugins/codeExpandState'
 import { codeBlockJumpPlugin } from './plugins/codeBlockJump'
+import { contentRootClassPlugin } from './plugins/contentRootClass'
 import { guardStrongBoundaryForCommonMark, stripStrongBoundaryGuard } from '../../plugins/strongBoundaryCompat'
 import { remarkMathPlugin, katexOptionsCtx, mathInlineSchema, mathBlockSchema, mathInlineInputRule, mathBlockInputRule } from '@milkdown/plugin-math'
 import { liftListItem, sinkListItem } from 'prosemirror-schema-list'
@@ -557,7 +558,7 @@ export async function enableWysiwygV2(root: HTMLElement, initialMd: string, onCh
       ctx.set(editorViewOptionsCtx, { editable: () => true })
       // 文档边界插件（首块上方逃逸 + 末尾空段落）：直接注入 prose 插件列表。
       // 不走 .use($prose(...)) —— 其 SchemaReady 异步加载链路在本接入方式下会静默不生效。
-      ctx.update(prosePluginsCtx, (ps) => [...ps, docBoundaryEscapePlugin, trailingParagraphPlugin, codeExpandDecorationPlugin, codeBlockJumpPlugin])
+      ctx.update(prosePluginsCtx, (ps) => [...ps, contentRootClassPlugin, docBoundaryEscapePlugin, trailingParagraphPlugin, codeExpandDecorationPlugin, codeBlockJumpPlugin])
       // 配置上传：接入现有图床上传逻辑，同时允许从 HTML 粘贴的文件触发上传
       try {
         ctx.update(uploadConfig.key, (prev) => ({
@@ -2143,7 +2144,7 @@ function setupTableHoverButton(host: HTMLElement | null) {
         btn.style.width = '22px'
         btn.style.height = '22px'
         btn.style.borderRadius = '11px'
-        btn.style.background = 'var(--wysiwyg-bg, #fff)'
+        btn.style.background = 'var(--preview-bg)'
         btn.style.border = '1px solid var(--border-color, #d0d0d0)'
         btn.style.color = 'var(--text-color, #555)'
         btn.style.cursor = 'pointer'
@@ -2572,7 +2573,7 @@ function enterImageSourceEdit(hitEl: HTMLElement) {
 
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
-    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.background = 'var(--preview-bg)'
     inner.style.borderRadius = '4px'
     inner.style.padding = '6px'
     inner.style.boxSizing = 'border-box'
@@ -2788,7 +2789,7 @@ function enterLatexSourceEditLocked(mathEl: HTMLElement, releaseEditLock: () => 
 
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
-    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.background = 'var(--preview-bg)'
     inner.style.borderRadius = '4px'
     inner.style.padding = '6px'
     inner.style.boxSizing = 'border-box'
@@ -3057,7 +3058,7 @@ function enterMermaidSourceEditLocked(domEl: HTMLElement, wrapper: HTMLElement |
 
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
-    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.background = 'var(--preview-bg)'
     inner.style.borderRadius = '4px'
     inner.style.padding = '6px'
     inner.style.boxSizing = 'border-box'
@@ -3455,7 +3456,7 @@ async function enterHtmlSourceEdit(el: HTMLElement, kind: 'table' | 'block') {
 
     const inner = document.createElement('div')
     inner.style.pointerEvents = 'auto'
-    inner.style.background = 'var(--wysiwyg-bg)'
+    inner.style.background = 'var(--preview-bg)'
     inner.style.borderRadius = '4px'
     inner.style.padding = '6px'
     inner.style.boxSizing = 'border-box'
@@ -3654,7 +3655,7 @@ function renderMermaidNow() {
         wrap.style.zIndex = '10'
 
         const inner = document.createElement('div')
-        inner.style.background = 'var(--wysiwyg-bg)'
+        inner.style.background = 'var(--preview-bg)'
         inner.style.borderRadius = '4px'
         inner.style.padding = '8px'
         inner.style.opacity = '0'

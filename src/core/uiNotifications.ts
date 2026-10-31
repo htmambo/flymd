@@ -121,6 +121,7 @@ export type NotificationType =
   | 'mode-preview'
   | 'mode-wysiwyg'
   | 'mode-split'
+  | 'setting-hint'
 
 export type NotificationAction = {
   label: string
@@ -201,6 +202,11 @@ export class NotificationManager {
       icon: '🪟',
       bgColor: 'rgba(59,130,246,0.18)', // 分屏：略偏蓝
       duration: 1600
+    },
+    'setting-hint': {
+      icon: 'ℹ️',
+      bgColor: 'rgba(100,116,139,0.18)', // 设置类提示：中性灰蓝
+      duration: 3200
     }
   }
 

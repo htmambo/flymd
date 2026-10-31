@@ -53,6 +53,45 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-31-theme-bg-section-merge.md](Archive/2026-10/2026-10-31-theme-bg-section-merge.md) — 主题面板「编辑背景 / 阅读背景」合并为单一「背景」区（完成 2026-10-31）
+  - **背景**：两块各含**完全相同的 9 色板**、两个羊皮风格、两个一样的自定义色输入框；且「编辑背景」实为**应用界面色**（`--bg` 覆盖 body/弹窗/菜单/扩展面板/通知/标签栏/库树/源码区共 55 处），「阅读背景」是**纸面色**（`--preview-bg` 仅 7 处）——作用域不同，**只能合并 UI、不能合并取值**
+  - **改动**：面板合并为一个「背景」区 + 「界面/阅读」分段控件（隐藏 radio + 相邻 label，纯 CSS 兄弟选择器表达选中态，保留原生键盘分组）；色板/自定义色/应用/羊皮纸各一份，两个取值域（`editBg`/`readBg` 含暗色变体）**完整保留、不迁移**
+  - **事实源分层**：radio 勾选态（用户意图）→ 容器 `data-bg-target`（**生效目标，唯一事实源**）→ 各控件 `data-target`（派生）；切换时只有 `syncBgControls()` 一个写入点
+  - **不丢用户输入**：切段前把未应用的自定义色草稿**自动应用到它原本所在的目标**（归属读事实源而非已翻页的 radio —— 读 radio 会把草稿写进另一个取值域）
+  - **顺带修 4 个既有缺陷**（均在本次改动路径上）：① `loadThemePrefs` 从不读回羊皮纸字段 → 勾选态每次复位、`.parchment-*` 类从未生效；② `.theme-apply-btn` 撞名 → 网络代理的「应用」会误触背景取色；③ 色板点击后 `innerHTML` 重建把被点节点摘出文档树 → **点一下颜色面板就自己关**（浏览器实测复现）；④ 自定义色输入框不跟随生效色
+  - **验证**：vitest **81 文件 / 991 用例**全绿（新增 24 例）；typecheck + build（含入口闭包）通过；浏览器实测：点色板面板不再自关、切段后色板高亮/输入框/羊皮勾选态/网格禁用态全部跟随、`--bg` 与 `--preview-bg` 各自独立
+  - **外审**：需求轮 `53565482…` Approve with Conditions、计划轮 `89b109fa…` REQS_CHANGES、代码轮 `76796e85…` REQS_CHANGES（驳回项均有代码/实测佐证）
+
+- ✅ [2026-10-31-cm6-line-numbers-pref.md](Archive/2026-10/2026-10-31-cm6-line-numbers-pref.md) — 大文件 CM6 视图的行号跟随「源码行号」偏好（完成 2026-10-31）
+  - **根因**：大文件走 CM6 引擎时对外仍是「所见模式」（`wysiwyg=true`、`mode='edit'`），于是两套行号列都管不到它——textarea 的 `.editor-gutter` 按设计不激活（`!wysiwyg` 条件），CM6 的 `.cm-gutters` 则**无条件**装载 `lineNumbers()`，与偏好毫无关联 → 开关**完全无效**（既关不掉也开不了）
+  - **偏好收敛为唯一事实源**：新增 `src/core/sourceLineNumbersPref.ts`（key / 读取 / 写入 / 变更事件），主题面板、textarea 行号列、CM6 行号栏三处共用；旧两处实现语义逐字等价（仅 `'false'` 视为关闭，脏值与 key 缺失一律视为开启，**老用户行为零漂移**）
+  - **实现**：`lineNumbers()` 由 `Compartment` 包裹，新增 `setLineNumbersEnabled()` 走官方 `compartment.reconfigure`（不用 CSS 藏 `.cm-gutters`——那样会留下 gutter 占位空白）；扩展实例缓存为模块级常量并按当前状态短路
+  - **提示语义修正**：判定从「是否源码模式」改为「**当前视图是否存在源码行号列**」→ CM6 视图与 textarea 源码模式**不弹**提示，Milkdown 所见 / 阅读模式仍弹
+  - **防漂移**：CM6 视图标记类抽成共享常量 `CM6_VIEW_CLASS`（`src/modes/editorEngine.ts`），单测锁定字面量只出现在常量定义处
+  - **验证**：vitest 80 文件 / 967 用例全绿；typecheck + build（含入口闭包）通过；浏览器实测：关 → CM6 行号栏消失且**无 gutter 残留空白**，开 → 即时恢复且文档/滚动位置不变，CM6 视图内切开关不弹提示
+  - **外审**：需求轮 `d0fa5b9b…` REQS_CHANGES（6 条已处置）、计划轮 `82c03581…` APPROVED、代码轮 `7e947db0…` APPROVED（3 条驳回均有代码/实测佐证）
+
+- ✅ [2026-10-31-theme-background-unification.md](Archive/2026-10/2026-10-31-theme-background-unification.md) — 主题背景收敛：所见背景并入阅读背景，退役 `--wysiwyg-bg`（完成 2026-10-31）
+  - **根因**：`applyThemePrefs` 日/夜分支写入的 CSS 变量集合不对称——夜间分支只写 `--bg`/`--preview-bg`，从不清理日间写入的浅色内联 `--wysiwyg-bg`，暗色下容器仍挂着 `#ffffff`（浏览器实测确认）→ 行号栏 / CM6 行号栏 / 所见容器全部变亮
+  - **收敛**：背景语义收敛为两套——源码编辑区（textarea / CM6 / `.editor-gutter` / `.cm-gutters`）= `--bg`；阅读 + 所见 = `--preview-bg`；**变量本身删除**（不是打补丁式 `removeProperty`）
+  - **面板**：删除独立「所见背景」设置项与「所见羊皮纸」开关；旧配置字段 `wysiwygBg` / `parchmentWysiwyg` 保留并原样回写（`git revert` 后用户设置不丢）
+  - **附带**：修复「源码行号只能重启才生效」——行号列是源码编辑器专属 DOM（所见/阅读模式不渲染，易被误判为需重启）；加即时提示通知 + tooltip；安装改为有界重试 + `MutationObserver` 兜底；修正幂等标志置位时机（原本会在编辑器未挂载时永久吞掉安装机会）
+  - **验证**：vitest 79 文件 / 953 用例全绿；typecheck + build（含入口闭包）通过；浏览器实测：夜间冷启动 `.container` 内联样式无 `--wysiwyg-bg`、源码模式行号栏与源码区同为深色、所见模式弹提示而源码模式不弹
+  - **外审**：需求轮 `a6c183c0…`、计划轮 `e6298804…`、代码轮 3 轮（`3653f0b7…` REQS_CHANGES → `92c1b891…` REQS_CHANGES → `7cc712d4…` **APPROVED**）
+
+- ✅ [2026-10-31-wysiwyg-style-unification.md](Archive/2026-10/2026-10-31-wysiwyg-style-unification.md) — 所见模式与阅读模式样式统一（md-content 共享排版层）（完成 2026-10-31）
+  - **背景**：两套渲染器（markdown-it / ProseMirror）+ 两套手写 CSS 持续漂移，所见模式 h4–h6 退化为默认字号、列表无缩进、链接/分割线/引用/表格形态各异
+  - **改动**：
+    - 新增 `src/styles/markdown-content.css`（共享排版层：标题/段落两端对齐/列表/链接/图片/分割线/引用/表格单元格/行内代码）
+    - 新增 `src/wysiwyg/v2/plugins/contentRootClass.ts`（ProseMirror 插件注入 `class=md-content`；走 `prosePluginsCtx` 而非 `editorViewOptionsCtx`，后者会被 `editLock.ts` 整体覆写）
+    - 四处内容根挂 `md-content`：阅读 `main.ts`、虚拟化预览 `virtualPreview.ts`、导出 `pdfContextExport.ts`、所见模式插件
+    - `theme-panel.css` / `dark-mode.css` / `code-rendering.css` / `preview.css` / `editor.css` / `sticky-note.css` / `code-block-decoration.css` / `base.css` 的 `.preview` ↔ `.ProseMirror` 成对规则合并为 `.md-content` 单条
+  - **关键设计**：作用域用普通 `.md-content`（0,1,X）而非 `:where()`——兼容 Safari 13/14 WebView；主题层 (0,3,X) 与模式层 (0,3,X) 平级 → `index.css` 顺序被测试钉死
+  - **顺带修复**：暗色表格边框 `--table-border` `#4b5563` → `#64748b`（对比度 2.4:1 → 4.2:1）；暗色代码块背景 `--code-bg` `#0f1114` → `#1a1f27`（与内容区背景 `#12100d` 明确区分）
+  - **验证**：浏览器逐元素 parity（10 主题 × 明暗）**未知差异 = 0**；对照改造前基线阅读模式正文排版零变更；vitest 77 文件 / 935 用例全绿；typecheck + build（含入口闭包）通过
+  - **防漂移**：新增 `styleScopeAudit.test.ts`（import 顺序 / 排版属性作用域 / 白名单防腐化）+ `markdownContentMount.test.ts`（四处挂载点）+ `scripts/style-parity/` 校验页（规则溯源 `?debug=`、基线捕获 `?capture=1`）
+  - **外审**：需求轮 `243cf4a9…`、计划轮 `61774985…`、代码轮 `38a8d692…` VERDICT: APPROVED
+
 - ✅ [2026-10-30-viewport-cm6-rendering.md](Archive/2026-10/2026-10-30-viewport-cm6-rendering.md) — 阅读模式视口渲染与 CM6 大文档编辑改造（完成 2026-10-30）
   - **Stage 1**：markdown-it 全文解析 + 顶层块视口挂载；真实文件 10,894 块仅挂载 34 块、255 DOM 元素，预览约 424–678ms
   - **Stage 2**：大文档默认 CM6，小文档保留 Milkdown；同步文本、撤销、IME、标签恢复、CRLF 映射、可见公式/Mermaid widget 与目录树边界

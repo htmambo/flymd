@@ -20,7 +20,7 @@ import type { LocalePref } from './i18n'
 import type { VirtualPreview } from './core/virtualPreview'
 import type { MarkdownBlockModelCache } from './core/markdownBlocks'
 import type { Cm6ModeHost } from './modes/cm6ModeHost'
-import { getLargeDocEnginePreference, resolveEditorEngine } from './modes/editorEngine'
+import { CM6_VIEW_CLASS, getLargeDocEnginePreference, resolveEditorEngine } from './modes/editorEngine'
 // WYSIWYG: 锚点插件与锚点同步（用于替换纯比例同步）
 import {
   enableWysiwygV2,
@@ -2017,7 +2017,7 @@ async function enableCm6Mode(notifyLargeDocument: boolean): Promise<void> {
   wysiwygV2Active = false
   mode = 'edit'
   container.classList.remove('wysiwyg-v2-loading')
-  container.classList.add('wysiwyg-v2', 'wysiwyg-cm6')
+  container.classList.add('wysiwyg-v2', CM6_VIEW_CLASS)
   try { preview.classList.add('hidden') } catch {}
   try { applyUiZoom() } catch {}
   try { updateChromeColorsForMode('wysiwyg') } catch {}
@@ -2037,7 +2037,7 @@ function destroyCm6Mode(): void {
     try { logWarn('[CM6] 销毁失败，保留 textarea 同步镜像', { err: String(e) }) } catch {}
   }
   _cm6Host = null
-  try { document.querySelector('.container')?.classList.remove('wysiwyg-cm6') } catch {}
+  try { document.querySelector('.container')?.classList.remove(CM6_VIEW_CLASS) } catch {}
 }
 
 async function setWysiwygEnabled(enable: boolean, opts?: SetWysiwygOptions) {
@@ -3189,7 +3189,7 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   try {
     preview.classList.add('rendering')
     const buf = document.createElement('div') as HTMLDivElement
-    buf.className = 'preview-body'
+    buf.className = 'preview-body md-content'
     buf.innerHTML = safe
     ensurePreviewHeadingIds(buf)
     // KaTeX 渲染放到 DOM 提交之后，并使用时间切片避免长任务卡死（见 renderKatexPlaceholders）。

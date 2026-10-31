@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Cm6ModeHost } from './cm6ModeHost'
+import { SOURCE_LINE_NUMBERS_CHANGED_EVENT } from '../core/sourceLineNumbersPref'
 
 let container: HTMLDivElement
 let textarea: HTMLTextAreaElement
@@ -91,5 +92,25 @@ describe('Cm6ModeHost', () => {
     host.root.dispatchEvent(new Event('compositionend'))
     host.syncFromTextarea()
     expect(replaceDocument).not.toHaveBeenCalled()
+  })
+
+  // 「源码行号」开关必须能实时驱动大文件 CM6 视图的行号栏
+  it('「源码行号」偏好变更即时显隐 CM6 行号栏', async () => {
+    const host = await Cm6ModeHost.create({ container, editor: textarea })
+    expect(container.querySelector('.cm-gutters')).not.toBeNull()
+    window.dispatchEvent(new CustomEvent(SOURCE_LINE_NUMBERS_CHANGED_EVENT, { detail: { enabled: false } }))
+    expect(container.querySelector('.cm-gutters')).toBeNull()
+    window.dispatchEvent(new CustomEvent(SOURCE_LINE_NUMBERS_CHANGED_EVENT, { detail: { enabled: true } }))
+    expect(container.querySelector('.cm-gutters')).not.toBeNull()
+    host.destroy()
+  })
+
+  it('销毁后不再响应偏好变更（不残留监听、不抛错）', async () => {
+    const host = await Cm6ModeHost.create({ container, editor: textarea })
+    const setLineNumbersEnabled = vi.spyOn((host as any).engine, 'setLineNumbersEnabled')
+    host.destroy()
+    window.dispatchEvent(new CustomEvent(SOURCE_LINE_NUMBERS_CHANGED_EVENT, { detail: { enabled: false } }))
+    expect(setLineNumbersEnabled).not.toHaveBeenCalled()
+    expect(host.root.querySelector('.cm-gutters')).toBeNull()
   })
 })

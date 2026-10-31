@@ -107,4 +107,34 @@ describe('Cm6Editor', () => {
     expect(snapshot).toEqual({ text: 'abcdef', anchor: 3, head: 5, scrollTop: 120 })
     expect(parent.childElementCount).toBe(0)
   })
+
+  // 「源码行号」开关在大文件 CM6 视图必须真实生效：这是用户反馈的原始症状
+  // （大文件所见模式用 CM6 渲染源码，但行号不跟随设置）。
+  it('行号栏关闭时不创建 .cm-gutters，运行时切换即时增删', () => {
+    const editor = new Cm6Editor({ parent, document: 'a\nb', onChange: () => {}, lineNumbers: false })
+    expect(parent.querySelector('.cm-gutters')).toBeNull()
+    editor.setLineNumbersEnabled(true)
+    expect(parent.querySelector('.cm-gutters')).not.toBeNull()
+    editor.setLineNumbersEnabled(false)
+    expect(parent.querySelector('.cm-gutters')).toBeNull()
+    editor.destroy()
+  })
+
+  it('行号栏开启时默认创建 .cm-gutters，切换不影响文档与选区', () => {
+    const editor = new Cm6Editor({ parent, document: 'a\nb', onChange: () => {}, lineNumbers: true })
+    expect(parent.querySelector('.cm-gutters')).not.toBeNull()
+    editor.setSelection(2)
+    editor.setLineNumbersEnabled(false)
+    expect(parent.querySelector('.cm-gutters')).toBeNull()
+    expect(editor.getDoc()).toBe('a\nb')
+    expect(editor.getSelection().anchor).toBe(2)
+    editor.destroy()
+  })
+
+  it('未显式指定时按「源码行号」偏好初始化', () => {
+    const editor = new Cm6Editor({ parent, document: 'a', onChange: () => {} })
+    // 默认偏好为开启
+    expect(parent.querySelector('.cm-gutters')).not.toBeNull()
+    editor.destroy()
+  })
 })

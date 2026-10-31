@@ -1,15 +1,19 @@
 // 主题系统（中文注释）
 // - 目标：
 //   1) 提供“主题”入口（按钮由 main.ts 注入），显示一个面板选择颜色与排版
-//   2) 支持编辑/所见/阅读三种模式独立背景色
+//   2) 支持源码/阅读两种独立背景色（所见模式与阅读模式共用同一纸面背景）
 //   3) 预留扩展 API：注册颜色、注册排版、注册整套主题
 //   4) 首次启动应用保存的主题自动生效
 // - 实现策略：
-//   使用 .container 作用域内的 CSS 变量覆盖（--bg / --wysiwyg-bg / --preview-bg），避免影响标题栏等外围 UI。
+//   使用 .container 作用域内的 CSS 变量覆盖（--bg / --preview-bg），避免影响标题栏等外围 UI。
+//   背景语义收敛为两套：源码编辑区（textarea / CM6 / 行号栏）= --bg；
+//   阅读模式与所见模式 = --preview-bg（所见与阅读已共用 .md-content 排版层，
+//   纸面背景再拆一份只会制造第二套事实源，并让夜间分支漏清理内联变量）。
 
 // 运行期依赖（仅在需要时使用）
 import { open as openDialog } from '@tauri-apps/plugin-dialog'
-import { lsGetStringCached, lsSetStringCached } from './core/lsCache'
+import { getSourceLineNumbersEnabled, setSourceLineNumbersEnabled } from './core/sourceLineNumbersPref'
+import { CM6_VIEW_CLASS } from './modes/editorEngine'
 import { readFile, writeFile, mkdir, exists, remove, BaseDirectory } from '@tauri-apps/plugin-fs'
 import { homeDir, desktopDir, join } from '@tauri-apps/api/path'
 import { invoke } from '@tauri-apps/api/core'
@@ -22,11 +26,16 @@ import { NETWORK_PROXY_DEFAULT_NO_PROXY, normalizeNetworkNoProxy } from './core/
 import { getUpdateCheckDisabled, setUpdateCheckDisabled } from './core/updateCheckPrefs'
 import { getDefaultOutlineTabEnabled, setDefaultOutlineTabEnabled } from './core/defaultOutlineTab'
 import { isCodeWrapEnabled, setCodeWrapEnabled } from './core/codeWrap'
+import { NotificationManager } from './core/uiNotifications'
 export type MdStyleId = 'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs' | 'typora' | 'obsidian' | 'bear' | 'minimalist'
 
 export interface ThemePrefs {
   editBg: string
   readBg: string
+  /**
+   * @deprecated 所见背景已并入阅读背景（--preview-bg），不再被消费。
+   * 仅保留此字段以原样回写旧配置，保证 git revert 后用户设置不丢——请勿新增消费点。
+   */
   wysiwygBg: string
   /** 夜间模式编辑背景 */
   editBgDark?: string
@@ -36,7 +45,10 @@ export interface ThemePrefs {
   parchmentEdit?: boolean
   /** 阅读模式羊皮风格 */
   parchmentRead?: boolean
-  /** 所见模式羊皮风格 */
+  /**
+   * @deprecated 所见模式羊皮风格开关已随「所见背景」设置一并移除；
+   * 阅读羊皮纸通过 .md-content 同时作用于所见模式。仅保留字段以原样回写旧配置。
+   */
   parchmentWysiwyg?: boolean
   mdStyle: MdStyleId
   themeId?: string
@@ -63,18 +75,19 @@ export interface ThemePrefs {
 export interface ThemeDefinition {
   id: string
   label: string
-  colors?: Partial<Pick<ThemePrefs, 'editBg' | 'readBg' | 'wysiwygBg'>>
+  /** 只保留源码/阅读两种纸面色；所见背景已并入阅读背景 */
+  colors?: Partial<Pick<ThemePrefs, 'editBg' | 'readBg'>>
   mdStyle?: MdStyleId
 }
 
 const STORE_KEY = 'flymd:theme:prefs'
-const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
 const LIB_COLOR_DEPTH_KEY = 'flymd:lib:colorDepth'
 
 const DEFAULT_PREFS: ThemePrefs = {
   editBg: '#ffffff',
   readBg: getCssVar('--preview-bg') || '#fbf5e6',
-  wysiwygBg: getCssVar('--wysiwyg-bg') || '#e9edf5',
+  /** @deprecated 仅作旧配置回写用，见 ThemePrefs.wysiwygBg */
+  wysiwygBg: '#e9edf5',
   editBgDark: '#0b0c0e',
   readBgDark: '#12100d',
   mdStyle: 'standard',
@@ -89,23 +102,17 @@ let _themeUiBound = false
 let _themePanelReady = false
 let _themeRuntimeBootstrapped = false
 
-// perf 批次 H3：读走内存缓存（与 sourceLineNumbers.ts 的同名读取共用一份缓存）
-function getSourceLineNumbersEnabled(): boolean {
+// 当前视图里是否存在"源码行号列"：
+//   - textarea 源码模式（含源码+阅读分屏）：`.editor-gutter`
+//   - 大文件 CM6 源码视图：`.cm-gutters`（容器类 wysiwyg-cm6 由 enableCm6Mode 挂载）
+// 只有存在行号列时，切开关的效果才是即时可见的，才不需要额外提示。
+function hasSourceLineNumberColumn(mode: string | null, wysiwyg: boolean | null): boolean {
+  if (mode === 'edit' && wysiwyg === false) return true
   try {
-    return lsGetStringCached(SOURCE_LINE_NUMBERS_KEY) !== 'false'
+    return !!document.querySelector(`.container.${CM6_VIEW_CLASS}`)
   } catch {
-    return true
+    return false
   }
-}
-
-function setSourceLineNumbersEnabled(enabled: boolean): void {
-  try {
-    lsSetStringCached(SOURCE_LINE_NUMBERS_KEY, enabled ? 'true' : 'false')
-  } catch {}
-  try {
-    const ev = new CustomEvent('flymd:sourceLineNumbers:changed', { detail: { enabled } })
-    window.dispatchEvent(ev)
-  } catch {}
 }
 
 // 库树彩虹色开关:默认开启。开启时 body 加 lib-color-depth class,5 阶 scheme 规则生效;
@@ -321,8 +328,8 @@ function updateChromeColorsFromContainer(container: HTMLElement, fallbackBase?: 
   } catch {}
 }
 
-// 夜间模式下所见模式的固定背景色
-const WYSIWYG_BG_DARK = '#0b1016'
+// 阅读模式的夜间背景色（所见模式与阅读模式共用同一纸面背景）
+const READ_BG_DARK = '#12100d'
 
 // 根据当前模式更新外圈UI颜色（标题栏、侧栏等）
 export function updateChromeColorsForMode(mode: 'edit' | 'wysiwyg' | 'preview'): void {
@@ -333,12 +340,9 @@ export function updateChromeColorsForMode(mode: 'edit' | 'wysiwyg' | 'preview'):
 
     switch (mode) {
       case 'wysiwyg':
-        // 所见模式：夜间使用固定深色，日间使用用户设置的所见背景
-        base = isDarkMode ? WYSIWYG_BG_DARK : prefs.wysiwygBg
-        break
       case 'preview':
-        // 阅读模式
-        base = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d') : prefs.readBg
+        // 所见模式与阅读模式共用同一纸面背景
+        base = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
         break
       default: // edit
         base = isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e') : prefs.editBg
@@ -362,36 +366,38 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
     const c = getContainer()
     if (!c) return
 
+    // 清理历史版本遗留的内联变量：旧版日间模式会写「所见纸面色」变量，
+    // 而旧版夜间分支从不清理它 → 夜间下残留浅色纸面色，所见容器/CM6 行号栏等
+    // 消费该变量的元素在暗色下仍是亮色。此变量现已退役，只做一次性清理。
+    try { c.style.removeProperty('--wysiwyg-bg') } catch {}
+
     // 检测是否为夜间模式（系统深色或用户手动开启）
     const isDarkMode = document.body.classList.contains('dark-mode')
 
+    // 日/夜两分支写入的变量集合必须完全一致（见 styles/themeBackgroundTokens.test.ts）
     if (isDarkMode) {
       // 夜间模式：应用用户设置的夜间背景色（如果已设置），否则使用默认深色
-      const editDark = prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e'
-      const readDark = prefs.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d'
-      c.style.setProperty('--bg', editDark)
-      c.style.setProperty('--preview-bg', readDark)
-      // 夜间模式下，所见模式背景固定使用 CSS 定义的颜色，不支持用户调整
+      c.style.setProperty('--bg', prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
+      c.style.setProperty('--preview-bg', prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
     } else {
       // 日间模式：应用用户设置的背景色
       c.style.setProperty('--bg', prefs.editBg)
       c.style.setProperty('--preview-bg', prefs.readBg)
-      c.style.setProperty('--wysiwyg-bg', prefs.wysiwygBg)
     }
 
     // 根据当前模式推导外圈 UI 颜色
     // 检测当前模式：wysiwyg-v2 类 = 所见模式；否则根据可见元素判断
     let currentBg: string
     if (c.classList.contains('wysiwyg-v2')) {
-      // 所见模式
-      currentBg = isDarkMode ? WYSIWYG_BG_DARK : prefs.wysiwygBg
+      // 所见模式：与阅读模式共用同一纸面背景
+      currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
     } else {
       // 检测是编辑还是阅读模式：通过 .preview 元素是否隐藏判断
       const previewEl = c.querySelector('.preview') as HTMLElement | null
       const isPreviewMode = previewEl && !previewEl.classList.contains('hidden')
       if (isPreviewMode) {
         // 阅读模式
-        currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d') : prefs.readBg
+        currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
       } else {
         // 源码模式
         currentBg = isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e') : prefs.editBg
@@ -516,11 +522,17 @@ export function loadThemePrefs(): ThemePrefs {
     return {
       editBg: obj.editBg || DEFAULT_PREFS.editBg,
       readBg: obj.readBg || DEFAULT_PREFS.readBg,
+      /** @deprecated 仅原样回写旧配置，不再消费（见 ThemePrefs.wysiwygBg） */
       wysiwygBg: obj.wysiwygBg || DEFAULT_PREFS.wysiwygBg,
       editBgDark: obj.editBgDark || DEFAULT_PREFS.editBgDark,
       readBgDark: obj.readBgDark || DEFAULT_PREFS.readBgDark,
       mdStyle: (['standard','github','notion','journal','card','docs','typora','obsidian','bear','minimalist'] as string[]).includes(mdStyle) ? mdStyle : 'standard',
       themeId: obj.themeId || undefined,
+      // 羊皮风格：必须读回，否则勾选态每次打开面板都复位、.parchment-* 类也从未生效
+      parchmentEdit: (typeof obj.parchmentEdit === 'boolean') ? obj.parchmentEdit : undefined,
+      parchmentRead: (typeof obj.parchmentRead === 'boolean') ? obj.parchmentRead : undefined,
+      /** @deprecated 所见羊皮纸已移除；仅保留读回以维持旧配置行为 */
+      parchmentWysiwyg: (typeof obj.parchmentWysiwyg === 'boolean') ? obj.parchmentWysiwyg : undefined,
       bodyFont: (typeof obj.bodyFont === 'string') ? obj.bodyFont : undefined,
       bodyFontGlobal: (typeof obj.bodyFontGlobal === 'boolean') ? obj.bodyFontGlobal : false,
       monoFont: (typeof obj.monoFont === 'string') ? obj.monoFont : undefined,
@@ -616,10 +628,7 @@ try {
 // ===== 主题 UI =====
 
 function buildColorList(): Array<{ id: string; label: string; color: string }> {
-  // 从当前 CSS 读取"所见模式当前颜色"
-  const curW = getCssVar('--wysiwyg-bg') || '#e9edf5'
   const base = [
-    { id: 'sys-wys', label: '所见色', color: curW },
     { id: 'pure', label: '纯白', color: '#ffffff' },
     { id: 'parch', label: '羊皮纸', color: '#fbf5e6' },
     { id: 'beige', label: '米色', color: '#f5f5dc' },
@@ -690,7 +699,7 @@ function createPanel(): HTMLDivElement {
             <span class="theme-toggle-slider"></span>
           </div>
         </label>
-        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="source-line-numbers-toggle">
+        <label class="theme-toggle-label theme-toggle-third theme-toggle-boxed" for="source-line-numbers-toggle" title="${t('theme.sourceLineNumbers.tip')}">
           <span class="theme-toggle-text">${t('theme.sourceLineNumbers')}</span>
           <div class="theme-toggle-switch">
             <input type="checkbox" id="source-line-numbers-toggle" class="theme-toggle-input" />
@@ -776,50 +785,28 @@ function createPanel(): HTMLDivElement {
         </label>
       </div>
     </div>
-    <div class="theme-section">
-      <div class="theme-title">${t('theme.editBg')}</div>
+    <div class="theme-section theme-bg-section">
+      <div class="theme-title">${t('theme.bgSection')}</div>
+      <div class="theme-bg-segmented">
+        <input type="radio" id="theme-bg-target-edit" name="theme-bg-target" class="theme-bg-segment-input" value="edit" checked />
+        <label class="theme-bg-segment" for="theme-bg-target-edit" title="${t('theme.bg.uiTip')}">${t('theme.bg.ui')}</label>
+        <input type="radio" id="theme-bg-target-read" name="theme-bg-target" class="theme-bg-segment-input" value="read" />
+        <label class="theme-bg-segment" for="theme-bg-target-read" title="${t('theme.bg.readTip')}">${t('theme.bg.read')}</label>
+      </div>
       <div class="theme-swatches" data-target="edit"></div>
       <div class="theme-options-row">
         <label class="theme-checkbox-label">
-          <input type="checkbox" id="parchment-edit-toggle" class="theme-checkbox" />
+          <input type="checkbox" id="parchment-bg-toggle" class="theme-checkbox" />
           <span>${t('theme.parchment')}</span>
         </label>
         <div class="theme-custom-color-inline">
-          <input type="text" id="custom-color-edit" class="theme-color-input" placeholder="#FFFFFF" maxlength="7" data-target="edit" />
-          <button class="theme-apply-btn" data-target="edit">${t('theme.apply')}</button>
+          <input type="text" id="custom-color-bg" class="theme-color-input theme-bg-color-input" placeholder="#FFFFFF" maxlength="7" data-target="edit" />
+          <button class="theme-apply-btn theme-bg-apply" data-target="edit">${t('theme.apply')}</button>
         </div>
-        <label class="theme-checkbox-label">
+        <label class="theme-checkbox-label theme-grid-bg-option" title="${t('theme.gridBg.tip')}">
           <input type="checkbox" id="grid-bg-toggle" class="theme-checkbox" />
           <span>${t('theme.gridBg')}</span>
         </label>
-      </div>
-    </div>
-    <div class="theme-section">
-      <div class="theme-title">${t('theme.readBg')}</div>
-      <div class="theme-swatches" data-target="read"></div>
-      <div class="theme-options-row">
-        <label class="theme-checkbox-label">
-          <input type="checkbox" id="parchment-read-toggle" class="theme-checkbox" />
-          <span>${t('theme.parchment')}</span>
-        </label>
-        <div class="theme-custom-color-inline">
-          <input type="text" id="custom-color-read" class="theme-color-input" placeholder="#FFFFFF" maxlength="7" data-target="read" />
-          <button class="theme-apply-btn" data-target="read">${t('theme.apply')}</button>
-        </div>
-      </div>
-    </div>
-    <div class="theme-section">
-      <div class="theme-title">${t('theme.wysiwygBg')}</div>
-      <div class="theme-swatches" data-target="wysiwyg"></div>
-      <div class="theme-options-row">
-        <label class="theme-checkbox-label">
-          <input type="checkbox" id="parchment-wysiwyg-toggle" class="theme-checkbox" />
-          <span>${t('theme.parchment')}</span>
-        </label>
-        <div class="theme-custom-color-inline">
-          <input type="text" id="custom-color-wysiwyg" class="theme-color-input" placeholder="#FFFFFF" maxlength="7" data-target="wysiwyg" />
-          <button class="theme-apply-btn" data-target="wysiwyg">${t('theme.apply')}</button>
-        </div>
       </div>
     </div>
     <div class="theme-section">
@@ -915,6 +902,23 @@ function createPanel(): HTMLDivElement {
   return panel
 }
 
+/**
+ * 把自定义色输入框同步为指定目标当前生效的颜色。
+ * 合并成一块「背景」区后只有一个输入框，它必须始终显示当前目标的实际色值，
+ * 否则会出现「界面显示 A 色、输入框残留 B 色」的自相矛盾。
+ */
+function syncBgColorInput(panel: HTMLElement, target: 'edit' | 'read', prefs: ThemePrefs): void {
+  const input = panel.querySelector('.theme-bg-color-input') as HTMLInputElement | null
+  if (!input) return
+  const isDarkMode = document.body.classList.contains('dark-mode')
+  const current = isDarkMode
+    ? (target === 'edit' ? (prefs.editBgDark || '') : (prefs.readBgDark || ''))
+    : (target === 'edit' ? prefs.editBg : prefs.readBg)
+  // 只回填合法 hex：脏值回填进输入框没有意义（它是 text 框，不是 color 框）
+  input.value = isValidHexColor(String(current || '')) ? String(current) : ''
+  input.classList.remove('invalid')
+}
+
 function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
   // 检测当前是否为夜间模式
   const isDarkMode = document.body.classList.contains('dark-mode')
@@ -923,29 +927,43 @@ function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
 
   panel.querySelectorAll('.theme-swatches').forEach((wrap) => {
     const el = wrap as HTMLElement
-    const tgt = el.dataset.target || 'edit'
-
-    // 夜间模式下隐藏所见背景选择
-    if (isDarkMode && tgt === 'wysiwyg') {
-      el.parentElement?.classList.add('hidden')
-      return
-    } else {
-      el.parentElement?.classList.remove('hidden')
-    }
+    const tgt: 'edit' | 'read' = el.dataset.target === 'read' ? 'read' : 'edit'
 
     // 根据当前模式选择对应的背景色
     const cur = isDarkMode
       ? (tgt === 'edit' ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark)
         : (prefs.readBgDark || DEFAULT_PREFS.readBgDark))
-      : (tgt === 'edit' ? prefs.editBg : (tgt === 'read' ? prefs.readBg : prefs.wysiwygBg))
+      : (tgt === 'edit' ? prefs.editBg : prefs.readBg)
 
-    el.innerHTML = colors.map(({ id, label, color }) => {
-      const active = (color.toLowerCase() === (cur || '').toLowerCase()) ? 'active' : ''
-      const title = `${label} ${color}`
-      return `<div class="theme-swatch ${active}" title="${title}" data-color="${color}" data-for="${tgt}" style="background:${color}"></div>`
-    }).join('')
+    // 原地更新色板，**不重建 DOM**：
+    // 重建（innerHTML）会把刚被点击的那个色板节点从文档树里摘掉，
+    // 事件继续冒泡到 document 的「点击面板外关闭」处理器时，
+    // ev.target.closest('#theme-panel') 在已脱离文档的节点上找不到祖先 →
+    // 点一下颜色面板就被误判成「点击外部」而自己关闭。
+    const cells = el.children
+    if (cells.length !== colors.length) {
+      // 数量不一致（首次渲染 / 明暗色板长度不同 / 扩展注册了新色板）才整体重建
+      el.innerHTML = colors.map(({ label, color }) => {
+        const active = (color.toLowerCase() === (cur || '').toLowerCase()) ? 'active' : ''
+        const title = `${label} ${color}`
+        return `<div class="theme-swatch ${active}" title="${title}" data-color="${color}" data-for="${tgt}" style="background:${color}"></div>`
+      }).join('')
+    } else {
+      colors.forEach(({ label, color }, i) => {
+        const cell = cells[i] as HTMLElement
+        const active = (color.toLowerCase() === (cur || '').toLowerCase()) ? 'active' : ''
+        cell.className = `theme-swatch ${active}`
+        cell.title = `${label} ${color}`
+        cell.dataset.color = color
+        cell.dataset.for = tgt
+        cell.style.background = color
+      })
+    }
+
+    // 共用的自定义色输入框也同步为该目标的当前色（fillSwatches 是所有配色
+    // 变更后的统一重绘点：色板点击、应用自定义色、切换分段、切换夜间模式）
+    syncBgColorInput(panel, tgt, prefs)
   })
-
   // MD 风格激活态
   panel.querySelectorAll('.md-btn').forEach((b) => {
     const el = b as HTMLButtonElement
@@ -1403,7 +1421,6 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         const c = getContainer(); if (!c) return
         if (forWhich === 'edit') c.style.setProperty('--bg', color)
         else if (forWhich === 'read') c.style.setProperty('--preview-bg', color)
-        else c.style.setProperty('--wysiwyg-bg', color)
       } catch {}
     }
     const revertPreview = (forWhich: string) => {
@@ -1413,12 +1430,10 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         const isDarkMode = document.body.classList.contains('dark-mode')
         if (isDarkMode) {
           if (forWhich === 'edit') c.style.setProperty('--bg', lastSaved.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
-          else if (forWhich === 'read') c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d')
-          // 夜间模式下所见背景不需要还原（不支持调整）
+          else if (forWhich === 'read') c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
         } else {
           if (forWhich === 'edit') c.style.setProperty('--bg', lastSaved.editBg)
           else if (forWhich === 'read') c.style.setProperty('--preview-bg', lastSaved.readBg)
-          else if (forWhich === 'wysiwyg') c.style.setProperty('--wysiwyg-bg', lastSaved.wysiwygBg)
         }
       } catch {}
     }
@@ -1429,12 +1444,10 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         const isDarkMode = document.body.classList.contains('dark-mode')
         if (isDarkMode) {
           c.style.setProperty('--bg', lastSaved.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
-          c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || '#12100d')
-          // 夜间模式下所见背景不需要还原（不支持调整）
+          c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
         } else {
           c.style.setProperty('--bg', lastSaved.editBg)
           c.style.setProperty('--preview-bg', lastSaved.readBg)
-          c.style.setProperty('--wysiwyg-bg', lastSaved.wysiwygBg)
         }
       } catch {}
     }
@@ -1449,12 +1462,117 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       const forWhich = sw.dataset.for || 'edit'
       applyPreview(forWhich, color)
     })
-    // 离开每个分组（编辑/阅读/所见）时还原该分组的原值，避免在分组内部移动造成闪烁
+    // 离开色板区时还原该目标（界面/阅读）的原值，避免在区内移动造成闪烁。
+    // 目标必须在事件触发时读取：分段切换会改写 .theme-swatches 的 data-target，
+    // 若在这里按值捕获，切换后仍会还原旧目标的变量。
     panel.querySelectorAll('.theme-swatches').forEach((wrap) => {
       const el = wrap as HTMLElement
-      const target = el.dataset.target || 'edit'
-      el.addEventListener('mouseleave', () => revertPreview(target))
+      el.addEventListener('mouseleave', () => revertPreview(el.dataset.target || 'edit'))
     })
+
+    // —— 背景分段控件（界面 / 阅读）——
+    // 事实源分层（三层各自职责明确，不会互相漂移）：
+    //   ① radio 勾选态      = 用户意图的来源（用户点了哪一段）
+    //   ② 容器 data-bg-target = **当前生效的目标（唯一事实源）**
+    //   ③ 各控件 data-target  = 由 ② 派生，供既有事件处理读取归属
+    // 切换时只有 syncBgControls 一个写入点，控件归属不可能各写各的。
+    const bgSection = panel!.querySelector('.theme-bg-section') as HTMLElement | null
+
+    /** 当前生效的背景目标（读事实源 ②）。 */
+    const currentBgTarget = (): 'edit' | 'read' => {
+      const raw = bgSection?.dataset.bgTarget
+      return raw === 'read' ? 'read' : 'edit'
+    }
+
+    /**
+     * 切换分段前，把「自定义色输入框里尚未应用的草稿」自动应用到它原本所在的目标。
+     * 合并前两段各有一个输入框，草稿天然隔离；合并后只剩一个输入框，
+     * 直接切换会静默丢掉用户刚敲进去的颜色。合法 hex 才自动应用；
+     * 半截输入（非法）本就无从应用，直接丢弃。
+     *
+     * 归属读「事实源 ②」而不是 radio：change 事件触发时 radio 已经翻页，
+     * 那时读到的是新目标，会把草稿写到另一个取值域里。
+     */
+    const flushColorDraft = (): void => {
+      const input = panel!.querySelector('.theme-bg-color-input') as HTMLInputElement | null
+      if (!input) return
+      const raw = input.value.trim()
+      if (!raw || !isValidHexColor(raw)) return
+      const target = bgSection?.dataset.bgTarget
+      // 归属不明（事实源还没建立）→ 宁可不写，也不猜一个目标写进去
+      if (target !== 'edit' && target !== 'read') return
+      const cur = loadThemePrefs()
+      const current = String(target === 'edit' ? cur.editBg : cur.readBg || '')
+      // 与当前生效色一致 → 不是草稿（回填值），无需处理
+      if (raw.toLowerCase() === current.toLowerCase()) return
+      const normalized = normalizeHexColor(raw)
+      const isDarkMode = document.body.classList.contains('dark-mode')
+      if (isDarkMode) {
+        if (target === 'edit') cur.editBgDark = normalized
+        else cur.readBgDark = normalized
+      } else {
+        if (target === 'edit') cur.editBg = normalized
+        else cur.readBg = normalized
+      }
+      saveThemePrefs(cur)
+      applyThemePrefs(cur)
+      lastSaved = { ...cur }
+    }
+
+    /**
+     * 把共用控件同步到指定背景目标：
+     * 1) 更新事实源（容器 data-bg-target）；
+     * 2) 由事实源派生各控件的 data-target（事件据此落到对应字段）；
+     * 3) 刷新色板高亮与 data-for（暗色下按暗色变体计算高亮）；
+     * 4) 自定义色输入框显示该目标当前生效的颜色（避免残留上一目标的颜色）；
+     * 5) 羊皮风格勾选态跟随目标；
+     * 6) 网格背景只对「界面」目标有效（其 CSS 只作用于源码模式）→ 阅读目标下禁用并说明。
+     */
+    const syncBgControls = (target: 'edit' | 'read'): void => {
+      const cur = loadThemePrefs()
+
+      // ① 事实源
+      if (bgSection) bgSection.dataset.bgTarget = target
+
+      // ② 派生控件归属
+      const swatches = panel!.querySelector('.theme-swatches') as HTMLElement | null
+      if (swatches) swatches.dataset.target = target
+
+      const colorInput = panel!.querySelector('.theme-bg-color-input') as HTMLInputElement | null
+      if (colorInput) {
+        colorInput.dataset.target = target
+        // 输入框的值由 fillSwatches 统一同步（那里才知道最新生效色）
+      }
+      const applyBtn = panel!.querySelector('.theme-bg-apply') as HTMLButtonElement | null
+      if (applyBtn) applyBtn.dataset.target = target
+
+      // ③④⑤⑥
+      const parchmentToggle = panel!.querySelector('#parchment-bg-toggle') as HTMLInputElement | null
+      if (parchmentToggle) {
+        parchmentToggle.checked = target === 'edit' ? !!cur.parchmentEdit : !!cur.parchmentRead
+      }
+
+      // 网格背景的 CSS 是 .container.edit-grid-bg:not(.wysiwyg-v2)，只作用于源码模式
+      const grid = panel!.querySelector('#grid-bg-toggle') as HTMLInputElement | null
+      const gridLabel = panel!.querySelector('.theme-grid-bg-option') as HTMLElement | null
+      if (grid) grid.disabled = target !== 'edit'
+      if (gridLabel) gridLabel.classList.toggle('theme-grid-bg-disabled', target !== 'edit')
+
+      fillSwatches(panel!, cur)
+    }
+
+    // 切换分段：先落草稿（不丢用户输入）→ 还原悬停预览色 → 同步控件
+    panel.querySelectorAll('.theme-bg-segment-input').forEach((input) => {
+      const el = input as HTMLInputElement
+      el.addEventListener('change', () => {
+        if (!el.checked) return
+        flushColorDraft()
+        revertAllPreviews()
+        syncBgControls(el.value === 'read' ? 'read' : 'edit')
+      })
+    })
+    // 初始态：默认「界面」目标，控件与其对齐
+    syncBgControls('edit')
 
     // 点击颜色：更新、保存、应用
     panel.addEventListener('click', (ev) => {
@@ -1466,14 +1584,13 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         // 根据当前模式保存到对应的字段
         const isDarkMode = document.body.classList.contains('dark-mode')
         if (isDarkMode) {
-          // 夜间模式：只保存编辑和阅读背景（所见模式背景不支持调整）
+          // 夜间模式：只保存编辑和阅读背景
           if (forWhich === 'edit') cur.editBgDark = color
           else if (forWhich === 'read') cur.readBgDark = color
         } else {
           // 日间模式：保存到亮色背景字段
           if (forWhich === 'edit') cur.editBg = color
           else if (forWhich === 'read') cur.readBg = color
-          else if (forWhich === 'wysiwyg') cur.wysiwygBg = color
         }
         saveThemePrefs(cur)
         applyThemePrefs(cur)
@@ -1502,41 +1619,19 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       })
     }
 
-    // 羊皮风格开关
-    const parchmentEditToggle = panel.querySelector('#parchment-edit-toggle') as HTMLInputElement | null
-    const parchmentReadToggle = panel.querySelector('#parchment-read-toggle') as HTMLInputElement | null
-    const parchmentWysiwygToggle = panel.querySelector('#parchment-wysiwyg-toggle') as HTMLInputElement | null
+    // 羊皮风格开关：合并后只剩一个控件，勾选态与写入字段跟随当前分段
+    // 注：所见模式的羊皮纸已随「所见背景」设置移除——阅读羊皮纸通过 .md-content
+    // 同时作用于所见模式（两者共用同一份正文排版层）。
+    const parchmentBgToggle = panel.querySelector('#parchment-bg-toggle') as HTMLInputElement | null
 
-    if (parchmentEditToggle) {
+    if (parchmentBgToggle) {
       const cur = loadThemePrefs()
-      parchmentEditToggle.checked = !!cur.parchmentEdit
-      parchmentEditToggle.addEventListener('change', () => {
+      parchmentBgToggle.checked = !!cur.parchmentEdit
+      parchmentBgToggle.addEventListener('change', () => {
         const cur = loadThemePrefs()
-        cur.parchmentEdit = parchmentEditToggle.checked
-        saveThemePrefs(cur)
-        applyThemePrefs(cur)
-        lastSaved = { ...cur }
-      })
-    }
-
-    if (parchmentReadToggle) {
-      const cur = loadThemePrefs()
-      parchmentReadToggle.checked = !!cur.parchmentRead
-      parchmentReadToggle.addEventListener('change', () => {
-        const cur = loadThemePrefs()
-        cur.parchmentRead = parchmentReadToggle.checked
-        saveThemePrefs(cur)
-        applyThemePrefs(cur)
-        lastSaved = { ...cur }
-      })
-    }
-
-    if (parchmentWysiwygToggle) {
-      const cur = loadThemePrefs()
-      parchmentWysiwygToggle.checked = !!cur.parchmentWysiwyg
-      parchmentWysiwygToggle.addEventListener('change', () => {
-        const cur = loadThemePrefs()
-        cur.parchmentWysiwyg = parchmentWysiwygToggle.checked
+        const target = currentBgTarget()
+        if (target === 'edit') cur.parchmentEdit = parchmentBgToggle.checked
+        else cur.parchmentRead = parchmentBgToggle.checked
         saveThemePrefs(cur)
         applyThemePrefs(cur)
         lastSaved = { ...cur }
@@ -1544,8 +1639,10 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     }
 
     // 自定义颜色输入框处理
-    const customColorInputs = panel.querySelectorAll('.theme-color-input') as NodeListOf<HTMLInputElement>
-    const applyButtons = panel.querySelectorAll('.theme-apply-btn') as NodeListOf<HTMLButtonElement>
+    // 注意：只取背景区的控件（.theme-bg-*）——面板里还有网络代理的 .theme-apply-btn，
+    // 用通用选择器会把「应用代理」的点击也绑到背景取色逻辑上。
+    const customColorInputs = panel.querySelectorAll('.theme-bg-color-input') as NodeListOf<HTMLInputElement>
+    const applyButtons = panel.querySelectorAll('.theme-bg-apply') as NodeListOf<HTMLButtonElement>
 
     // 实时验证输入
     customColorInputs.forEach((input) => {
@@ -1572,8 +1669,8 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     applyButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
         const target = btn.dataset.target || 'edit'
-        const inputId = `custom-color-${target}`
-        const input = panel.querySelector(`#${inputId}`) as HTMLInputElement | null
+        // 合并后自定义色输入框只有一个，按 data-target 定位（不再按 id 拼名字）
+        const input = panel.querySelector(`.theme-bg-color-input[data-target="${target}"]`) as HTMLInputElement | null
         if (!input) return
 
         const color = input.value.trim()
@@ -1601,7 +1698,6 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         } else {
           if (target === 'edit') cur.editBg = normalized
           else if (target === 'read') cur.readBg = normalized
-          else if (target === 'wysiwyg') cur.wysiwygBg = normalized
         }
 
         // 应用并保存
@@ -1609,10 +1705,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         applyThemePrefs(cur)
         fillSwatches(panel!, cur)
         lastSaved = { ...cur }
-
-        // 清空输入框
-        input.value = ''
-        input.classList.remove('invalid')
+        // 输入框的值由 fillSwatches 统一同步为已生效的颜色
       })
     })
 
@@ -1792,6 +1885,32 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       sourceLineNumbersToggle.checked = getSourceLineNumbersEnabled()
       sourceLineNumbersToggle.addEventListener('change', () => {
         setSourceLineNumbersEnabled(sourceLineNumbersToggle.checked)
+        // 行号列是源码编辑器专属 DOM：textarea 源码模式是 .editor-gutter，
+        // 大文件 CM6 源码视图是 .cm-gutters；Milkdown 所见 / 阅读模式两者都不渲染
+        // → 那里切开关看不到任何变化，明确提示一次，避免被误判成"改了不生效、要重启"。
+        // 分屏（源码+阅读）内部仍是 mode==='edit'，行号立即生效，同样不提示。
+        let mode: string | null = null
+        let wysiwyg: boolean | null = null
+        try {
+          const w = window as any
+          const raw = w.flymdGetMode?.()
+          // 只接受字符串返回值：钩子缺失或返回 null 时按"未知模式"处理
+          mode = typeof raw === 'string' ? raw : null
+          // 钩子不存在同样算未知（而不是"所见=false"），
+          // 否则缺失一个钩子就会被当成源码模式，吞掉本该出现的提示。
+          wysiwyg = typeof w.flymdGetWysiwygEnabled === 'function' ? !!w.flymdGetWysiwygEnabled() : null
+        } catch (e) {
+          // 任一钩子读取失败都按"未知模式"处理：必须把 mode 复位，
+          // 否则"读到 edit 但 wysiwyg 读取抛错"会被误判成源码模式而吞掉提示。
+          mode = null
+          wysiwyg = null
+          console.warn('[theme] 模式钩子不可用，源码行号提示按未知模式处理', e)
+        }
+        // 只有"明确处于源码模式"才不提示：任一钩子缺失/异常都按未知处理。
+        // 提示是自消的，宁可多提示一次，也不给用户"点了没反应"的沉默。
+        if (!hasSourceLineNumberColumn(mode, wysiwyg)) {
+          NotificationManager.show('setting-hint', t('theme.sourceLineNumbers.hint'))
+        }
       })
     }
 

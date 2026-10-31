@@ -1,5 +1,8 @@
 import { logInfo, logDebug } from '../core/logger'
-import { lsGetStringCached } from '../core/lsCache'
+import {
+  SOURCE_LINE_NUMBERS_CHANGED_EVENT,
+  getSourceLineNumbersEnabled,
+} from '../core/sourceLineNumbersPref'
 
 type EditorMode = 'edit' | 'preview'
 
@@ -27,8 +30,6 @@ type VisibleRange = {
   startLine: number
   endLine: number
 }
-
-const SOURCE_LINE_NUMBERS_KEY = 'flymd:sourceLineNumbers:enabled'
 
 // Ctrl+滚轮每 tick 都派发 uiZoom:changed；trailing 防抖把手势期间的 layout 刷新
 // 合并为一次，避免大文档缩放时逐 tick 触发 remeasureAll（每行一次强制 reflow）
@@ -132,14 +133,7 @@ function findLineByYOffset(rowOffsets: number[], offset: number, totalHeight: nu
   return Math.max(0, Math.min(hi, rowOffsets.length - 1))
 }
 
-// perf 批次 H3：读走内存缓存（与 theme.ts 的同名读取共用一份缓存）
-function getSourceLineNumbersEnabled(): boolean {
-  try {
-    return lsGetStringCached(SOURCE_LINE_NUMBERS_KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
+// perf 批次 H3：读走内存缓存（与 theme.ts 共用同一份缓存与同一个键）
 
 function commonPrefixLength(a: string, b: string): number {
   const limit = Math.min(a.length, b.length)
@@ -389,7 +383,15 @@ function installLineNumbers(): void {
     if (!editor) return
     const flymd = getFlymd()
     if (flymd.__flymdSourceLineNumbersInit) return
-    flymd.__flymdSourceLineNumbersInit = true
+
+    // 防御：若编辑器已被移进 .editor-shell，说明上次安装在"移动编辑器"那一步之后
+    // 中断过（外壳可能已就位，标志却没置上）。此时只补标志，避免二次插入
+    // 把外壳插进自己的后代而触发层级错误，把安装永久卡死。
+    const existingShell = editor.parentElement?.parentElement
+    if (existingShell && existingShell.classList.contains('editor-shell')) {
+      flymd.__flymdSourceLineNumbersInit = true
+      return
+    }
 
     const shell = document.createElement('div')
     shell.className = 'editor-shell'
@@ -415,11 +417,19 @@ function installLineNumbers(): void {
 
     const parent = editor.parentElement
     if (!parent) return
-    parent.insertBefore(shell, editor)
+    // 先在游离状态组装完整子树，最后一次性插入 DOM：
+    // 中途抛错不会在页面上留下半成品外壳，也就不会让后续重试插入第二个外壳。
     shell.appendChild(gutter)
     shell.appendChild(surface)
-    surface.appendChild(editor)
     surface.appendChild(measure)
+    parent.insertBefore(shell, editor)
+    // 编辑器本体移入 surface（同一棵树内的移动，不会失败）
+    surface.appendChild(editor)
+
+    // DOM 全部就位后才置幂等标志。早置会在"编辑器尚未挂载"（parent 为空）时
+    // 把这次安装机会永久消耗掉——装不成行号列，且本会话再也不会重来，
+    // 退化回"只能重启才看得到"的失败形态。
+    flymd.__flymdSourceLineNumbersInit = true
 
     let lastText = String(editor.value || '')
     let lastMetricsKey = ''
@@ -890,7 +900,7 @@ function installLineNumbers(): void {
         schedule('layout')
       }, ZOOM_LAYOUT_DEBOUNCE_MS)
     })
-    window.addEventListener('flymd:sourceLineNumbers:changed', () => schedule('layout'))
+    window.addEventListener(SOURCE_LINE_NUMBERS_CHANGED_EVENT, () => schedule('layout'))
     document.addEventListener('selectionchange', () => {
       if (document.activeElement === editor) schedule('selection')
     })
@@ -931,12 +941,59 @@ function installLineNumbers(): void {
   } catch {}
 }
 
+// 安装时机：编辑器 DOM 还没挂上时不能直接放弃——放弃等于本会话永远没有行号列，
+// 用户只能靠"重启应用"才看得到效果。这里改为有限次重试。
+const INSTALL_RETRY_INTERVAL_MS = 800
+const INSTALL_MAX_ATTEMPTS = 12
+
+// 快速重试窗口用尽后转入 DOM 观察兜底：不允许"静默永久放弃"，
+// 否则慢机器 / 冷启动 / 大文件场景下会重现同一类"必须重启"故障。
+function watchForEditor(): void {
+  try {
+    if (typeof MutationObserver === 'undefined') return
+    const root = document.body
+    if (!root) return
+    const observer = new MutationObserver((records) => {
+      // 只在"确实新增了 #editor"时才动作：不为每次 DOM 变更都付一次全局查询的代价
+      for (const rec of records) {
+        for (const node of Array.from(rec.addedNodes)) {
+          const el = node as HTMLElement | null
+          if (!el) continue
+          if (el.id === 'editor' || (typeof el.querySelector === 'function' && el.querySelector('#editor'))) {
+            observer.disconnect()
+            installLineNumbers()
+            return
+          }
+        }
+      }
+    })
+    observer.observe(root, { childList: true, subtree: true })
+  } catch (e) {
+    console.warn('[sourceLineNumbers] 编辑器 DOM 观察兜底启动失败', e)
+  }
+}
+
+function scheduleInstall(attempt = 0): void {
+  setTimeout(() => {
+    if (!document.getElementById('editor')) {
+      if (attempt + 1 < INSTALL_MAX_ATTEMPTS) {
+        scheduleInstall(attempt + 1)
+        return
+      }
+      console.warn('[sourceLineNumbers] 编辑器 DOM 仍未就绪，转入观察兜底')
+      watchForEditor()
+      return
+    }
+    installLineNumbers()
+  }, INSTALL_RETRY_INTERVAL_MS)
+}
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(installLineNumbers, 800)
+    scheduleInstall()
   })
 } else {
-  setTimeout(installLineNumbers, 800)
+  scheduleInstall()
 }
 
 export {}

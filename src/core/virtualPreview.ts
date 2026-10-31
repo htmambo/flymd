@@ -110,7 +110,7 @@ export class VirtualPreview {
   private mountShell(): void {
     this.resizeObserver?.disconnect()
     const root = document.createElement('div')
-    root.className = 'preview-body virtual-preview-body'
+    root.className = 'preview-body virtual-preview-body md-content'
     const meta = document.createElement('div')
     meta.className = 'virtual-preview-meta'
     const top = document.createElement('div')

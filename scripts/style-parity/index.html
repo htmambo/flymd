@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flymd 样式校验（阅读 / 所见）</title>
+    <style>
+      body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      #stage { display: none; }
+      /* ?visual=1：把两种模式的渲染结果直接铺出来，用来看真实观感（截图核对用）
+         注意：parity.js 把两个容器挂在 body 上（不在 #stage 内），选择器不能带 #stage。 */
+      body.visual #stage { display: block; }
+      body.visual #report { display: none; }
+      body.visual .container {
+        display: inline-block;
+        vertical-align: top;
+        width: 49%;
+        margin: 0 0 24px 1%;
+        border: 1px dashed #888;
+        height: auto;
+        overflow: visible;
+      }
+      body.visual .panel { position: static; inset: auto; overflow: visible; height: auto; }
+      body.visual .preview,
+      body.visual #md-wysiwyg-root {
+        position: static !important;
+        inset: auto !important;
+        display: block !important;
+        width: 100%;
+        overflow: visible !important;
+        height: auto;
+      }
+      /* ?visual=1&only=table：只留表格，用于核对表格边框观感 */
+      body.visual.only-table .preview-body > *:not(.table-wrapper),
+      body.visual.only-table .ProseMirror > *:not(table) { display: none !important; }
+      /* 校验用容器：模拟应用布局，但固定宽度，保证计算样式与窗口尺寸无关 */
+      #stage .panel { padding: 0; }
+      #stage .container { display: block; width: 1100px; height: auto; min-height: 0; }
+      #stage .panel .preview { position: static; width: 1100px; overflow: visible; height: auto; }
+      #stage .panel #md-wysiwyg-root { position: static; display: block; width: 1100px; height: auto; }
+      #report, #baseline {
+        white-space: pre-wrap;
+        font-size: 12px;
+        padding: 12px;
+        border-top: 1px solid #ddd;
+        margin: 0;
+      }
+      #baseline { max-height: 40vh; overflow: auto; color: #555; }
+      h1.doc { font: 14px/1.6 sans-serif; margin: 0 0 8px; }
+    </style>
+  </head>
+  <body>
+    <h1 class="doc">flymd 样式校验页（dev-only）：parity = 阅读 vs 所见；baseline = 阅读模式观感是否被改动</h1>
+    <div id="stage">
+      <div id="report">运行中…</div>
+      <details>
+        <summary>阅读模式基线 JSON（用于更新 baseline.json）</summary>
+        <pre id="baseline"></pre>
+      </details>
+    </div>
+    <script type="module" src="./parity.js"></script>
+  </body>
+</html>

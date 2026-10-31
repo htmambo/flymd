@@ -52,3 +52,19 @@ declare module '*?url'
 declare module '*?raw'
 declare module '*?inline'
 declare module '*?worker'
+
+// Node 内置模块的最小声明（测试用；项目未安装 @types/node）
+declare module 'node:fs' {
+  export function readFileSync(path: string, encoding: 'utf8'): string
+  export function readdirSync(path: string): string[]
+  export function statSync(path: string): { isDirectory(): boolean; isFile(): boolean }
+}
+declare module 'node:path' {
+  export function join(...parts: string[]): string
+  export function dirname(path: string): string
+  export function resolve(...parts: string[]): string
+  export function relative(from: string, to: string): string
+}
+declare module 'node:url' {
+  export function fileURLToPath(url: string | URL): string
+}

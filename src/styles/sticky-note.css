@@ -34,14 +34,14 @@ body.sticky-note-mode .preview {
 }
 
 /* 便签模式顶部按钮是 fixed 覆盖层：给预览内容留出空间，避免文字“顶到按钮区” */
-body.sticky-note-mode .preview-body {
+body.sticky-note-mode .md-content {
   padding-top: 44px !important;
 }
 
 body.sticky-note-mode .preview,
-body.sticky-note-mode .preview-body,
-body.sticky-note-mode .preview-body p,
-body.sticky-note-mode .preview-body li {
+body.sticky-note-mode .md-content,
+body.sticky-note-mode .md-content p,
+body.sticky-note-mode .md-content li {
   font-size: 14px !important;
   line-height: 1.4 !important;
   color: var(--sticky-fg, var(--fg));
@@ -54,23 +54,23 @@ body.sticky-note-mode li.task-list-item {
 }
 
 /* 便签模式：标题紧凑化 */
-body.sticky-note-mode .preview-body h1,
-body.sticky-note-mode .preview-body h2,
-body.sticky-note-mode .preview-body h3,
-body.sticky-note-mode .preview-body h4,
-body.sticky-note-mode .preview-body h5,
-body.sticky-note-mode .preview-body h6 {
+body.sticky-note-mode .md-content h1,
+body.sticky-note-mode .md-content h2,
+body.sticky-note-mode .md-content h3,
+body.sticky-note-mode .md-content h4,
+body.sticky-note-mode .md-content h5,
+body.sticky-note-mode .md-content h6 {
   margin-top: 0.5em !important;
   margin-bottom: 0.3em !important;
   color: var(--sticky-fg, var(--fg));
   text-shadow: var(--sticky-text-shadow, none);
 }
-body.sticky-note-mode .preview-body h1 { font-size: 1.3em !important; }
-body.sticky-note-mode .preview-body h2 { font-size: 1.2em !important; }
-body.sticky-note-mode .preview-body h3 { font-size: 1.1em !important; }
-body.sticky-note-mode .preview-body h4,
-body.sticky-note-mode .preview-body h5,
-body.sticky-note-mode .preview-body h6 { font-size: 1em !important; }
+body.sticky-note-mode .md-content h1 { font-size: 1.3em !important; }
+body.sticky-note-mode .md-content h2 { font-size: 1.2em !important; }
+body.sticky-note-mode .md-content h3 { font-size: 1.1em !important; }
+body.sticky-note-mode .md-content h4,
+body.sticky-note-mode .md-content h5,
+body.sticky-note-mode .md-content h6 { font-size: 1em !important; }
 
 /* 便签模式：删除线只应用在文字内容上，不影响图标 */
 body.sticky-note-mode li.task-list-item:has(input.task-list-item-checkbox:checked) {
@@ -84,34 +84,34 @@ body.sticky-note-mode li.task-list-item:has(input.task-list-item-checkbox:checke
 }
 
 /* 便签模式：代码块可读性优化 */
-body.sticky-note-mode .preview-body code {
+body.sticky-note-mode .md-content code {
   background: rgba(0, 0, 0, 0.06);
   padding: 1px 4px;
   border-radius: 3px;
   font-size: 0.9em;
 }
-body.sticky-note-mode .preview-body pre {
+body.sticky-note-mode .md-content pre {
   background: rgba(0, 0, 0, 0.04) !important;
   border-radius: var(--radius-md);
   padding: 8px !important;
   margin: 8px 0 !important;
 }
-body.sticky-note-mode .preview-body pre code {
+body.sticky-note-mode .md-content pre code {
   background: transparent;
   padding: 0;
 }
 
 /* 便签模式：链接样式 */
-body.sticky-note-mode .preview-body a {
+body.sticky-note-mode .md-content a {
   color: var(--accent);
   text-decoration: none;
 }
-body.sticky-note-mode .preview-body a:hover {
+body.sticky-note-mode .md-content a:hover {
   text-decoration: underline;
 }
 
 /* 便签模式：引用块样式 */
-body.sticky-note-mode .preview-body blockquote {
+body.sticky-note-mode .md-content blockquote {
   margin: 8px 0 !important;
   padding: 4px 12px !important;
   border-left: 3px solid rgba(0, 0, 0, 0.15);
@@ -374,8 +374,8 @@ body.sticky-note-mode .flymd-context-menu .context-menu-icon {
 /* ============ 便签模式待办项按钮 ============ */
 
 /* 便签模式下任务列表样式 */
-body.sticky-note-mode .preview-body ul.task-list,
-body.sticky-note-mode .preview-body ol.task-list {
+body.sticky-note-mode .md-content ul.task-list,
+body.sticky-note-mode .md-content ol.task-list {
   padding-left: 0 !important;
   padding-right: 0 !important;
   margin-left: 0 !important;
@@ -501,17 +501,17 @@ body.dark-mode.sticky-note-mode .container,
 body.dark-mode.sticky-note-mode .preview {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
-body.dark-mode.sticky-note-mode .preview-body code {
+body.dark-mode.sticky-note-mode .md-content code {
   background: rgba(255, 255, 255, 0.1);
 }
-body.dark-mode.sticky-note-mode .preview-body pre {
+body.dark-mode.sticky-note-mode .md-content pre {
   background: rgba(255, 255, 255, 0.05) !important;
 }
-body.dark-mode.sticky-note-mode .preview-body blockquote {
+body.dark-mode.sticky-note-mode .md-content blockquote {
   border-left-color: rgba(255, 255, 255, 0.2);
   background: rgba(255, 255, 255, 0.03);
 }
-body.dark-mode.sticky-note-mode .preview-body a {
+body.dark-mode.sticky-note-mode .md-content a {
   color: var(--accent);
 }
 body.dark-mode.sticky-note-mode .container::before {
@@ -669,16 +669,7 @@ body.no-native-decorations.window-maximized .window-resize-handle {
 }
 */
 
-/* 所见模式代码块：强制移除所有边框和阴影（覆盖所有主题） */
-.container.wysiwyg-v2 .ProseMirror pre,
-.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper *,
-.container.wysiwyg-v2 .ProseMirror pre code,
-.container.wysiwyg-v2 .ProseMirror pre .code-layers,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer,
-.container.wysiwyg-v2 .ProseMirror pre .editable-layer {
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
+/* 所见模式代码块的边框/阴影重置已迁移到 styles/code-rendering.css：
+   只针对代码块内层（阅读模式对应 .preview pre * 的处理），
+   不再剥掉代码块外壳自身的边框与阴影——否则所见模式永远拿不到主题配色。 */
 

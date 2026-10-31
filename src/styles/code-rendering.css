@@ -13,7 +13,10 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --code-bg: #0f1114;
+    /* 暗色代码块背景：必须明显亮于内容区背景（阅读 #12100d / 所见 #0b1016），
+       否则代码块会「陷进」页面底色里，看不出块边界（用户反馈）。
+       旧值 #0f1114 与内容区只差 3/1/9 个色阶，肉眼不可分。 */
+    --code-bg: #1a1f27;
     --code-border: #1f2937;
     --code-fg: #e5e7eb;
     --code-muted: #9ca3af;
@@ -25,10 +28,13 @@
   }
 }
 
-/* 块级代码 */
-.preview pre {
+/* 块级代码
+   外壳规则挂在 .md-content 上：阅读模式（.preview-body.md-content）与
+   所见模式（.ProseMirror.md-content）共用同一份，主题层再用
+   .container.md-X .md-content pre 覆盖，避免两套代码块外观漂移。 */
+.md-content pre {
   background: var(--code-bg);
-  border: 1px solid var(--code-border);
+  border: none;
   border-radius: var(--radius-xl);
   /* 统一以变量记录代码块上下内边距，便于各风格覆盖时参与计算 */
   --code-pre-pad-y: 2px;
@@ -38,115 +44,104 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.04);
   transition: box-shadow 0.2s ease;
 }
-.preview pre:hover {
+.md-content pre:hover {
   box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
-.preview pre code {
+.md-content pre code {
   display: block;
   background: transparent;
-  color: var(--code-fg);
+  /* 块内代码的文字色：默认取 --code-fg；主题可用 --code-text 覆盖
+     （所见模式的代码块有双层结构，主题的行内代码颜色会串进来，用这个变量锁住两端一致）。 */
+  color: var(--code-text, var(--code-fg));
   font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
   font-size: 0.875em;  /* 相对容器字号（默认 16px → 14px），随全局字号调整缩放 */
-  line-height: 1.7;
+  line-height: 1.8;
   letter-spacing: 0.02em;
+  /* 代码块内的 code 不带行内代码的框：所见模式的双层结构里，
+     code 的父节点是 .code-layers（不是 pre），会命中行内代码规则，这里复位。 */
+  padding: 0;
+  border: none;
+  border-radius: 0;
 }
-/* 行内代码 */
-.preview :not(pre) > code {
-  background: var(--code-bg);
-  color: var(--code-fg);
-  border: 1px solid var(--code-border);
-  border-radius: var(--radius-md);
-  padding: 2px 8px;
-  font-size: 0.9em;
-  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
-  font-weight: 500;
-}
+/* 行内代码：排版规则已上移到 styles/markdown-content.css（阅读/所见两模式共用）。 */
 
-/* hljs token 颜色（不依赖外部主题）*/
-/* 同时用 .preview / .codebox / .preview-body 选择器，避免容器类名差异导致高亮失效 */
-.preview code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
-.preview code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
-.preview code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: var(--c-key); }
-.preview code.hljs .hljs-title, .codebox code.hljs .hljs-title,
-.preview code.hljs .hljs-section, .codebox code.hljs .hljs-section,
-.preview code.hljs .hljs-function, .codebox code.hljs .hljs-function,
-.preview code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: var(--c-fn); }
-.preview code.hljs .hljs-string, .codebox code.hljs .hljs-string,
-.preview code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
-.preview code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: var(--c-str); }
-.preview code.hljs .hljs-number, .codebox code.hljs .hljs-number,
-.preview code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
-.preview code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: var(--c-num); }
-.preview code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
-.preview code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: var(--c-com); font-style: italic; }
-.preview code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
-.preview code.hljs .hljs-params, .codebox code.hljs .hljs-params,
-.preview code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: var(--c-fn); }
-.preview code.hljs .hljs-class, .codebox code.hljs .hljs-class,
-.preview code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: var(--c-key); }
-.preview code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
-.preview code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: var(--code-fg); }
-.preview code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
-.preview code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: var(--c-key); }
-.preview code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: var(--c-str); }
-.preview code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
-.preview code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: var(--c-num); }
-.preview code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: var(--c-com); }
-.preview code.hljs .hljs-strong, .codebox code.hljs .hljs-strong { font-weight: bold; }
-.preview code.hljs .hljs-emphasis, .codebox code.hljs .hljs-emphasis { font-style: italic; }
+/* hljs token 颜色（不依赖外部主题）
+   .md-content 作用域：阅读与所见两种模式共用同一套 token 配色，
+   主题层通过 .container.md-X 的 --c-* 变量调色板覆盖（两模式同时生效）。 */
+.md-content code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
+.md-content code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
+.md-content code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: var(--c-key); }
+.md-content code.hljs .hljs-title, .codebox code.hljs .hljs-title,
+.md-content code.hljs .hljs-section, .codebox code.hljs .hljs-section,
+.md-content code.hljs .hljs-function, .codebox code.hljs .hljs-function,
+.md-content code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: var(--c-fn); }
+.md-content code.hljs .hljs-string, .codebox code.hljs .hljs-string,
+.md-content code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
+.md-content code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: var(--c-str); }
+.md-content code.hljs .hljs-number, .codebox code.hljs .hljs-number,
+.md-content code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
+.md-content code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: var(--c-num); }
+.md-content code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
+.md-content code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: var(--c-com); font-style: italic; }
+.md-content code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
+.md-content code.hljs .hljs-params, .codebox code.hljs .hljs-params,
+.md-content code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: var(--c-fn); }
+.md-content code.hljs .hljs-class, .codebox code.hljs .hljs-class,
+.md-content code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: var(--c-key); }
+.md-content code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
+.md-content code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: var(--code-fg); }
+.md-content code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
+.md-content code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: var(--c-key); }
+.md-content code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: var(--c-str); }
+.md-content code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
+.md-content code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: var(--c-num); }
+.md-content code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: var(--c-com); }
+.md-content code.hljs .hljs-strong, .codebox code.hljs .hljs-strong { font-weight: bold; }
+.md-content code.hljs .hljs-emphasis, .codebox code.hljs .hljs-emphasis { font-style: italic; }
 
 /* 系统暗色偏好下给阅读模式 token 显式配色（不依赖 body.dark-mode 类） */
 @media (prefers-color-scheme: dark) {
-  .preview code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
-  .preview code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
-  .preview code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: #a78bfa !important; }
-  .preview code.hljs .hljs-title, .codebox code.hljs .hljs-title,
-  .preview code.hljs .hljs-section, .codebox code.hljs .hljs-section,
-  .preview code.hljs .hljs-function, .codebox code.hljs .hljs-function,
-  .preview code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: #f472b6 !important; }
-  .preview code.hljs .hljs-string, .codebox code.hljs .hljs-string,
-  .preview code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
-  .preview code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: #60a5fa !important; }
-  .preview code.hljs .hljs-number, .codebox code.hljs .hljs-number,
-  .preview code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
-  .preview code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: #34d399 !important; }
-  .preview code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
-  .preview code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: #6b7280 !important; font-style: italic; }
-  .preview code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
-  .preview code.hljs .hljs-params, .codebox code.hljs .hljs-params,
-  .preview code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: #9cdcfe !important; }
-  .preview code.hljs .hljs-class, .codebox code.hljs .hljs-class,
-  .preview code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: #4ec9b0 !important; }
-  .preview code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
-  .preview code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: #d4d4d4 !important; }
-  .preview code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
-  .preview code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: #a78bfa !important; }
-  .preview code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: #60a5fa !important; }
-  .preview code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
-  .preview code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: #34d399 !important; }
-  .preview code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: #6b7280 !important; }
+  .md-content code.hljs .hljs-keyword, .codebox code.hljs .hljs-keyword,
+  .md-content code.hljs .hljs-selector-tag, .codebox code.hljs .hljs-selector-tag,
+  .md-content code.hljs .hljs-built_in, .codebox code.hljs .hljs-built_in { color: #a78bfa !important; }
+  .md-content code.hljs .hljs-title, .codebox code.hljs .hljs-title,
+  .md-content code.hljs .hljs-section, .codebox code.hljs .hljs-section,
+  .md-content code.hljs .hljs-function, .codebox code.hljs .hljs-function,
+  .md-content code.hljs .hljs-title\.function_, .codebox code.hljs .hljs-title\.function_ { color: #f472b6 !important; }
+  .md-content code.hljs .hljs-string, .codebox code.hljs .hljs-string,
+  .md-content code.hljs .hljs-attr, .codebox code.hljs .hljs-attr,
+  .md-content code.hljs .hljs-template-variable, .codebox code.hljs .hljs-template-variable { color: #60a5fa !important; }
+  .md-content code.hljs .hljs-number, .codebox code.hljs .hljs-number,
+  .md-content code.hljs .hljs-literal, .codebox code.hljs .hljs-literal,
+  .md-content code.hljs .hljs-bullet, .codebox code.hljs .hljs-bullet { color: #34d399 !important; }
+  .md-content code.hljs .hljs-comment, .codebox code.hljs .hljs-comment,
+  .md-content code.hljs .hljs-quote, .codebox code.hljs .hljs-quote { color: #6b7280 !important; font-style: italic; }
+  .md-content code.hljs .hljs-variable, .codebox code.hljs .hljs-variable,
+  .md-content code.hljs .hljs-params, .codebox code.hljs .hljs-params,
+  .md-content code.hljs .hljs-property, .codebox code.hljs .hljs-property { color: #9cdcfe !important; }
+  .md-content code.hljs .hljs-class, .codebox code.hljs .hljs-class,
+  .md-content code.hljs .hljs-type, .codebox code.hljs .hljs-type { color: #4ec9b0 !important; }
+  .md-content code.hljs .hljs-operator, .codebox code.hljs .hljs-operator,
+  .md-content code.hljs .hljs-punctuation, .codebox code.hljs .hljs-punctuation { color: #d4d4d4 !important; }
+  .md-content code.hljs .hljs-tag, .codebox code.hljs .hljs-tag,
+  .md-content code.hljs .hljs-name, .codebox code.hljs .hljs-name { color: #a78bfa !important; }
+  .md-content code.hljs .hljs-attribute, .codebox code.hljs .hljs-attribute { color: #60a5fa !important; }
+  .md-content code.hljs .hljs-regexp, .codebox code.hljs .hljs-regexp,
+  .md-content code.hljs .hljs-symbol, .codebox code.hljs .hljs-symbol { color: #34d399 !important; }
+  .md-content code.hljs .hljs-meta, .codebox code.hljs .hljs-meta { color: #6b7280 !important; }
 }
 
-/* 所见模式代码块：亮色模式（VS Code Light+ 风格） */
-/* 覆盖所有主题的代码块边框 */
-.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-github.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-notion.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-journal.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-docs.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-card.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-typora.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-obsidian.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-bear.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-minimalist.wysiwyg-v2 .ProseMirror pre.code-block-wrapper,
-.container.md-terminal.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
-  background: var(--code-bg) !important;
-  border: none !important;
-  padding: 32px 4px 8px 8px;
-  margin: 0.5em 0;
-  border-radius: var(--radius-sm);
+/* 所见模式代码块：双层可编辑结构
+   （pre.code-block-wrapper > .code-scroll-box > .code-layers >
+     code.hljs.highlight-layer + code.editable-layer）
+   外观（背景 / 边框 / 圆角 / 阴影 / 代码正文字体字号行高）统一由
+   .md-content pre / .md-content pre code 与主题层提供，阅读与所见两模式同源；
+   这里只保留所见模式专属的结构差异：语言选择器占位、限高滚动、双层职责。 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
+  position: relative;
   overflow: visible;
-  box-shadow: none !important;
+  /* 顶部让位给块内左上角的语言选择器（阅读模式没有这个控件，属结构差异） */
+  padding-top: 32px;
 }
 /* 超高代码块限高滚动：挂在 .code-scroll-box（代码内容层的滚动容器）上，
    而不是 pre —— 语言选择器（bottom:-36px 装饰性溢出）在 pre 层，
@@ -171,120 +166,75 @@
   min-height: 1.5em; /* 确保空代码块也有一行高度 */
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
-  font-family: Consolas, Monaco, 'Courier New', monospace !important;
-  font-size: 0.875em !important;  /* 相对 .ProseMirror 字号（默认 16px → 14px），随全局字号调整缩放 */
-  line-height: 1.5 !important;
+  /* 字体 / 字号 / 行高 / 字距统一由 .md-content pre code 提供（与阅读模式同源），
+     这里只保留所见模式专属的 tab-size。 */
   tab-size: 4 !important;
-  display: block;
+}
+/* 代码块内的两层 code 不是行内代码：行内代码的框（内距/边框/圆角/底色）在这里复位。
+   所见模式里 code 的父节点是 .code-layers（不是 pre），会命中行内代码规则，
+   阅读模式的 pre > code 不会命中——若不复位，两模式的代码块内距/圆角就会漂移。 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
+  padding: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-weight: inherit !important;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .highlight-layer {
-  color: #1e1e1e;
+  /* 与阅读模式的块内代码文字色同源（--code-text 缺省即 --code-fg） */
+  color: var(--code-text, var(--code-fg)) !important;
   pointer-events: none;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .editable-layer {
   color: transparent !important;
-  caret-color: #1e1e1e !important;
+  caret-color: var(--code-fg) !important;
   background: transparent !important;
 }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-keyword,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-selector-tag,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-built_in { color: #0000ff; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-section,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-function,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title\.function_ { color: #795e26; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-string,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-attr,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-template-variable { color: #a31515; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-number,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-literal { color: #098658; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-comment,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-quote { color: #008000; font-style: normal; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-variable,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-params { color: #001080; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-class,
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-type { color: #267f99; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-property { color: #001080; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-operator { color: #1e1e1e; }
-.container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-punctuation { color: #1e1e1e; }
+/* token 配色统一走 .md-content code.hljs（阅读/所见共用 + 主题 --c-* 调色板），
+   此处不再维护所见模式专属的 VS Code 硬编码色板。 */
 
-/* 所见模式代码块：夜间模式（VS Code Dark+ 风格） */
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
-  background: var(--code-bg) !important;
-  border: none !important;
-  box-shadow: none !important;
-}
+/* 所见模式代码块：暗色下的双层文字色
+   背景 / 边框 / 圆角等外观统一由共享层（.md-content pre）与主题层负责，
+   这里只管两层的职责：高亮层显示代码颜色，编辑层透明（靠光标定位）。 */
 body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .highlight-layer {
-  color: #d4d4d4 !important;
+  color: var(--code-text, var(--code-fg)) !important;
 }
 body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .editable-layer {
   color: transparent !important;
-  caret-color: #d4d4d4 !important;
+  caret-color: var(--code-fg) !important;
   background: transparent !important;
 }
 body.dark-mode .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
   background: transparent !important;
 }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-keyword,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-selector-tag,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-built_in { color: #569cd6 !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-section,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-function,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title\.function_ { color: #dcdcaa !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-string,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-attr,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-template-variable { color: #ce9178 !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-number,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-literal { color: #b5cea8 !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-comment,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-quote { color: #6a9955 !important; font-style: normal; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-variable,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-params { color: #9cdcfe !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-class,
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-type { color: #4ec9b0 !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-property { color: #9cdcfe !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-operator { color: #d4d4d4 !important; }
-body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-punctuation { color: #d4d4d4 !important; }
 
 /* 同时支持系统暗色模式偏好（仅作为 body.dark-mode 的备用） */
 @media (prefers-color-scheme: dark) {
-  body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper {
-    background: #1e1e1e !important;
-    border-color: #3c3c3c !important;
-  }
   body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .highlight-layer {
-    color: #d4d4d4 !important;
+    color: var(--code-text, var(--code-fg)) !important;
   }
   body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .editable-layer {
     color: transparent !important;
-    caret-color: #d4d4d4 !important;
+    caret-color: var(--code-fg) !important;
     background: transparent !important;
   }
   body:not(.light-mode) .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper code {
     background: transparent !important;
   }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-keyword,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-selector-tag,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-built_in { color: #569cd6 !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-section,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-function,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-title\.function_ { color: #dcdcaa !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-string,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-attr,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-template-variable { color: #ce9178 !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-number,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-literal { color: #b5cea8 !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-comment,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-quote { color: #6a9955 !important; font-style: normal; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-variable,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-params { color: #9cdcfe !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-class,
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-type { color: #4ec9b0 !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-property { color: #9cdcfe !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-operator { color: #d4d4d4 !important; }
-  .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-punctuation { color: #d4d4d4 !important; }
+}
+
+/* 代码块内层：强制移除边框和阴影（对应阅读模式 .preview pre * 的处理，
+   避免块内出现多余的横向分隔线）。
+   注意：只作用于代码块**内层**，不再剥掉 pre 外壳自身的边框与阴影——
+   外壳要跟阅读模式一样继承主题配色。 */
+.container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper *,
+.container.wysiwyg-v2 .ProseMirror pre code,
+.container.wysiwyg-v2 .ProseMirror pre .code-layers,
+.container.wysiwyg-v2 .ProseMirror pre .highlight-layer,
+.container.wysiwyg-v2 .ProseMirror pre .editable-layer {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 /* 代码块语言选择器 */
@@ -292,7 +242,6 @@ body.dark-mode .container.wysiwyg-v2 .ProseMirror pre .highlight-layer .hljs-pun
   position: relative;
   /* pre 自身不限高不滚动（滚动在 .code-scroll-box 上）；
      语言下拉已改为 position:fixed 定位，不依赖父容器 overflow 溢出 */
-  margin-bottom: 0.5em;
 }
 .container.wysiwyg-v2 .ProseMirror pre.code-block-wrapper .code-lang-selector {
   position: absolute;
@@ -540,9 +489,8 @@ body.dark-mode .container.wysiwyg-v2 #md-wysiwyg-root .overlay-host .ov-codecopy
 /* .preview pre::-webkit-scrollbar-thumb { background: rgba(127,127,127,0.35); border-radius: 999px; } */
 
 /* === 行距优化（代码块）=== */
-/* 预览模式：使用舒适的行距以提高可读性 */
-.preview pre code { line-height: 1.8 !important; }
-/* 所见模式：保持一致的行距 */
+/* 代码正文的行距统一在 .md-content pre code（阅读/所见共用，1.8）；
+   旧版所见模式覆盖（.container.wysiwyg .preview …）保留给 legacy V1 覆盖层。 */
 .container.wysiwyg .preview pre,
 .container.wysiwyg .preview pre code { line-height: 1.6 !important; }
 

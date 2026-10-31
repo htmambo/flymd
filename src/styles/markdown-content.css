@@ -1,0 +1,245 @@
+/*
+ * 共享排版层：阅读模式与所见模式共用的 Markdown 正文排版
+ *
+ * 背景
+ *   此前阅读模式（markdown-it 输出 HTML，作用域 .preview）与所见模式
+ *   （Milkdown/ProseMirror 输出 DOM，作用域 .ProseMirror）各写了一套排版规则，
+ *   靠人工保持同步，实测已持续漂移：
+ *     - h4/h5/h6 在所见模式退化为浏览器默认字号（1em/0.83em/0.67em），层级消失
+ *     - ul/ol/li 没有任何规则，列表无缩进、无行距
+ *     - a 回到浏览器默认蓝底/下划线，丢失主题色与 hover 下划线
+ *     - hr 回到浏览器默认 1px inset，丢失渐变分割线
+ *     - 段落无两端对齐；blockquote 缺右内边距与阴影；表格单元格 padding 不一致
+ *
+ * 机制
+ *   两种模式在各自内容根上挂同一个中性语义类 md-content，本文件是排版规则的
+ *   唯一事实源：规则只写一次，两种模式共同命中，此后不可能再漂移。
+ *
+ *   作用域用 .md-content（普通类，非 :where()）：
+ *   - 特异性 (0,1,X)，与改造前的 .preview (0,1,X) 完全一致 →
+ *     阅读模式的级联胜负不变（基线指纹可验证）。
+ *   - 主题层 .container.md-<theme> .md-content (0,3,X) 与模式专属层
+ *     .container.wysiwyg-v2 .ProseMirror (0,3,X) 仍高于本层。
+ *   - 不用 :where() 是为了兼容较老 WebView（Safari 13/14 无 :where()），
+ *     且本仓库不存在裸元素级规则，不存在 (0,0,X) 平级风险。
+ *
+ * 取值基准
+ *   全部取自改造前阅读模式（.preview）的规则，改造后阅读模式观感不变。
+ *
+ * 所见模式专属差异不在本文件，见 styles/editor.css。
+ */
+
+/* ========== 内容根：定宽居中 + 排版上下文 ========== */
+.md-content {
+  max-width: var(--layout-content-max-width, var(--preview-max-width, 960px));
+  margin: 0 auto;
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji");
+  font-size: 16px;
+  line-height: var(--layout-line-height, 1.75);
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+/* ========== 标题 ========== */
+.md-content h1 {
+  margin: 1.8em 0 0.8em;
+  font-size: 2.2em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.md-content h2 {
+  margin: 1.6em 0 0.7em;
+  font-size: 1.8em;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.25em;
+}
+.md-content h3 {
+  margin: 1.4em 0 0.6em;
+  font-size: 1.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.md-content h4 {
+  margin: 1.2em 0 0.5em;
+  font-size: 1.2em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.md-content h5 {
+  margin: 1.1em 0 0.4em;
+  font-size: 1.05em;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.md-content h6 {
+  margin: 1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* ========== 段落 ========== */
+.md-content p {
+  margin: var(--layout-paragraph-spacing, 1em) 0;
+  text-align: justify;
+  text-justify: inter-character;
+}
+/* 首行缩进：只对顶层段落生效，避免影响 mermaid/代码块等 */
+.md-content > p {
+  text-indent: var(--layout-text-indent, 0);
+}
+
+/* ========== 引用 ========== */
+.md-content blockquote {
+  border-left: 4px solid var(--border-strong);
+  margin: 1.2em 0;
+  padding: 0.8em 1.2em;
+  background: rgba(127,127,127,0.04);
+  border-radius: 0 8px 8px 0;
+  color: var(--fg);
+  font-style: italic;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.03);
+}
+.md-content blockquote p {
+  margin: 0.4em 0;
+}
+.md-content blockquote p:first-child {
+  margin-top: 0;
+}
+.md-content blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* ========== 列表 ========== */
+.md-content ul,
+.md-content ol {
+  margin: 1em 0;
+  padding-left: 2em;
+  line-height: 1.8;
+}
+.md-content li {
+  margin: 0.4em 0;
+}
+.md-content ul ul,
+.md-content ol ol,
+.md-content ul ol,
+.md-content ol ul {
+  margin: 0.3em 0;
+}
+
+/* ========== 链接 ========== */
+.md-content a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: all var(--transition-normal);
+  font-weight: 500;
+}
+.md-content a:hover {
+  color: #1e40af;
+  border-bottom-color: #1e40af;
+}
+@media (prefers-color-scheme: dark) {
+  body:not(.light-mode) .md-content a {
+    color: var(--accent);
+  }
+  body:not(.light-mode) .md-content a:hover {
+    color: #93c5fd;
+    border-bottom-color: #93c5fd;
+  }
+}
+
+/* ========== 图片 ========== */
+.md-content img {
+  display: block;
+  margin: 1.5em auto;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.md-content img:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.md-content img:not([width]):not([height]) {
+  max-width: 70%;
+  height: auto;
+}
+
+/* ========== 行内代码 ==========
+   用 :not(pre) > code 排除代码块里的 <code>（阅读模式是 pre > code）。
+   所见模式的代码块里 <code> 的父节点是 .code-layers（不是 pre），会被这条命中，
+   由 styles/editor.css 的 pre code 复位规则 + code-rendering.css 的
+   !important 字号覆盖掉。 */
+.md-content :not(pre) > code {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius-md);
+  padding: 2px 8px;
+  font-size: 0.9em;
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-weight: 500;
+}
+
+/* ========== 分割线 ========== */
+.md-content hr {
+  border: none;
+  height: 2px;
+  background: linear-gradient(to right, transparent, var(--border-strong), transparent);
+  margin: 2em 0;
+  opacity: 0.6;
+}
+
+/* ========== 表格 ==========
+ * 阅读模式的表格外层是 JS 注入的 .table-wrapper（负责横向滚动与外框），
+ * 所见模式的表格没有该包装层，两者的外框差异由 styles/preview.css 与
+ * styles/editor.css 分别处理；单元格内部的排版规则在这里统一。 */
+.md-content table th {
+  border-right: 1px solid var(--table-border);
+  border-bottom: 2px solid var(--table-border);
+  padding: 12px 16px;
+  background: var(--table-header-bg);
+  font-weight: 600;
+  text-align: left;
+  color: var(--table-header-fg);
+}
+.md-content table th:last-child {
+  border-right: none;
+}
+.md-content table td {
+  border-right: 1px solid var(--table-border);
+  border-bottom: 1px solid var(--table-border);
+  padding: 10px 16px;
+  transition: background var(--transition-fast);
+}
+.md-content table td:last-child {
+  border-right: none;
+}
+.md-content table tr:last-child td {
+  border-bottom: none;
+}
+.md-content table tr:hover td {
+  background: var(--table-row-hover);
+}
+.md-content table tbody tr:nth-child(even) {
+  background: rgba(241, 245, 249, 0.02);
+}
+/* 表格内代码和图片处理 */
+.md-content table td code,
+.md-content table th code {
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+.md-content table td img,
+.md-content table th img {
+  max-width: 100%;
+  height: auto;
+}
