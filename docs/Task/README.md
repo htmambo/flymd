@@ -63,6 +63,15 @@ docs/Task/
   - **验证**：vitest **82 文件 / 1010 用例**全绿（新增 `statusBar.test.ts` 8 例）；typecheck + build + 入口闭包通过；浏览器实测三种模式显隐 + 未保存标记 + 窄窗降级
   - **外审**：需求轮 R1/R2 + 计划轮全采纳；代码轮 3 次送审，采纳 3 条、驳回 4 条（均有代码/协议层佐证）
 
+- ✅ [2026-10-31-linux-window-resize-fix.md](Archive/2026-10/2026-10-31-linux-window-resize-fix.md) — 修复 Linux(Wayland)下**窗口完全无法调整大小**（完成 2026-10-31）
+  - **根因一（协议层铁证）**：tao 的 `drag_resize_window` 走 `gdk_window_begin_resize_drag(..., GDK_CURRENT_TIME)` → Wayland 请求 serial 恒为 0；`WAYLAND_DEBUG` 抓到 `xdg_toplevel#34.resize(wl_seat#22, 0, 8)` 后 **KWin 不回任何 configure** → 原生路径在 Wayland 下**必然无效**（协议形式合法 ≠ 合成器会执行）
+  - **根因二**：旧探针拿「收到 resize 事件」当「合成器接管」的证据，迟到事件污染判定 → 手动兜底被误关；正确判据只能是**尺寸值是否偏离基线**
+  - **根因三（独立且同样致命）**：`body.window-maximized` 会把手柄整体 `pointer-events:none`，而该 class 只在启动时基线同步一次、应用自己的最大化按钮又只改图标不改 class → 「以最大化启动 → 点还原」后手柄永久失效
+  - **方案**：双路径（原生/手动）+ 运行时探测**只用尺寸值比对**；指针位移改绝对差 + screen/client **双源自动择优**；按帧节流 + 串行落地 + 跳过重复目标；最大化状态显式同步 + Linux 去抖复核；手势世代校验 + 2s IPC 超时兜底
+  - **平台限制如实记录**：Wayland 下 `setPosition` 是 no-op（实测请求后 `outerPosition` 不变），程序无权移动自己的 toplevel → 左/上边缘退化为「尺寸变化但锚定边不跟随」，属平台限制
+  - **验证**：新增 31 例单测（双路径结局 / 探针判据 / 指针源择优 / 按帧合并 / 跨手势污染 / 串行落地 / 最大化同步 / 失败重试），全套 **82 文件 / 1023 用例**全绿；typecheck + build + 入口闭包通过；**用户三轮真实拖拽复验通过**（协议日志佐证尺寸随光标平滑跟随）
+  - **外审**：代码轮 6 轮共 18 条，采纳 14 条（含 1 条阻断项），驳回 4 条并附代码/协议层证据
+
 - ✅ [2026-10-31-theme-bg-unify-single-setting.md](Archive/2026-10/2026-10-31-theme-bg-unify-single-setting.md) — 主题背景统一为**单一设置**（取消「界面 / 阅读」分段）（完成 2026-10-31）
   - **背景**：上一轮把两块背景区合并成一块（但保留分段控件 + 两个取值域）。本轮按用户要求再进一步：**面板只留一个背景控件**，界面 / 源码编辑区 / 阅读纸面共用同一色
   - **锚点唯一化**：`readBg` / `readBgDark` 成为唯一事实源；`--bg` 与 `--preview-bg` 由同一值驱动 → **恒等**；`editBg` / `editBgDark` 降级为**镜像输出**（写入时同步，渲染不再读取），存储字段与 `plugin.md` 公开契约**零变更**、无迁移

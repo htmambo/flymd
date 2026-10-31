@@ -1691,9 +1691,13 @@ try {
         if (isMax) {
           await win.unmaximize()
           applyMainWindowMaximizedState(false)
+          // body.window-maximized 会禁用全部 resize 手柄,必须与真实状态同步,
+          // 否则「还原」后 class 仍留着 → 手柄永久 pointer-events:none → 窗口再也调不了大小
+          windowResizeApi.applyMaximizedState(false)
         } else {
           await win.maximize()
           applyMainWindowMaximizedState(true)
+          windowResizeApi.applyMaximizedState(true)
         }
       } catch {}
     })
