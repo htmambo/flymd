@@ -53,6 +53,16 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-31-content-status-bar.md](Archive/2026-10/2026-10-31-content-status-bar.md) — 内容区底部**常驻状态栏**（左侧路径 / 中槽消息 / 右侧行·列·字数·未保存·缩放%）（完成 2026-10-31）
+  - **锚点**：保留 `#status` 这个 DOM id，只把它从「整条状态栏」降级为「状态栏内的中槽消息元素」→ 10+ 个既有写入方（保存/导出/打印/同步/更新/错误）**一行都不用改**；常驻统计另开右侧槽，与消息互不覆盖
+  - **挤压式占位零改动**：重定义 `--workspace-bottom-gap = calc(var(--dock-bottom-gap) + var(--statusbar-height))` → 内容区底边的 **8 个几何消费者**（editor.css 7 处 + cm6Editor.css 1 处）全部自动上移
+  - **模式语义**：行/列**仅在源码编辑器可见时**显示（阅读 / 所见无光标语义），字数 / 未保存 / 缩放% 三种模式都在；模式切换必须刷新（`notifyModeChange` 追加 `refreshStatus`，浏览器实测复现并修掉了旧值残留）
+  - **状态栏模块为槽位唯一写入方**（`src/ui/statusBar.ts`）：单一 timer 句柄消除竞态、MutationObserver 兜底外部写入、`lastWritten` 区分内外写入避免定时器被自触发重置、`dispose()` 释放观察器与定时器
+  - **顺带修掉的既有缺陷**：① 字数文案硬编码中文（英文界面显示「字 N」）→ 补 `status.chars`；② 未保存 tooltip 用了 i18n 里**根本不存在**的键 `status.unsaved`（会显示字面量键名）→ 补齐中英；③ 消息「永不恢复」语义 → 中槽统一 TTL 自动清除
+  - **窄窗降级**：600px 隐藏缩放%、460px 再隐藏字数、路径保留省略号（headless Chrome 实测 1280/600/440 三档）
+  - **验证**：vitest **82 文件 / 1010 用例**全绿（新增 `statusBar.test.ts` 8 例）；typecheck + build + 入口闭包通过；浏览器实测三种模式显隐 + 未保存标记 + 窄窗降级
+  - **外审**：需求轮 R1/R2 + 计划轮全采纳；代码轮 3 次送审，采纳 3 条、驳回 4 条（均有代码/协议层佐证）
+
 - ✅ [2026-10-31-theme-bg-unify-single-setting.md](Archive/2026-10/2026-10-31-theme-bg-unify-single-setting.md) — 主题背景统一为**单一设置**（取消「界面 / 阅读」分段）（完成 2026-10-31）
   - **背景**：上一轮把两块背景区合并成一块（但保留分段控件 + 两个取值域）。本轮按用户要求再进一步：**面板只留一个背景控件**，界面 / 源码编辑区 / 阅读纸面共用同一色
   - **锚点唯一化**：`readBg` / `readBgDark` 成为唯一事实源；`--bg` 与 `--preview-bg` 由同一值驱动 → **恒等**；`editBg` / `editBgDark` 降级为**镜像输出**（写入时同步，渲染不再读取），存储字段与 `plugin.md` 公开契约**零变更**、无迁移
@@ -62,7 +72,6 @@ docs/Task/
   - **顺带修掉的既有缺陷**：① 旧 `DEFAULT_PREFS.readBg` 用 `getCssVar('--preview-bg')` 取值 → 深色系统上误捕夜间值 `#12100d` 并被持久化，浅色模式纸面近黑（锚点化后会变成**整窗**近黑）→ 改静态默认 + 载入期检测该特征重置；② 持久化数据被污染成非字符串时 `.trim()` 抛异常会拖垮整个 `loadThemePrefs` → 新增 `readColorField()` 收口
   - **验证**：vitest **81 文件 / 994 用例**全绿（新增 `themeBgUnify.test.ts` 25 例、删 `themeBgSegment.test.ts` 24 例、`themeBackgroundTokens.test.ts` +3 例）；typecheck + build 通过；浏览器实测：面板无分段残留、点色板后 `--bg` 与 `--preview-bg` **同值**、羊皮双类名同步、源码/阅读模式整窗同色、点色板不误关面板
   - **外审**：需求轮 `8d7bd0b1…` REQS_CHANGES（8 条）、计划轮 `00c43cb1…` REQS_CHANGES（10 条）、代码轮 `48e4c9f1…` REQS_CHANGES（4 条）→ 复查 `a529c2ed…` **APPROVED**（驳回项均有代码证据）
-  - **未提交**：用户本轮未下达提交指令，改动仍在工作区
 
 - ✅ [2026-10-31-theme-bg-section-merge.md](Archive/2026-10/2026-10-31-theme-bg-section-merge.md) — 主题面板「编辑背景 / 阅读背景」合并为单一「背景」区（完成 2026-10-31）
   - **背景**：两块各含**完全相同的 9 色板**、两个羊皮风格、两个一样的自定义色输入框；且「编辑背景」实为**应用界面色**（`--bg` 覆盖 body/弹窗/菜单/扩展面板/通知/标签栏/库树/源码区共 55 处），「阅读背景」是**纸面色**（`--preview-bg` 仅 7 处）——作用域不同，**只能合并 UI、不能合并取值**

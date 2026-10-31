@@ -23,6 +23,8 @@ body.sticky-note-mode .container.with-library-right {
   --gap-right-library: 0px !important;
   --workspace-left-gap: 0px !important;
   --workspace-right-gap: 0px !important;
+  /* 状态栏隐藏时同步归零高度，避免内容区底部留白 */
+  --statusbar-height: 0px !important;
   padding-left: 0 !important;
   padding-right: 0 !important;
 }

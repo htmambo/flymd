@@ -126,6 +126,8 @@ const windowsCompositorPokeApi = createWindowsCompositorPoke({ isTauriRuntime, g
 const windowResizeApi = createWindowResize({ getCurrentWindow, bindWindowMaximizedState, getWindowScaleFactorSafe: windowPlacementApi.getWindowScaleFactorSafe, isTauriRuntime })
 // 顶栏标题/状态栏/滚动位置同步层(DOM 引用延后到查询完成后再注入,这里先占位)
 let titlebarStatusApi: ReturnType<typeof createTitlebarStatus> | null = null
+// 状态栏控制器：DOM 注入后创建；早期声明以便 showError 等早期定义可安全引用
+let statusBar: StatusBarApi | null = null
 // 平台 init(platform class + window drag)
 let platformInitApi: PlatformInitApi | null = null
 // 编辑器插入 / 包装
@@ -254,11 +256,12 @@ import {
 import { getMermaidConfig } from './core/mermaidConfig'
 import { CONFIG_BACKUP_FILE_EXT, formatBackupTimestamp } from './core/configBackup'
 import { pluginNotice } from './core/pluginNotice'
+import { createStatusBar, type StatusBarApi } from './ui/statusBar'
 import { shouldSanitizePreview } from './core/sanitize'
 // 应用版本号（用于窗口标题/关于弹窗）
 
 // UI 缩放与预览宽度（已拆分到 core/uiZoom.ts）
-import { applyUiZoom, zoomIn, zoomOut, zoomReset, getPreviewWidth, setPreviewWidth, applyPreviewWidth, PREVIEW_WIDTH_STEP } from './core/uiZoom'
+import { applyUiZoom, zoomIn, zoomOut, zoomReset, getUiZoom, getPreviewWidth, setPreviewWidth, applyPreviewWidth, PREVIEW_WIDTH_STEP } from './core/uiZoom'
 import { showZoomBubble, showWidthBubble, NotificationManager, showModeChangeNotification } from './core/uiNotifications'
 import { initAutoSave, type AutoSaveHandles } from './core/autoSave'
 
@@ -706,6 +709,8 @@ function notifyModeChange(): void {
   try {
     showModeChangeNotification(mode, !!wysiwyg)
   } catch {}
+  // 模式切换会改变「行/列」的可见性(阅读/所见无光标语义),立即刷新状态栏常驻项
+  try { titlebarStatusApi?.refreshStatus() } catch {}
 }
 // 当前行高亮元素
 let wysiwygLineEl: HTMLDivElement | null = null
@@ -1387,8 +1392,7 @@ function showError(msg: string, err?: unknown) {
     if (detail) text += ` - ${detail}`
   } catch {}
   try {
-    const statusEl = document.getElementById('status')
-    if (statusEl) statusEl.textContent = text
+    if (statusBar) statusBar.setMessage(text)
     else console.error('错误:', msg, err)
   } catch {
     console.error('错误:', msg, err)
@@ -1443,8 +1447,18 @@ app.innerHTML = `
     <div class="container">
       <textarea id="editor" class="editor" spellcheck="false" placeholder="${t('editor.placeholder')}"></textarea>
       <div id="preview" class="preview hidden"></div>
-      <div class="statusbar" id="status">${fmtStatus(1,1)}</div>
-      <div class="filepath-badge" id="filepath-badge"></div>
+      <div class="statusbar" id="statusbar">
+        <div class="statusbar-left" id="statusbar-left">
+          <div class="filepath-badge" id="filepath-badge"></div>
+        </div>
+        <div class="statusbar-msg" id="status" role="status" aria-live="polite"></div>
+        <div class="statusbar-right" id="statusbar-right" aria-hidden="true">
+          <span class="statusbar-item" id="statusbar-pos"></span>
+          <span class="statusbar-item" id="statusbar-chars"></span>
+          <span class="statusbar-item" id="statusbar-dirty" data-dirty="0"></span>
+          <span class="statusbar-item" id="statusbar-zoom"></span>
+        </div>
+      </div>
       <div class="notification-container" id="notification-container"></div>
       <div class="status-zoom" id="status-zoom"><span id="zoom-label">100%</span> <button id="zoom-reset" title="重置缩放">重置</button></div>
     </div>
@@ -1455,6 +1469,12 @@ app.innerHTML = `
     <div class="menu-item" id="btn-toggle" style="display:none;" title="${t('mode.edit')}/${t('mode.read')} (Ctrl+E)">${t('mode.read')}</div>
   </main>
 `
+// 状态栏控制器：状态栏 DOM 由上面的模板注入,此处创建控制器
+try { statusBar = createStatusBar() } catch {}
+
+// 退出时释放定时器与观察器
+try { window.addEventListener('pagehide', () => { try { statusBar?.dispose() } catch {} }) } catch {}
+
 try { logInfo('打点:DOM就绪') } catch {}
 
 // 性能标记：DOM 就绪
@@ -1755,7 +1775,41 @@ function onTaskCheckboxChange(ev: Event) {
     try { if (currentFilePath) { void saveFile() } else { void saveAs() } } catch {}
   } catch {}
 }
-const status = document.getElementById('status') as HTMLDivElement
+/** 清空状态栏中槽的瞬态消息(不触碰右侧常驻统计) */
+function clearStatusMessage(): void {
+  try { statusBar?.clearMessage() } catch {}
+}
+
+// 缩放百分比接入状态栏：core/uiZoom 在缩放变化时派发 flymd:uiZoom:changed
+try {
+  const syncZoom = (): void => {
+    try {
+      const scale = getUiZoom()
+      statusBar?.setZoom(Math.round(scale * 100) + '%')
+    } catch {}
+  }
+  window.addEventListener('flymd:uiZoom:changed', syncZoom)
+  syncZoom()
+} catch {}
+
+/**
+ * 源码编辑器当前是否可见。
+ * 决定状态栏是否显示「行/列」:阅读模式与所见模式没有光标语义。
+ * 分屏模式(源码+阅读并排)源码仍可见 → 显示行/列。
+ */
+function isSourceEditorVisible(): boolean {
+  try {
+    const container = document.querySelector('.container') as HTMLElement | null
+    if (!container) return false
+    if (container.classList.contains('wysiwyg-v2')) return false
+    const preview = document.getElementById('preview')
+    const previewVisible = !!preview && !preview.classList.contains('hidden')
+    if (previewVisible && !container.classList.contains('split-preview')) return false
+    return true
+  } catch {
+    return false
+  }
+}
 
 // 大纲面板子系统(Markdown / WYSIWYG / PDF 三路径)
 const outlineApi = createOutline({
@@ -1805,7 +1859,8 @@ titlebarStatusApi = createTitlebarStatus({
   getCurrentFilePath: () => currentFilePath,
   getDirty: () => dirty,
   filenameLabel: filepathBadge,
-  status,
+  slots: statusBar as StatusBarApi,
+  isSourceEditorVisible: () => isSourceEditorVisible(),
   editor,
   preview,
   getMode: () => mode,
@@ -1814,7 +1869,7 @@ titlebarStatusApi = createTitlebarStatus({
   setLastScrollPercent: (p) => { lastScrollPercent = p },
   flymdGetSourceEditorPositionInfo: (pos) => (window as any).flymdGetSourceEditorPositionInfo?.(pos) || null,
   getCurrentWindow,
-  t: t as (key: string) => string,
+  t: t as (key: string, params?: Record<string, string | number>) => string,
   fmtStatus,
   scheduleOutlineUpdate: () => outlineApi.scheduleOutlineUpdate(),
 })
@@ -4211,8 +4266,8 @@ async function saveFile() {
     await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件保存成功', { path: currentFilePath, size: editor.value.length })
-    status.textContent = '文件已保存'
-    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
+    statusBar?.setMessage('文件已保存')
+    setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.includes('invoke') || msg.includes('Tauri')) {
@@ -4238,7 +4293,7 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
   })
   try {
     overlay.appendLog('输出：' + out)
-    try { status.textContent = '正在导出 PDF...' } catch {}
+    try { statusBar?.setMessage('正在导出 PDF...') } catch {}
 
     overlay.setSub('正在渲染预览…')
     // 导出应当按打印语义渲染：不带所见模式的模拟光标/交互标记
@@ -4272,14 +4327,14 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
 
     overlay.setTitle('导出完成')
     overlay.setSub('已写入：' + out)
-    try { status.textContent = '已导出' } catch {}
-    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
+    try { statusBar?.setMessage('已导出') } catch {}
+    setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000)
     setTimeout(() => { try { overlay.close() } catch {} }, 800)
   } catch (e: any) {
     if (e && typeof e === 'object' && (e as any)._flymdCancelled === true) {
       overlay.markCancelled()
-      try { status.textContent = '已取消导出' } catch {}
-      setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
+      try { statusBar?.setMessage('已取消导出') } catch {}
+      setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000)
       return
     }
     const msg = (e && (e.message || e.toString?.())) ? String(e.message || e.toString()) : String(e || '')
@@ -4291,7 +4346,7 @@ async function exportCurrentDocToPdf(target: string): Promise<void> {
 // 打印：始终按阅读模式渲染（不打印 UI/通知）
 async function printCurrentDoc(): Promise<void> {
   try {
-    status.textContent = '正在准备打印...'
+    statusBar?.setMessage('正在准备打印...')
   } catch {}
   try {
     await renderPreview({ forPrint: true })
@@ -4308,8 +4363,8 @@ async function printCurrentDoc(): Promise<void> {
       }
     })()
     await printElement(el, { title })
-    try { status.textContent = '已打开打印' } catch {}
-    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
+    try { statusBar?.setMessage('已打开打印') } catch {}
+    setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000)
   } catch (e) {
     showError('打印失败', e)
   }
@@ -4339,7 +4394,7 @@ async function saveAs() {
           // 两份已各自漂移）。后者额外维护 status 文案与完成提示。
           await exportCurrentDocToPdf(target)
         } else {
-          status.textContent = '正在导出 ' + ext.toUpperCase() + '...';
+          statusBar?.setMessage('正在导出 ' + ext.toUpperCase() + '...');
           // DOCX/WPS 同样按打印语义渲染，避免把所见模式的模拟光标导出进去
           await renderPreview({ forPrint: true });
           const el = preview.querySelector('.preview-body') as HTMLElement | null;
@@ -4370,8 +4425,8 @@ async function saveAs() {
         await pushRecent(store, currentFilePath);
         await renderRecentPanel(false);
         logInfo('文件导出成功', { path: target, ext });
-        status.textContent = '已导出';
-        setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000);
+        statusBar?.setMessage('已导出');
+        setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000);
         return;
       } catch (e) {
         showError('导出失败', e);
@@ -4405,8 +4460,8 @@ async function saveAs() {
     await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件另存为成功', { path: target, size: editor.value.length })
-    status.textContent = '文件已保存'
-    setTimeout(() => titlebarStatusApi?.refreshStatus(), 2000)
+    statusBar?.setMessage('文件已保存')
+    setTimeout(() => { clearStatusMessage(); titlebarStatusApi?.refreshStatus() }, 2000)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     if (msg.includes('invoke') || msg.includes('Tauri')) {

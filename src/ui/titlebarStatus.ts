@@ -6,6 +6,16 @@
 // 工厂模式:createTitlebarStatus(deps) → {refreshTitle, refreshStatus, syncToggleButton, setUpdateBadge,
 //   getScrollPercent, setScrollPercent, saveScrollPosition, restoreScrollPosition}
 
+/** 底部状态栏常驻槽位写入器（由 ui/statusBar 提供实现） */
+export interface TitlebarStatusSlots {
+  /** 更新行/列（null = 隐藏该项） */
+  setPosition: (text: string | null) => void
+  /** 更新字数 */
+  setChars: (text: string | null) => void
+  /** 更新未保存标记（tip 为 tooltip 文案） */
+  setDirty: (dirty: boolean, tip: string) => void
+}
+
 export interface TitlebarStatusDeps {
   /** 当前文件路径(可能为 null) */
   getCurrentFilePath: () => string | null
@@ -13,8 +23,8 @@ export interface TitlebarStatusDeps {
   getDirty: () => boolean
   /** 文件路径显示元素(左下角悬浮徽章,显示目录部分,tooltip 为完整路径;文件名由标签页显示) */
   filenameLabel: HTMLElement
-  /** 底部状态栏显示元素 */
-  status: HTMLElement
+  /** 底部状态栏常驻槽位写入器 */
+  slots: TitlebarStatusSlots
   /** 编辑器(用于状态栏行列字 + 滚动,需 textarea 接口) */
   editor: HTMLTextAreaElement
   /** 预览面板(用于滚动) */
@@ -23,6 +33,8 @@ export interface TitlebarStatusDeps {
   getMode: () => 'edit' | 'preview'
   /** WYSIWYG 启用态 getter */
   getWysiwyg: () => boolean
+  /** 源码编辑器当前是否可见(决定是否显示行/列;阅读/所见模式下无光标语义) */
+  isSourceEditorVisible: () => boolean
   /** 上次保存的滚动百分比 读写器(由外部缓存) */
   getLastScrollPercent: () => number
   setLastScrollPercent: (p: number) => void
@@ -31,7 +43,7 @@ export interface TitlebarStatusDeps {
   /** Tauri getCurrentWindow(用于 setTitle) */
   getCurrentWindow?: () => any
   /** 标题文本 i18n(未命名) */
-  t: (key: string) => string
+  t: (key: string, params?: Record<string, string | number>) => string
   /** 格式化状态栏(行,列)的纯函数 */
   fmtStatus: (row: number, col: number) => string
   /** 触发大纲更新(标题变时) */
@@ -82,6 +94,7 @@ export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusAp
       try { deps.filenameLabel.title = titleTip } catch {}
       lastTitleTooltip = titleTip
     }
+    updateDirty()
     const osTitle = `${label}${APP_TITLE_SUFFIX}`
     if (lastOsTitle !== osTitle) {
       try { void deps.getCurrentWindow?.().setTitle(osTitle).catch(() => {}) } catch {}
@@ -119,7 +132,17 @@ export function createTitlebarStatus(deps: TitlebarStatusDeps): TitlebarStatusAp
     if (row < 1) row = 1
     if (col < 1) col = 1
     const chars = fastInfo?.chars ?? ed.value.length
-    deps.status.textContent = deps.fmtStatus(row, col) + `, 字 ${chars}`
+    // 行/列只在源码编辑器可见时有意义(阅读/所见模式无光标语义)。
+    // 无光标语义时跳过位置计算,顺带省掉行号关闭时的 O(n) 回退扫描。
+    const visible = deps.isSourceEditorVisible()
+    const posText = visible ? deps.fmtStatus(row, col) : ''
+    deps.slots.setPosition(posText)
+    deps.slots.setChars(deps.t('status.chars', { count: chars }))
+    updateDirty()
+  }
+
+  function updateDirty(): void {
+    deps.slots.setDirty(deps.getDirty(), deps.t('status.unsaved'))
   }
 
   function syncToggleButton(): void {

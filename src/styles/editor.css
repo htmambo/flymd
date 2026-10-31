@@ -14,9 +14,11 @@
   --dock-left-gap: 0px;
   --dock-right-gap: 0px;
   --dock-bottom-gap: 0px;
+  /* 底部状态栏高度：内容区让出该高度，状态栏贴在内容区底边 */
+  --statusbar-height: 26px;
   --workspace-left-gap: calc(var(--gap-left-library) + var(--gap-left-outline) + var(--dock-left-gap));
   --workspace-right-gap: calc(var(--gap-right-library) + var(--gap-right-outline) + var(--dock-right-gap));
-  --workspace-bottom-gap: var(--dock-bottom-gap);
+  --workspace-bottom-gap: calc(var(--dock-bottom-gap) + var(--statusbar-height));
   flex: 1; /* 在flex布局中填充剩余空间 */
   min-height: 0; /* 允许flex子元素正确收缩和滚动 */
   height: calc(100% - 36px);

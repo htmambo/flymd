@@ -325,6 +325,8 @@ const dict = {
     'dlg.sync.applyAll': '应用到所有文件',
 
     'status.pos': '行 {line}, 列 {col}',
+    'status.chars': '字 {count}',
+    'status.unsaved': '未保存',
     'filename.untitled': '未命名',
     'editor.placeholder': '在此输入 Markdown 文本……',
 
@@ -927,6 +929,8 @@ const dict = {
     'dlg.sync.applyAll': 'Apply to all files',
 
     'status.pos': 'Ln {line}, Col {col}',
+    'status.chars': '{count} chars',
+    'status.unsaved': 'Unsaved changes',
     'filename.untitled': 'Untitled',
     'editor.placeholder': 'Type Markdown here…',
 

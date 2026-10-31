@@ -24,7 +24,9 @@ afterEach(() => {
 
 function makeDeps(overrides: any = {}) {
   const filenameLabel = overrides.filenameLabel ?? document.createElement('div')
-  const status = overrides.status ?? document.createElement('div')
+  const statusPos = overrides.statusPos ?? document.createElement('span')
+  const statusChars = overrides.statusChars ?? document.createElement('span')
+  const statusDirty = overrides.statusDirty ?? document.createElement('span')
   const editor = overrides.editor ?? (() => {
     const ta = document.createElement('textarea')
     ta.id = 'editor'
@@ -39,22 +41,41 @@ function makeDeps(overrides: any = {}) {
     return d
   })()
   if (!overrides.filenameLabel) document.body.appendChild(filenameLabel)
-  if (!overrides.status) document.body.appendChild(status)
+  if (!overrides.statusPos) document.body.appendChild(statusPos)
+  if (!overrides.statusChars) document.body.appendChild(statusChars)
+  if (!overrides.statusDirty) document.body.appendChild(statusDirty)
 
   return {
     getCurrentFilePath: overrides.getCurrentFilePath ?? (() => null),
     getDirty: overrides.getDirty ?? (() => false),
     filenameLabel,
-    status,
+    // 断言用的元素句柄（slots 写入的就是它们）
+    statusPos,
+    statusChars,
+    statusDirty,
+    slots: overrides.slots ?? {
+      setPosition: (text: string | null) => { statusPos.textContent = text ?? '' },
+      setChars: (text: string | null) => { statusChars.textContent = text ?? '' },
+      setDirty: (d: boolean, tip: string) => {
+        statusDirty.textContent = d ? '●' : ''
+        statusDirty.setAttribute('data-dirty', d ? '1' : '0')
+        statusDirty.title = d ? tip : ''
+      },
+    },
     editor,
     preview,
     getMode: overrides.getMode ?? (() => 'edit' as 'edit' | 'preview'),
     getWysiwyg: overrides.getWysiwyg ?? (() => false),
+    isSourceEditorVisible: overrides.isSourceEditorVisible ?? (() => true),
     getLastScrollPercent: overrides.getLastScrollPercent ?? (() => 0),
     setLastScrollPercent: overrides.setLastScrollPercent ?? (() => {}),
     flymdGetSourceEditorPositionInfo: overrides.flymdGetSourceEditorPositionInfo,
     getCurrentWindow: overrides.getCurrentWindow,
-    t: overrides.t ?? ((k: string) => k),
+    t: overrides.t ?? ((k: string, params?: Record<string, string | number>) => {
+      if (k === 'status.chars') return `字 ${params?.count ?? ''}`
+      if (k === 'status.unsaved') return '未保存'
+      return k
+    }),
     fmtStatus: overrides.fmtStatus ?? ((row: number, col: number) => `行${row},列${col}`),
     scheduleOutlineUpdate: overrides.scheduleOutlineUpdate,
   }
@@ -134,7 +155,8 @@ describe('refreshStatus', () => {
     })
     const api = createTitlebarStatus(deps)
     api.refreshStatus()
-    expect(deps.status.textContent).toBe('行3,列7, 字 42')
+    expect(deps.statusPos.textContent).toBe('行3,列7')
+    expect(deps.statusChars.textContent).toBe('字 42')
   })
 
   it('falls back to textarea.slice walk when no fastInfo', () => {
@@ -146,7 +168,8 @@ describe('refreshStatus', () => {
     const api = createTitlebarStatus(deps)
     api.refreshStatus()
     // 'he' is one line, 2 chars; col = length + 1 = 3
-    expect(deps.status.textContent).toBe('行1,列3, 字 5')
+    expect(deps.statusPos.textContent).toBe('行1,列3')
+    expect(deps.statusChars.textContent).toBe('字 5')
   })
 
   it('fallback handles multi-line values: rows, empty lines, boundaries', () => {
@@ -159,19 +182,23 @@ describe('refreshStatus', () => {
 
     ed.selectionStart = 6 // 'cde' 行尾 → row 2, col 4
     api.refreshStatus()
-    expect(deps.status.textContent).toBe('行2,列4, 字 9')
+    expect(deps.statusPos.textContent).toBe('行2,列4')
+    expect(deps.statusChars.textContent).toBe('字 9')
 
     ed.selectionStart = 7 // 空行首 → row 3, col 1
     api.refreshStatus()
-    expect(deps.status.textContent).toBe('行3,列1, 字 9')
+    expect(deps.statusPos.textContent).toBe('行3,列1')
+    expect(deps.statusChars.textContent).toBe('字 9')
 
     ed.selectionStart = 8 // 第二个空行 → row 4, col 1
     api.refreshStatus()
-    expect(deps.status.textContent).toBe('行4,列1, 字 9')
+    expect(deps.statusPos.textContent).toBe('行4,列1')
+    expect(deps.statusChars.textContent).toBe('字 9')
 
     ed.selectionStart = 0 // 文档开头 → row 1, col 1
     api.refreshStatus()
-    expect(deps.status.textContent).toBe('行1,列1, 字 9')
+    expect(deps.statusPos.textContent).toBe('行1,列1')
+    expect(deps.statusChars.textContent).toBe('字 9')
   })
 })
 
