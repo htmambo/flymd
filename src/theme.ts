@@ -30,21 +30,46 @@ import { NotificationManager } from './core/uiNotifications'
 export type MdStyleId = 'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs' | 'typora' | 'obsidian' | 'bear' | 'minimalist'
 
 export interface ThemePrefs {
+  /**
+   * 编辑背景 —— **镜像输出字段**。
+   * 背景已合并为单一设置，实际生效色以 {@link ThemePrefs.readBg} 为准；
+   * 本字段仅在写入时与 readBg 同步，保留是为了不破坏 plugin.md 的公开字段
+   * 与既有存储结构 —— 渲染路径不再读取它，请勿新增消费点。
+   */
   editBg: string
+  /**
+   * 阅读背景（纸面色）—— **统一背景的唯一事实源（锚点）**。
+   * 明暗轴由 body.dark-mode 决定取本字段还是 {@link ThemePrefs.readBgDark}。
+   */
   readBg: string
   /**
    * @deprecated 所见背景已并入阅读背景（--preview-bg），不再被消费。
    * 仅保留此字段以原样回写旧配置，保证 git revert 后用户设置不丢——请勿新增消费点。
    */
   wysiwygBg: string
-  /** 夜间模式编辑背景 */
+  /** 夜间模式编辑背景 —— 镜像输出字段（同 editBg）。 */
   editBgDark?: string
-  /** 夜间模式阅读背景 */
+  /** 夜间模式阅读背景 —— 夜间模式的锚点。 */
   readBgDark?: string
-  /** 源码模式羊皮风格 */
+  /** 羊皮风格（统一开关）：源码编辑区与阅读/所见正文同时启用。 */
+  parchment?: boolean
+  /** 源码模式羊皮风格 —— 镜像输出字段（同 parchment）。 */
   parchmentEdit?: boolean
-  /** 阅读模式羊皮风格 */
+  /** 阅读模式羊皮风格 —— 镜像输出字段（同 parchment）。 */
   parchmentRead?: boolean
+  /**
+   * 合并为单一设置**之前**的独立取值备份。
+   * 仅在两域确实分歧且尚未备份过时写入一次（幂等），保证 git revert 后
+   * 用户原先各自独立的背景值与羊皮开关可以恢复。
+   */
+  preUnifyBg?: {
+    editBg?: string
+    readBg?: string
+    editBgDark?: string
+    readBgDark?: string
+    parchmentEdit?: boolean
+    parchmentRead?: boolean
+  }
   /**
    * @deprecated 所见模式羊皮风格开关已随「所见背景」设置一并移除；
    * 阅读羊皮纸通过 .md-content 同时作用于所见模式。仅保留字段以原样回写旧配置。
@@ -83,13 +108,27 @@ export interface ThemeDefinition {
 const STORE_KEY = 'flymd:theme:prefs'
 const LIB_COLOR_DEPTH_KEY = 'flymd:lib:colorDepth'
 
+/**
+ * 日间背景默认色 —— 与 base.css 的 `--preview-bg: #fafafa` 对齐。
+ * 必须与 CSS 字面量保持一致（themeBgUnify.test.ts 有断言锁定，防止两边漂移）。
+ */
+const DAY_BG_DEFAULT = '#fafafa'
+/** 夜间背景默认色 —— 与 base.css 暗色分支的 `--preview-bg: #12100d` 对齐。 */
+const NIGHT_BG_DEFAULT = '#12100d'
+/**
+ * 旧版本用 getCssVar('--preview-bg') 取默认值，在深色系统上会读到**夜间**值，
+ * 并在用户改动任意主题设置时被一并写进存储 → 浅色模式下纸面变近黑。
+ * 背景锚点化后该污染值会影响整个窗口，故载入时按此特征重置回日间默认。
+ */
+const LEGACY_DARK_CAPTURE = NIGHT_BG_DEFAULT
+
 const DEFAULT_PREFS: ThemePrefs = {
-  editBg: '#ffffff',
-  readBg: getCssVar('--preview-bg') || '#fbf5e6',
+  editBg: DAY_BG_DEFAULT,
+  readBg: DAY_BG_DEFAULT,
   /** @deprecated 仅作旧配置回写用，见 ThemePrefs.wysiwygBg */
   wysiwygBg: '#e9edf5',
-  editBgDark: '#0b0c0e',
-  readBgDark: '#12100d',
+  editBgDark: NIGHT_BG_DEFAULT,
+  readBgDark: NIGHT_BG_DEFAULT,
   mdStyle: 'standard',
 }
 
@@ -135,14 +174,6 @@ function setLibColorDepthEnabled(enabled: boolean): void {
 }
 
 // 工具：读当前 :root/.container 上的变量（若无则返回空串）
-function getCssVar(name: string): string {
-  try {
-    const el = document.documentElement
-    const v = getComputedStyle(el).getPropertyValue(name)
-    return (v || '').trim()
-  } catch { return '' }
-}
-
 function getContainer(): HTMLElement | null {
   return document.querySelector('.container') as HTMLElement | null
 }
@@ -328,27 +359,59 @@ function updateChromeColorsFromContainer(container: HTMLElement, fallbackBase?: 
   } catch {}
 }
 
-// 阅读模式的夜间背景色（所见模式与阅读模式共用同一纸面背景）
-const READ_BG_DARK = '#12100d'
+/** 当前是否处于夜间模式（body 上的 dark-mode 类）。 */
+function isDarkModeNow(): boolean {
+  try { return document.body.classList.contains('dark-mode') } catch { return false }
+}
+
+/**
+ * 从持久化数据里取颜色字段。
+ * 非字符串（存储被外部污染）或空白串一律回退默认值 —— 否则后续的
+ * `.trim()` 会在非字符串上抛异常，把整个 loadThemePrefs 拖进 catch 分支。
+ */
+function readColorField(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  return value.trim() ? value : fallback
+}
+
+/**
+ * 统一背景的锚点值（唯一事实源）。
+ *
+ * 背景合并为单一设置后，两个轴的职责被明确分开：
+ *   - **明暗轴**：由 `body.dark-mode` 决定取 `readBg`（日间）还是 `readBgDark`（夜间）；
+ *   - **模式轴**（源码 / 阅读 / 所见）：**不再影响**颜色 —— 界面、源码编辑区与阅读纸面共用同一色。
+ *
+ * `editBg` / `editBgDark` 已降级为镜像输出，渲染路径不再读取它们。
+ */
+function resolveUnifiedBg(prefs: ThemePrefs): string {
+  const isDarkMode = isDarkModeNow()
+  return isDarkMode
+    ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || NIGHT_BG_DEFAULT)
+    : (prefs.readBg || DEFAULT_PREFS.readBg || DAY_BG_DEFAULT)
+}
+
+/**
+ * 把统一背景色写入锚点字段，并同步镜像字段。
+ * 明暗轴决定写哪一对（readBg / readBgDark），editBg 一侧永远是镜像。
+ */
+function setUnifiedBg(prefs: ThemePrefs, color: string): void {
+  const isDarkMode = isDarkModeNow()
+  if (isDarkMode) {
+    prefs.readBgDark = color
+    prefs.editBgDark = color
+  } else {
+    prefs.readBg = color
+    prefs.editBg = color
+  }
+}
 
 // 根据当前模式更新外圈UI颜色（标题栏、侧栏等）
+// 背景已统一为单一设置 → 外圈颜色恒由锚点值派生，不再随模式变化。
+// mode 参数仅为兼容既有调用点（main.ts / mainTopMenus.ts）保留。
 export function updateChromeColorsForMode(mode: 'edit' | 'wysiwyg' | 'preview'): void {
   try {
     const prefs = loadThemePrefs()
-    const isDarkMode = document.body.classList.contains('dark-mode')
-    let base: string
-
-    switch (mode) {
-      case 'wysiwyg':
-      case 'preview':
-        // 所见模式与阅读模式共用同一纸面背景
-        base = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
-        break
-      default: // edit
-        base = isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e') : prefs.editBg
-    }
-
-    const derived = base ? deriveChromeColors(base) : null
+    const derived = deriveChromeColors(resolveUnifiedBg(prefs))
     const root = document.body
 
     if (derived) {
@@ -372,48 +435,26 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
     try { c.style.removeProperty('--wysiwyg-bg') } catch {}
 
     // 检测是否为夜间模式（系统深色或用户手动开启）
-    const isDarkMode = document.body.classList.contains('dark-mode')
+    const isDarkMode = isDarkModeNow()
 
+    // 统一背景：锚点值同时驱动 --bg（界面 / 源码区）与 --preview-bg（纸面）。
     // 日/夜两分支写入的变量集合必须完全一致（见 styles/themeBackgroundTokens.test.ts）
-    if (isDarkMode) {
-      // 夜间模式：应用用户设置的夜间背景色（如果已设置），否则使用默认深色
-      c.style.setProperty('--bg', prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
-      c.style.setProperty('--preview-bg', prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
-    } else {
-      // 日间模式：应用用户设置的背景色
-      c.style.setProperty('--bg', prefs.editBg)
-      c.style.setProperty('--preview-bg', prefs.readBg)
-    }
+    const unifiedBg = resolveUnifiedBg(prefs)
+    c.style.setProperty('--bg', unifiedBg)
+    c.style.setProperty('--preview-bg', unifiedBg)
 
-    // 根据当前模式推导外圈 UI 颜色
-    // 检测当前模式：wysiwyg-v2 类 = 所见模式；否则根据可见元素判断
-    let currentBg: string
-    if (c.classList.contains('wysiwyg-v2')) {
-      // 所见模式：与阅读模式共用同一纸面背景
-      currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
-    } else {
-      // 检测是编辑还是阅读模式：通过 .preview 元素是否隐藏判断
-      const previewEl = c.querySelector('.preview') as HTMLElement | null
-      const isPreviewMode = previewEl && !previewEl.classList.contains('hidden')
-      if (isPreviewMode) {
-        // 阅读模式
-        currentBg = isDarkMode ? (prefs.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK) : prefs.readBg
-      } else {
-        // 源码模式
-        currentBg = isDarkMode ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e') : prefs.editBg
-      }
-    }
-    // 直接使用当前模式的背景色推导外圈颜色，不从 DOM 读取
-    const derived = deriveChromeColors(currentBg)
+    // 外圈 UI 颜色：统一背景后恒由锚点值派生（不再随模式变化）
+    // 直接使用锚点值推导外圈颜色，不从 DOM 读取
+    const derived = deriveChromeColors(unifiedBg)
     if (derived) {
       const root = document.body
       root.style.setProperty('--chrome-bg', derived.chromeBg)
       root.style.setProperty('--chrome-panel-bg', derived.chromePanelBg)
     }
 
-    // 阅读模式"纯白背景"特殊处理：当阅读背景为纯白且非夜间模式时，移除羊皮纸纹理，让预览真正呈现纯白纸面
+    // 阅读模式"纯白背景"特殊处理：当背景为纯白且非夜间模式时，移除羊皮纸纹理，让预览真正呈现纯白纸面
     try {
-      const readColor = (prefs.readBg || '').trim().toLowerCase()
+      const readColor = unifiedBg.trim().toLowerCase()
       const isPureWhite = readColor === '#ffffff' || readColor === '#fff'
       c.classList.toggle('preview-plain', !isDarkMode && isPureWhite)
     } catch {}
@@ -477,9 +518,11 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
       }
     } catch {}
 
-    // 羊皮风格：通过类名挂到 .container 上
-    c.classList.toggle('parchment-edit', !!prefs.parchmentEdit)
-    c.classList.toggle('parchment-read', !!prefs.parchmentRead)
+    // 羊皮风格：统一开关，同时作用于源码编辑区与阅读/所见正文
+    // （两个类名分别命中 .editor 与 .md-content，CSS 无需改动）
+    const parchmentOn = !!prefs.parchment
+    c.classList.toggle('parchment-edit', parchmentOn)
+    c.classList.toggle('parchment-read', parchmentOn)
     c.classList.toggle('parchment-wysiwyg', !!prefs.parchmentWysiwyg)
 
     // Markdown 风格类名
@@ -519,18 +562,63 @@ export function loadThemePrefs(): ThemePrefs {
     let mdStyle: any = obj.mdStyle
     // 兼容：若历史保存为 terminal，则回退为 standard
     if (mdStyle === 'terminal') mdStyle = 'standard'
+
+    const editBg = readColorField(obj.editBg, DEFAULT_PREFS.editBg)
+    const rawReadBg = readColorField(obj.readBg, DEFAULT_PREFS.readBg)
+    const editBgDark = readColorField(obj.editBgDark, DEFAULT_PREFS.editBgDark || NIGHT_BG_DEFAULT)
+    const readBgDark = readColorField(obj.readBgDark, DEFAULT_PREFS.readBgDark || NIGHT_BG_DEFAULT)
+
+    // 合并前的独立取值备份（仅在两域确实分歧且尚未备份过时写一次，幂等）。
+    // 放在读取路径上而非某个写入口，保证面板 / 插件 API 等所有持久化路径都带上备份。
+    //
+    // **必须先于任何归一化**：否则备份里存的是被改写后的值，恢复语义就被破坏
+    // （原始的 legacy 状态会永久丢失）。
+    let preUnifyBg = (typeof obj.preUnifyBg === 'object' && obj.preUnifyBg) ? obj.preUnifyBg : undefined
+    if (!preUnifyBg) {
+      const diverged =
+        editBg.trim().toLowerCase() !== rawReadBg.trim().toLowerCase() ||
+        editBgDark.trim().toLowerCase() !== readBgDark.trim().toLowerCase() ||
+        (!!obj.parchmentEdit !== !!obj.parchmentRead)
+      if (diverged) {
+        preUnifyBg = {
+          editBg, readBg: rawReadBg, editBgDark, readBgDark,
+          parchmentEdit: obj.parchmentEdit, parchmentRead: obj.parchmentRead,
+        }
+      }
+    }
+
+    // 旧版本用 getCssVar('--preview-bg') 取默认值：深色系统上会读到夜间值 #12100d，
+    // 并在用户改动任意主题设置时被写进存储 → 浅色模式下纸面（现在是全窗口）近黑。
+    // 特征：日间值与夜间默认相同。该值只可能来自这个误捕，按日间默认重置。
+    let readBg = rawReadBg
+    if (
+      readBg.trim().toLowerCase() === LEGACY_DARK_CAPTURE &&
+      readBgDark.trim().toLowerCase() === LEGACY_DARK_CAPTURE
+    ) {
+      readBg = DEFAULT_PREFS.readBg
+    }
+
+    // 羊皮风格统一开关：旧配置按**并集**归一 —— 任一模式原本开启过羊皮，
+    // 统一后都不能凭空消失。
+    const parchmentEdit = (typeof obj.parchmentEdit === 'boolean') ? obj.parchmentEdit : undefined
+    const parchmentRead = (typeof obj.parchmentRead === 'boolean') ? obj.parchmentRead : undefined
+    const parchment = (typeof obj.parchment === 'boolean')
+      ? obj.parchment
+      : (parchmentEdit === true || parchmentRead === true)
+
     return {
-      editBg: obj.editBg || DEFAULT_PREFS.editBg,
-      readBg: obj.readBg || DEFAULT_PREFS.readBg,
+      editBg,
+      readBg,
       /** @deprecated 仅原样回写旧配置，不再消费（见 ThemePrefs.wysiwygBg） */
       wysiwygBg: obj.wysiwygBg || DEFAULT_PREFS.wysiwygBg,
-      editBgDark: obj.editBgDark || DEFAULT_PREFS.editBgDark,
-      readBgDark: obj.readBgDark || DEFAULT_PREFS.readBgDark,
+      editBgDark,
+      readBgDark,
+      parchment,
+      parchmentEdit,
+      parchmentRead,
+      preUnifyBg,
       mdStyle: (['standard','github','notion','journal','card','docs','typora','obsidian','bear','minimalist'] as string[]).includes(mdStyle) ? mdStyle : 'standard',
       themeId: obj.themeId || undefined,
-      // 羊皮风格：必须读回，否则勾选态每次打开面板都复位、.parchment-* 类也从未生效
-      parchmentEdit: (typeof obj.parchmentEdit === 'boolean') ? obj.parchmentEdit : undefined,
-      parchmentRead: (typeof obj.parchmentRead === 'boolean') ? obj.parchmentRead : undefined,
       /** @deprecated 所见羊皮纸已移除；仅保留读回以维持旧配置行为 */
       parchmentWysiwyg: (typeof obj.parchmentWysiwyg === 'boolean') ? obj.parchmentWysiwyg : undefined,
       bodyFont: (typeof obj.bodyFont === 'string') ? obj.bodyFont : undefined,
@@ -787,21 +875,16 @@ function createPanel(): HTMLDivElement {
     </div>
     <div class="theme-section theme-bg-section">
       <div class="theme-title">${t('theme.bgSection')}</div>
-      <div class="theme-bg-segmented">
-        <input type="radio" id="theme-bg-target-edit" name="theme-bg-target" class="theme-bg-segment-input" value="edit" checked />
-        <label class="theme-bg-segment" for="theme-bg-target-edit" title="${t('theme.bg.uiTip')}">${t('theme.bg.ui')}</label>
-        <input type="radio" id="theme-bg-target-read" name="theme-bg-target" class="theme-bg-segment-input" value="read" />
-        <label class="theme-bg-segment" for="theme-bg-target-read" title="${t('theme.bg.readTip')}">${t('theme.bg.read')}</label>
-      </div>
-      <div class="theme-swatches" data-target="edit"></div>
+      <div class="theme-hint theme-bg-hint">${t('theme.bg.tip')}</div>
+      <div class="theme-swatches"></div>
       <div class="theme-options-row">
         <label class="theme-checkbox-label">
           <input type="checkbox" id="parchment-bg-toggle" class="theme-checkbox" />
           <span>${t('theme.parchment')}</span>
         </label>
         <div class="theme-custom-color-inline">
-          <input type="text" id="custom-color-bg" class="theme-color-input theme-bg-color-input" placeholder="#FFFFFF" maxlength="7" data-target="edit" />
-          <button class="theme-apply-btn theme-bg-apply" data-target="edit">${t('theme.apply')}</button>
+          <input type="text" id="custom-color-bg" class="theme-color-input theme-bg-color-input" placeholder="#FFFFFF" maxlength="7" />
+          <button class="theme-apply-btn theme-bg-apply">${t('theme.apply')}</button>
         </div>
         <label class="theme-checkbox-label theme-grid-bg-option" title="${t('theme.gridBg.tip')}">
           <input type="checkbox" id="grid-bg-toggle" class="theme-checkbox" />
@@ -903,17 +986,14 @@ function createPanel(): HTMLDivElement {
 }
 
 /**
- * 把自定义色输入框同步为指定目标当前生效的颜色。
- * 合并成一块「背景」区后只有一个输入框，它必须始终显示当前目标的实际色值，
- * 否则会出现「界面显示 A 色、输入框残留 B 色」的自相矛盾。
+ * 把自定义色输入框同步为当前实际生效的背景色。
+ * 背景合并为单一设置后只有一个输入框，它必须始终显示锚点值，
+ * 否则会出现「色板显示 A 色、输入框残留 B 色」的自相矛盾。
  */
-function syncBgColorInput(panel: HTMLElement, target: 'edit' | 'read', prefs: ThemePrefs): void {
+function syncBgColorInput(panel: HTMLElement, prefs: ThemePrefs): void {
   const input = panel.querySelector('.theme-bg-color-input') as HTMLInputElement | null
   if (!input) return
-  const isDarkMode = document.body.classList.contains('dark-mode')
-  const current = isDarkMode
-    ? (target === 'edit' ? (prefs.editBgDark || '') : (prefs.readBgDark || ''))
-    : (target === 'edit' ? prefs.editBg : prefs.readBg)
+  const current = resolveUnifiedBg(prefs)
   // 只回填合法 hex：脏值回填进输入框没有意义（它是 text 框，不是 color 框）
   input.value = isValidHexColor(String(current || '')) ? String(current) : ''
   input.classList.remove('invalid')
@@ -921,19 +1001,14 @@ function syncBgColorInput(panel: HTMLElement, target: 'edit' | 'read', prefs: Th
 
 function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
   // 检测当前是否为夜间模式
-  const isDarkMode = document.body.classList.contains('dark-mode')
+  const isDarkMode = isDarkModeNow()
   // 根据模式选择色板
   const colors = isDarkMode ? buildDarkColorList() : buildColorList()
+  // 统一背景只有一个生效值（锚点）
+  const cur = resolveUnifiedBg(prefs)
 
   panel.querySelectorAll('.theme-swatches').forEach((wrap) => {
     const el = wrap as HTMLElement
-    const tgt: 'edit' | 'read' = el.dataset.target === 'read' ? 'read' : 'edit'
-
-    // 根据当前模式选择对应的背景色
-    const cur = isDarkMode
-      ? (tgt === 'edit' ? (prefs.editBgDark || DEFAULT_PREFS.editBgDark)
-        : (prefs.readBgDark || DEFAULT_PREFS.readBgDark))
-      : (tgt === 'edit' ? prefs.editBg : prefs.readBg)
 
     // 原地更新色板，**不重建 DOM**：
     // 重建（innerHTML）会把刚被点击的那个色板节点从文档树里摘掉，
@@ -946,7 +1021,7 @@ function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
       el.innerHTML = colors.map(({ label, color }) => {
         const active = (color.toLowerCase() === (cur || '').toLowerCase()) ? 'active' : ''
         const title = `${label} ${color}`
-        return `<div class="theme-swatch ${active}" title="${title}" data-color="${color}" data-for="${tgt}" style="background:${color}"></div>`
+        return `<div class="theme-swatch ${active}" title="${title}" data-color="${color}" style="background:${color}"></div>`
       }).join('')
     } else {
       colors.forEach(({ label, color }, i) => {
@@ -955,14 +1030,13 @@ function fillSwatches(panel: HTMLElement, prefs: ThemePrefs) {
         cell.className = `theme-swatch ${active}`
         cell.title = `${label} ${color}`
         cell.dataset.color = color
-        cell.dataset.for = tgt
         cell.style.background = color
       })
     }
 
-    // 共用的自定义色输入框也同步为该目标的当前色（fillSwatches 是所有配色
-    // 变更后的统一重绘点：色板点击、应用自定义色、切换分段、切换夜间模式）
-    syncBgColorInput(panel, tgt, prefs)
+    // 自定义色输入框同步为当前生效色（fillSwatches 是所有配色变更后的统一重绘点：
+    // 色板点击、应用自定义色、切换夜间模式）
+    syncBgColorInput(panel, prefs)
   })
   // MD 风格激活态
   panel.querySelectorAll('.md-btn').forEach((b) => {
@@ -1415,183 +1489,44 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       } catch {}
     })
 
-    // 悬停预览：在颜色块上悬停时即时预览对应背景色，离开当前分组时还原
-    const applyPreview = (forWhich: string, color: string) => {
+    // 悬停预览：统一背景下，预览同时作用于界面/源码区与纸面
+    const applyPreview = (color: string) => {
       try {
         const c = getContainer(); if (!c) return
-        if (forWhich === 'edit') c.style.setProperty('--bg', color)
-        else if (forWhich === 'read') c.style.setProperty('--preview-bg', color)
+        c.style.setProperty('--bg', color)
+        c.style.setProperty('--preview-bg', color)
       } catch {}
     }
-    const revertPreview = (forWhich: string) => {
+    const revertPreview = () => {
       try {
         const c = getContainer(); if (!c) return
-        // 根据当前模式还原对应的背景色
-        const isDarkMode = document.body.classList.contains('dark-mode')
-        if (isDarkMode) {
-          if (forWhich === 'edit') c.style.setProperty('--bg', lastSaved.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
-          else if (forWhich === 'read') c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
-        } else {
-          if (forWhich === 'edit') c.style.setProperty('--bg', lastSaved.editBg)
-          else if (forWhich === 'read') c.style.setProperty('--preview-bg', lastSaved.readBg)
-        }
+        const unified = resolveUnifiedBg(lastSaved)
+        c.style.setProperty('--bg', unified)
+        c.style.setProperty('--preview-bg', unified)
       } catch {}
     }
-    // 还原所有预览变量到已保存值
-    const revertAllPreviews = () => {
-      try {
-        const c = getContainer(); if (!c) return
-        const isDarkMode = document.body.classList.contains('dark-mode')
-        if (isDarkMode) {
-          c.style.setProperty('--bg', lastSaved.editBgDark || DEFAULT_PREFS.editBgDark || '#0b0c0e')
-          c.style.setProperty('--preview-bg', lastSaved.readBgDark || DEFAULT_PREFS.readBgDark || READ_BG_DARK)
-        } else {
-          c.style.setProperty('--bg', lastSaved.editBg)
-          c.style.setProperty('--preview-bg', lastSaved.readBg)
-        }
-      } catch {}
-    }
-    // 把 revertAllPreviews 暴露到模块级，让 initThemeUI 面板 toggle 时也能调用
-    _themeRevertAllPreviews = revertAllPreviews
+    // 把还原函数暴露到模块级，让 initThemeUI 面板 toggle 时也能调用
+    _themeRevertAllPreviews = revertPreview
     // 事件委托：在 swatch 上方时应用预览色
     panel.addEventListener('mouseover', (ev) => {
       const t = ev.target as HTMLElement
       const sw = t.closest('.theme-swatch') as HTMLElement | null
       if (!sw) return
-      const color = sw.dataset.color || '#ffffff'
-      const forWhich = sw.dataset.for || 'edit'
-      applyPreview(forWhich, color)
+      applyPreview(sw.dataset.color || '#ffffff')
     })
-    // 离开色板区时还原该目标（界面/阅读）的原值，避免在区内移动造成闪烁。
-    // 目标必须在事件触发时读取：分段切换会改写 .theme-swatches 的 data-target，
-    // 若在这里按值捕获，切换后仍会还原旧目标的变量。
+    // 离开色板区时还原，避免在区内移动造成闪烁
     panel.querySelectorAll('.theme-swatches').forEach((wrap) => {
-      const el = wrap as HTMLElement
-      el.addEventListener('mouseleave', () => revertPreview(el.dataset.target || 'edit'))
+      wrap.addEventListener('mouseleave', () => revertPreview())
     })
-
-    // —— 背景分段控件（界面 / 阅读）——
-    // 事实源分层（三层各自职责明确，不会互相漂移）：
-    //   ① radio 勾选态      = 用户意图的来源（用户点了哪一段）
-    //   ② 容器 data-bg-target = **当前生效的目标（唯一事实源）**
-    //   ③ 各控件 data-target  = 由 ② 派生，供既有事件处理读取归属
-    // 切换时只有 syncBgControls 一个写入点，控件归属不可能各写各的。
-    const bgSection = panel!.querySelector('.theme-bg-section') as HTMLElement | null
-
-    /** 当前生效的背景目标（读事实源 ②）。 */
-    const currentBgTarget = (): 'edit' | 'read' => {
-      const raw = bgSection?.dataset.bgTarget
-      return raw === 'read' ? 'read' : 'edit'
-    }
-
-    /**
-     * 切换分段前，把「自定义色输入框里尚未应用的草稿」自动应用到它原本所在的目标。
-     * 合并前两段各有一个输入框，草稿天然隔离；合并后只剩一个输入框，
-     * 直接切换会静默丢掉用户刚敲进去的颜色。合法 hex 才自动应用；
-     * 半截输入（非法）本就无从应用，直接丢弃。
-     *
-     * 归属读「事实源 ②」而不是 radio：change 事件触发时 radio 已经翻页，
-     * 那时读到的是新目标，会把草稿写到另一个取值域里。
-     */
-    const flushColorDraft = (): void => {
-      const input = panel!.querySelector('.theme-bg-color-input') as HTMLInputElement | null
-      if (!input) return
-      const raw = input.value.trim()
-      if (!raw || !isValidHexColor(raw)) return
-      const target = bgSection?.dataset.bgTarget
-      // 归属不明（事实源还没建立）→ 宁可不写，也不猜一个目标写进去
-      if (target !== 'edit' && target !== 'read') return
-      const cur = loadThemePrefs()
-      const current = String(target === 'edit' ? cur.editBg : cur.readBg || '')
-      // 与当前生效色一致 → 不是草稿（回填值），无需处理
-      if (raw.toLowerCase() === current.toLowerCase()) return
-      const normalized = normalizeHexColor(raw)
-      const isDarkMode = document.body.classList.contains('dark-mode')
-      if (isDarkMode) {
-        if (target === 'edit') cur.editBgDark = normalized
-        else cur.readBgDark = normalized
-      } else {
-        if (target === 'edit') cur.editBg = normalized
-        else cur.readBg = normalized
-      }
-      saveThemePrefs(cur)
-      applyThemePrefs(cur)
-      lastSaved = { ...cur }
-    }
-
-    /**
-     * 把共用控件同步到指定背景目标：
-     * 1) 更新事实源（容器 data-bg-target）；
-     * 2) 由事实源派生各控件的 data-target（事件据此落到对应字段）；
-     * 3) 刷新色板高亮与 data-for（暗色下按暗色变体计算高亮）；
-     * 4) 自定义色输入框显示该目标当前生效的颜色（避免残留上一目标的颜色）；
-     * 5) 羊皮风格勾选态跟随目标；
-     * 6) 网格背景只对「界面」目标有效（其 CSS 只作用于源码模式）→ 阅读目标下禁用并说明。
-     */
-    const syncBgControls = (target: 'edit' | 'read'): void => {
-      const cur = loadThemePrefs()
-
-      // ① 事实源
-      if (bgSection) bgSection.dataset.bgTarget = target
-
-      // ② 派生控件归属
-      const swatches = panel!.querySelector('.theme-swatches') as HTMLElement | null
-      if (swatches) swatches.dataset.target = target
-
-      const colorInput = panel!.querySelector('.theme-bg-color-input') as HTMLInputElement | null
-      if (colorInput) {
-        colorInput.dataset.target = target
-        // 输入框的值由 fillSwatches 统一同步（那里才知道最新生效色）
-      }
-      const applyBtn = panel!.querySelector('.theme-bg-apply') as HTMLButtonElement | null
-      if (applyBtn) applyBtn.dataset.target = target
-
-      // ③④⑤⑥
-      const parchmentToggle = panel!.querySelector('#parchment-bg-toggle') as HTMLInputElement | null
-      if (parchmentToggle) {
-        parchmentToggle.checked = target === 'edit' ? !!cur.parchmentEdit : !!cur.parchmentRead
-      }
-
-      // 网格背景的 CSS 是 .container.edit-grid-bg:not(.wysiwyg-v2)，只作用于源码模式
-      const grid = panel!.querySelector('#grid-bg-toggle') as HTMLInputElement | null
-      const gridLabel = panel!.querySelector('.theme-grid-bg-option') as HTMLElement | null
-      if (grid) grid.disabled = target !== 'edit'
-      if (gridLabel) gridLabel.classList.toggle('theme-grid-bg-disabled', target !== 'edit')
-
-      fillSwatches(panel!, cur)
-    }
-
-    // 切换分段：先落草稿（不丢用户输入）→ 还原悬停预览色 → 同步控件
-    panel.querySelectorAll('.theme-bg-segment-input').forEach((input) => {
-      const el = input as HTMLInputElement
-      el.addEventListener('change', () => {
-        if (!el.checked) return
-        flushColorDraft()
-        revertAllPreviews()
-        syncBgControls(el.value === 'read' ? 'read' : 'edit')
-      })
-    })
-    // 初始态：默认「界面」目标，控件与其对齐
-    syncBgControls('edit')
 
     // 点击颜色：更新、保存、应用
     panel.addEventListener('click', (ev) => {
       const t = ev.target as HTMLElement
       if (t.classList.contains('theme-swatch')) {
         const color = t.dataset.color || '#ffffff'
-        const forWhich = t.dataset.for || 'edit'
         const cur = loadThemePrefs()
-        // 根据当前模式保存到对应的字段
-        const isDarkMode = document.body.classList.contains('dark-mode')
-        if (isDarkMode) {
-          // 夜间模式：只保存编辑和阅读背景
-          if (forWhich === 'edit') cur.editBgDark = color
-          else if (forWhich === 'read') cur.readBgDark = color
-        } else {
-          // 日间模式：保存到亮色背景字段
-          if (forWhich === 'edit') cur.editBg = color
-          else if (forWhich === 'read') cur.readBg = color
-        }
+        // 统一背景：写入锚点字段并同步镜像字段
+        setUnifiedBg(cur, color)
         saveThemePrefs(cur)
         applyThemePrefs(cur)
         fillSwatches(panel!, cur)
@@ -1619,19 +1554,21 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       })
     }
 
-    // 羊皮风格开关：合并后只剩一个控件，勾选态与写入字段跟随当前分段
+    // 羊皮风格开关（统一开关）：同时作用于源码编辑区与阅读/所见正文。
     // 注：所见模式的羊皮纸已随「所见背景」设置移除——阅读羊皮纸通过 .md-content
     // 同时作用于所见模式（两者共用同一份正文排版层）。
     const parchmentBgToggle = panel.querySelector('#parchment-bg-toggle') as HTMLInputElement | null
 
     if (parchmentBgToggle) {
       const cur = loadThemePrefs()
-      parchmentBgToggle.checked = !!cur.parchmentEdit
+      parchmentBgToggle.checked = !!cur.parchment
       parchmentBgToggle.addEventListener('change', () => {
         const cur = loadThemePrefs()
-        const target = currentBgTarget()
-        if (target === 'edit') cur.parchmentEdit = parchmentBgToggle.checked
-        else cur.parchmentRead = parchmentBgToggle.checked
+        const on = parchmentBgToggle.checked
+        // 唯一事实源是 parchment；两个旧字段同步为镜像输出
+        cur.parchment = on
+        cur.parchmentEdit = on
+        cur.parchmentRead = on
         saveThemePrefs(cur)
         applyThemePrefs(cur)
         lastSaved = { ...cur }
@@ -1658,8 +1595,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
       // 支持回车键应用
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
-          const target = input.dataset.target
-          const applyBtn = Array.from(applyButtons).find(btn => btn.dataset.target === target)
+          const applyBtn = panel.querySelector('.theme-bg-apply') as HTMLButtonElement | null
           if (applyBtn) applyBtn.click()
         }
       })
@@ -1668,9 +1604,8 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     // 应用按钮点击事件
     applyButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
-        const target = btn.dataset.target || 'edit'
-        // 合并后自定义色输入框只有一个，按 data-target 定位（不再按 id 拼名字）
-        const input = panel.querySelector(`.theme-bg-color-input[data-target="${target}"]`) as HTMLInputElement | null
+        // 统一背景只有一个自定义色输入框
+        const input = panel.querySelector('.theme-bg-color-input') as HTMLInputElement | null
         if (!input) return
 
         const color = input.value.trim()
@@ -1690,15 +1625,8 @@ function ensureThemePanelReady(): HTMLDivElement | null {
 
         // 保存到配置
         const cur = loadThemePrefs()
-        const isDarkMode = document.body.classList.contains('dark-mode')
-
-        if (isDarkMode) {
-          if (target === 'edit') cur.editBgDark = normalized
-          else if (target === 'read') cur.readBgDark = normalized
-        } else {
-          if (target === 'edit') cur.editBg = normalized
-          else if (target === 'read') cur.readBg = normalized
-        }
+        // 统一背景：写入锚点字段并同步镜像字段
+        setUnifiedBg(cur, normalized)
 
         // 应用并保存
         saveThemePrefs(cur)
@@ -2138,7 +2066,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     const closeBtn = panel.querySelector('.theme-panel-close') as HTMLButtonElement | null
     if (closeBtn) {
       closeBtn.addEventListener('click', () => {
-        revertAllPreviews()
+        revertPreview()
         panel!.classList.add('hidden')
       })
     }
@@ -2149,7 +2077,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
         const t = ev.target as HTMLElement
         if (!panel || panel.classList.contains('hidden')) return
         if (t.closest('#theme-panel') || t.closest('#btn-theme')) return
-        revertAllPreviews()
+        revertPreview()
         panel.classList.add('hidden')
       } catch {}
     })
@@ -2158,7 +2086,7 @@ function ensureThemePanelReady(): HTMLDivElement | null {
     document.addEventListener('keydown', (ev) => {
       try {
         if (ev.key === 'Escape' && panel && !panel.classList.contains('hidden')) {
-          revertAllPreviews()
+          revertPreview()
           panel.classList.add('hidden')
           ev.preventDefault()
           ev.stopPropagation()

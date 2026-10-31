@@ -1983,13 +1983,24 @@ flyMD 内置了主题系统，并对外暴露了可选的 Theme 扩展 API，便
 
 ```ts
 interface ThemePrefs {
-  editBg: string       // 编辑背景
-  readBg: string       // 阅读背景
-  wysiwygBg: string    // 所见背景
+  editBg: string       // 编辑背景（镜像字段，见下方说明）
+  readBg: string       // 阅读背景（纸面色）—— 背景的唯一事实源
+  wysiwygBg: string    // 所见背景（已废弃，仅原样回写）
   typography: 'default' | 'serif' | 'modern' | 'reading' | 'academic'
   mdStyle:   'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs'
 }
+```
 
+> **背景已合并为单一设置。** 主题面板原本有「编辑背景」与「阅读背景」两项，现已合并为一项：
+> 界面、源码编辑区与阅读纸面共用同一个背景色。
+>
+> - `readBg`（夜间变体 `readBgDark`）是**唯一事实源**：应用背景请写这个字段。
+> - `editBg`（夜间变体 `editBgDark`）降级为**镜像输出** —— 字段保留以兼容既有插件与存储结构，
+>   但**渲染路径不再读取它**，单独写它不会改变生效色。
+> - 两个 CSS 变量 `--bg` 与 `--preview-bg` 由同一个值驱动，恒等。
+> - 合并前各自的独立取值会备份在 `preUnifyBg` 字段里（仅在两域确实不一致时写一次），便于回退时恢复。
+
+```ts
 // 扩展入口
 flymdTheme.registerPalette(label: string, color: string, id?: string): void
 flymdTheme.registerTypography(id: ThemePrefs['typography'], label: string, css?: string): void
@@ -2024,7 +2035,8 @@ export function activate(context) {
     }
   `)
 
-  // 3) 快速应用某一主题偏好（示例：将阅读背景切到薰衣草）
+  // 3) 快速应用某一主题偏好（示例：把统一背景切到薰衣草）
+  //    注意：背景是单一设置，写 readBg 即可同时作用于界面、编辑区与阅读纸面
   const prefs = flymdTheme.loadThemePrefs()
   prefs.readBg = '#ede9fe'
   flymdTheme.saveThemePrefs(prefs)
@@ -2048,10 +2060,10 @@ export function activate() {
 
 ### 可用 CSS 变量（主题相关）
 
-- 布局基色
-  - `--bg` 编辑背景（应用于 `.container` 作用域）
-  - `--preview-bg` 阅读背景（`.container:not(.wysiwyg):not(.wysiwyg-v2) .preview`）
-  - `--wysiwyg-bg` 所见背景（`.container.wysiwyg-v2`）
+- 布局基色（背景已合并为单一设置：`--bg` 与 `--preview-bg` 恒等）
+  - `--bg` 统一背景（应用于 `.container` 作用域）
+  - `--preview-bg` 统一背景的纸面侧（`.container:not(.wysiwyg):not(.wysiwyg-v2) .preview`）
+  - `--wysiwyg-bg` 已废弃（所见背景早已并入阅读背景）
 - 代码配色（高亮 token）
   - `--code-bg`、`--code-border`、`--code-fg`
   - `--c-key`、`--c-str`、`--c-num`、`--c-fn`、`--c-com`

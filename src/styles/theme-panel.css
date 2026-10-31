@@ -169,66 +169,12 @@ body.theme-panel-open .library * {
   transform: scale(1.1);
 }
 
-/* 背景分段控件（界面 / 阅读）：两段共用一套色板 / 羊皮纸 / 自定义色控件。
-   结构用「隐藏 radio + 相邻 label」：选中态纯 CSS 兄弟选择器表达，
-   原生 radio 仍提供键盘分组与方向键切换。 */
-.theme-bg-segmented {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  margin-bottom: 12px;
-  border: 1px solid var(--border, rgba(127,127,127,0.2));
-  border-radius: var(--radius-lg, 10px);
-  background: rgba(127,127,127,0.06);
-}
+/* 背景已合并为单一设置：界面、源码编辑区与阅读纸面共用同一个色值，
+   面板里只保留一块色板 + 一个自定义色输入框，不再有「界面 / 阅读」分段控件。 */
 
-.theme-bg-segment-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.theme-bg-segment {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 18px;
-  border-radius: var(--radius-sm, 6px);
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--fg);
-  opacity: 0.65;
-  user-select: none;
-  white-space: nowrap;
-  transition: background var(--transition-normal), opacity var(--transition-normal);
-}
-
-.theme-bg-segment:hover {
-  opacity: 1;
-}
-
-.theme-bg-segment-input:checked + .theme-bg-segment {
-  background: var(--accent);
-  color: #fff;
-  opacity: 1;
-}
-
-/* 键盘焦点环移到可见的标签上（原生 radio 本身不可见） */
-.theme-bg-segment-input:focus-visible + .theme-bg-segment {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* 网格背景仅在「界面」目标生效 → 阅读目标下禁用并置灰
-   （禁用态由 JS 直接打 class，不额外依赖 :has() 选择器） */
-.theme-grid-bg-option.theme-grid-bg-disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* 背景区说明文字 */
+.theme-bg-hint {
+  margin: -4px 0 10px;
 }
 
 .theme-option {

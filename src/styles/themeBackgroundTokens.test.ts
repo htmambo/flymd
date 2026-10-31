@@ -169,6 +169,46 @@ describe('applyThemePrefs：日/夜分支写入对称性', () => {
     expect(inline).not.toContain('--wysiwyg-bg')
     expect(inline).not.toContain('#ffffff')
   })
+
+  it('统一背景：--bg 与 --preview-bg 恒等，且以 readBg（纸面色）为锚点', async () => {
+    const { applyThemePrefs } = await import('../theme')
+    const container = document.querySelector('.container') as HTMLElement
+    document.body.classList.remove('dark-mode')
+
+    // editBg 与 readBg 不一致时，生效值取 readBg（归一方向：纸面色）
+    applyThemePrefs({
+      editBg: '#ffffff',
+      readBg: '#fbf5e6',
+      wysiwygBg: '#e9edf5',
+      editBgDark: '#0b0c0e',
+      readBgDark: '#12100d',
+      mdStyle: 'standard',
+    })
+
+    expect(container.style.getPropertyValue('--bg')).toBe('#fbf5e6')
+    expect(container.style.getPropertyValue('--preview-bg')).toBe('#fbf5e6')
+    // 两个变量必须恒等 —— 这是「一套设置」的硬不变量
+    expect(container.style.getPropertyValue('--bg'))
+      .toBe(container.style.getPropertyValue('--preview-bg'))
+  })
+
+  it('夜间模式下统一背景取 readBgDark，两个变量同样恒等', async () => {
+    const { applyThemePrefs } = await import('../theme')
+    const container = document.querySelector('.container') as HTMLElement
+    document.body.classList.add('dark-mode')
+
+    applyThemePrefs({
+      editBg: '#ffffff',
+      readBg: '#fafafa',
+      wysiwygBg: '#e9edf5',
+      editBgDark: '#0b0c0e',
+      readBgDark: '#12100d',
+      mdStyle: 'standard',
+    })
+
+    expect(container.style.getPropertyValue('--bg')).toBe('#12100d')
+    expect(container.style.getPropertyValue('--preview-bg')).toBe('#12100d')
+  })
 })
 
 describe('旧配置兼容', () => {

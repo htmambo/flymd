@@ -53,6 +53,17 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-10-31-theme-bg-unify-single-setting.md](Archive/2026-10/2026-10-31-theme-bg-unify-single-setting.md) — 主题背景统一为**单一设置**（取消「界面 / 阅读」分段）（完成 2026-10-31）
+  - **背景**：上一轮把两块背景区合并成一块（但保留分段控件 + 两个取值域）。本轮按用户要求再进一步：**面板只留一个背景控件**，界面 / 源码编辑区 / 阅读纸面共用同一色
+  - **锚点唯一化**：`readBg` / `readBgDark` 成为唯一事实源；`--bg` 与 `--preview-bg` 由同一值驱动 → **恒等**；`editBg` / `editBgDark` 降级为**镜像输出**（写入时同步，渲染不再读取），存储字段与 `plugin.md` 公开契约**零变更**、无迁移
+  - **两个轴职责分离**：**明暗轴**（`body.dark-mode`）决定取 `readBg` 还是 `readBgDark`；**模式轴**（源码 / 阅读 / 所见）**不再影响**颜色。`updateChromeColorsForMode(mode)` 保留导出签名（`main.ts` 6 处调用）但 mode 不再影响派生色
+  - **羊皮风格合并为一个开关**：新增 `parchment` 唯一事实源，同时挂 `parchment-edit` + `parchment-read` 两个类名（CSS 选择器分别命中 `.editor` / `.md-content`，**CSS 零改动**）；legacy 按**并集**归一（任一模式开启过就不算关闭）
+  - **存量归一（方向：纸面色）**：锚点取 `readBg`，两个历史色必须归一（合并的固有成本）；分歧值备份进 `preUnifyBg`（同一存储键内，不新增键），**幂等**且**先于归一化生成**（存原始值，恢复语义不被破坏）
+  - **顺带修掉的既有缺陷**：① 旧 `DEFAULT_PREFS.readBg` 用 `getCssVar('--preview-bg')` 取值 → 深色系统上误捕夜间值 `#12100d` 并被持久化，浅色模式纸面近黑（锚点化后会变成**整窗**近黑）→ 改静态默认 + 载入期检测该特征重置；② 持久化数据被污染成非字符串时 `.trim()` 抛异常会拖垮整个 `loadThemePrefs` → 新增 `readColorField()` 收口
+  - **验证**：vitest **81 文件 / 994 用例**全绿（新增 `themeBgUnify.test.ts` 25 例、删 `themeBgSegment.test.ts` 24 例、`themeBackgroundTokens.test.ts` +3 例）；typecheck + build 通过；浏览器实测：面板无分段残留、点色板后 `--bg` 与 `--preview-bg` **同值**、羊皮双类名同步、源码/阅读模式整窗同色、点色板不误关面板
+  - **外审**：需求轮 `8d7bd0b1…` REQS_CHANGES（8 条）、计划轮 `00c43cb1…` REQS_CHANGES（10 条）、代码轮 `48e4c9f1…` REQS_CHANGES（4 条）→ 复查 `a529c2ed…` **APPROVED**（驳回项均有代码证据）
+  - **未提交**：用户本轮未下达提交指令，改动仍在工作区
+
 - ✅ [2026-10-31-theme-bg-section-merge.md](Archive/2026-10/2026-10-31-theme-bg-section-merge.md) — 主题面板「编辑背景 / 阅读背景」合并为单一「背景」区（完成 2026-10-31）
   - **背景**：两块各含**完全相同的 9 色板**、两个羊皮风格、两个一样的自定义色输入框；且「编辑背景」实为**应用界面色**（`--bg` 覆盖 body/弹窗/菜单/扩展面板/通知/标签栏/库树/源码区共 55 处），「阅读背景」是**纸面色**（`--preview-bg` 仅 7 处）——作用域不同，**只能合并 UI、不能合并取值**
   - **改动**：面板合并为一个「背景」区 + 「界面/阅读」分段控件（隐藏 radio + 相邻 label，纯 CSS 兄弟选择器表达选中态，保留原生键盘分组）；色板/自定义色/应用/羊皮纸各一份，两个取值域（`editBg`/`readBg` 含暗色变体）**完整保留、不迁移**
