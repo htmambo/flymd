@@ -35,7 +35,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # jsdom@30 要求 ^22.22.2 || ^24.15.0 || >=26.0.0
-          node-version: '22'
+          # Node 24：与 build.yml 一致（pdfjs-dist 6.3.x 需要 Promise.try → Node 23+）
+          node-version: '24'
           cache: 'pnpm'
 
       - name: 设置 Rust
