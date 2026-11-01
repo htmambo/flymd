@@ -3,6 +3,10 @@ name: Build Multi-Platform
 on:
   workflow_dispatch:
   push:
+    # 推主干：只跑轻量门禁（check job），不跑三平台完整打包
+    branches:
+      - main
+    # 打 tag：门禁 + 三平台打包 + 建 Release
     tags:
       - 'v*'
   pull_request:
@@ -51,6 +55,13 @@ jobs:
       - name: Test MCP server
         run: cargo test --manifest-path mcp-server/Cargo.toml
 
+      # Tauri 侧的 Rust 代码此前只在三平台 build job 里才编译（30 分钟后才知道
+      # 编不过）。这里加一道 cargo check 门禁：src-tauri 以路径依赖引用
+      # mcp-server 的 lib（共享 AI 写入护栏核心），这类跨 crate 的依赖问题
+      # 必须尽早暴露。
+      - name: Check Tauri app (Rust)
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
       - name: Build frontend
         run: pnpm build
 
@@ -74,7 +85,10 @@ jobs:
 
   build:
     # 门禁先行：check 失败就不再进行耗时的跨平台打包
+    # 三平台打包在「打 tag」与「PR」时跑；推主干只跑 check 门禁——
+    # 主干推送随后必然伴随一次 tag 构建，不必重复付出完整打包的代价。
     needs: check
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'pull_request'
     strategy:
       fail-fast: false
       matrix:
