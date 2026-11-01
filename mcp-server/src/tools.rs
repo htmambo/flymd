@@ -200,7 +200,7 @@ fn list_notes(args: &Value, lib: &Library) -> Result<String, String> {
             }
         }
         if shown >= limit {
-            lines.push(format!("…（还有更多笔记未列出，提高 limit 查看）"));
+            lines.push("…（还有更多笔记未列出，提高 limit 查看）".to_string());
             break;
         }
         lines.push(match n.modified {

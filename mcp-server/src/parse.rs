@@ -145,12 +145,12 @@ fn parse_task_line(line: &str) -> Option<(bool, String)> {
         .or_else(|| t.strip_prefix("+ "))
         .or_else(|| strip_ordered_marker(t))?;
     let rest = rest.trim_start();
-    if rest.starts_with("[ ]") {
-        Some((false, rest[3..].trim().to_string()))
-    } else if rest.starts_with("[x]") || rest.starts_with("[X]") {
-        Some((true, rest[3..].trim().to_string()))
+    if let Some(body) = rest.strip_prefix("[ ]") {
+        Some((false, body.trim().to_string()))
     } else {
-        None
+        rest.strip_prefix("[x]")
+            .or_else(|| rest.strip_prefix("[X]"))
+            .map(|body| (true, body.trim().to_string()))
     }
 }
 

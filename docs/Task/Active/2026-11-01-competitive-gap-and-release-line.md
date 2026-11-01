@@ -76,7 +76,7 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 | # | 事项 | 说明 | 依赖 |
 |---|---|---|---|
 | 1 | **发布线恢复** | ✅ **已完成**：309 commits 快进合并进 `main`，仓库地址切换到 `htmambo/flymd`，版本升至 v2.0.0 并打 tag 发版 | 无（见 §4） |
-| 2 | **MCP Server** | ✅ **已完成**（commit `bbed898`）：独立 crate `mcp-server/`，6 个只读工具，41 个 Rust 单测，真实库端到端联调通过 | 已落地，详见 §3.1 |
+| 2 | **MCP Server** | ✅ **已完成**（commit `bbed898`）：独立 crate `mcp-server/`，6 个只读工具，真实库端到端联调通过。后续补目录排除机制（见 §3.2），单测增至 63 个 | 已落地，详见 §3.1 |
 | 3 | **AI 写入护栏 + 回滚** | 复用已有 Git 版本控制插件，改为"AI 写入先落独立分支 / 快照，差异预览后合并"；成本最低的做法是每次 AI 改写前自动打快照 tag | 依赖现有 Git 插件 |
 
 ### 3.1 MCP Server 落地情况（2026-11-01）
@@ -90,11 +90,38 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 | 工程形态 | 独立 crate `mcp-server/`，**未改动 `src-tauri/main.rs`**；release 产物 1.3 MB，仅依赖 serde / serde_json / regex |
 | 分发 | CI 按平台构建，作为独立工件随 Release 分发；并尽力注入应用包（macOS `.app/Contents/MacOS`、Windows/Linux 主程序同级目录）。资产名带平台后缀（`flymd-mcp-windows-x64.exe` / `flymd-mcp-macos-universal` / `flymd-mcp-linux-x64`）——GitHub Release 不允许同名资产，Linux 与 macOS 的产物默认都叫 `flymd-mcp` 会互相顶掉 |
 | 文档 | [mcp-server/README.md](../../../mcp-server/README.md)（开发视角）、[docs/Usage/MCP_SERVER_GUIDE.md](../../Usage/MCP_SERVER_GUIDE.md)（用户视角） |
-| 验证 | 41 个 Rust 单测 + 1023 个前端测试 + typecheck 全绿；对真实文库（1134 篇笔记 / 641 条待办）完成端到端握手联调 |
+| 验证 | 63 个 Rust 单测 + 1023 个前端测试 + typecheck 全绿；对真实文库完成端到端握手联调 |
 
 > ⚠️ **未做 `tauri.conf.json` 的 `externalBin`**：Tauri 在 sidecar 缺失时会让**整个 app 构建失败**，风险不可控。改为「独立工件为主渠道 + 尽力注入」的双轨方案。
 >
 > ⚠️ **写入通道仍未开放**：当前切片刻意只读。引入写能力前必须先做差异预览与回滚（见 P0-3）。
+
+### 3.2 MCP 目录排除机制（2026-11-01）
+
+**问题**：真实库实测时发现 `media/88-Template/`（Obsidian 模板目录）进了索引，模板里的
+`- [ ] 红薯订阅` 被 `list_tasks` 当成用户的真待办喂给 AI。附件、模板这类目录不是笔记，
+混进 AI 视野属于**数据污染**，且会随模板数量放大。
+
+**方案**：目录排除做成**可配置**而非硬编码。排除是**全屏障**——被排除目录整棵不进索引
+（影响 `list_notes` / `search` / `list_tasks` / `get_backlinks`），且 `read_note` 读到被排除
+路径直接报错。否则 AI 只要猜到路径名就能绕过，排除形同虚设。
+
+| 项 | 说明 |
+|---|---|
+| 配置来源 | 内置默认 → 用户级 `~/.config/com.flymd/mcp.json` → 库级 `<库根>/.flymd/mcp.json` → `FLYMD_MCP_EXCLUDE` → `--exclude`，**并集合并**而非互相替换 |
+| 内置默认 | 技术目录（`.git` `.obsidian` `.flymd` `node_modules` …）+ 资源/模板目录（`media` `assets` `attachments` `templates` `template` `附件` `模板` …） |
+| 匹配语义 | 不含 `/` → 按目录名任意层级命中；含 `/` → 按相对库根路径前缀命中；大小写不敏感；`allowDirs` 优先 |
+| CLI | `--exclude <目录>`（可重复）、`--print-config`（打印生效配置 + 实际被排除目录 + 笔记总数） |
+| 透明度 | 启动时往 stderr 打一行「已排除 N 个目录：…」；`--print-config` 可随时自查 |
+| 代码 | 新增 `mcp-server/src/config.rs`（配置模型 + 匹配 + 来源合并）；`library.rs` 承载 `McpConfig` 并在索引/读取路径上执行 |
+
+> ⚠️ **allow 的祖先目录必须放行**：若 allow 写 `media/重要笔记`，而 `media` 本身被排除，
+> 遍历到 `media` 就停了，永远走不到被豁免的子目录——这是一个容易写错但必须覆盖的边界，
+> 已有对应单测。
+>
+> 📌 **应用侧不受影响**：flymd 自身的文件树仍要正常展示 `media/`（用户要在应用里管理附件），
+> 应用侧的跳过规则只针对技术目录。应用内的 AI 功能只处理当前文档，没有全库扫描，
+> 所以污染是 MCP 独有的。
 
 ### P1 — 补齐 AI 编辑器入场券
 

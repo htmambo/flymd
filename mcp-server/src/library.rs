@@ -6,6 +6,8 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::config::McpConfig;
+
 /// 单个笔记的索引条目。
 #[derive(Debug, Clone)]
 pub struct NoteFile {
@@ -19,17 +21,8 @@ pub struct NoteFile {
 /// 单个笔记的读取上限，避免误读超大文件把客户端上下文打爆。
 const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
 
-/// 遍历时跳过的目录名。
-const SKIP_DIRS: &[&str] = &[
-    ".git",
-    ".flymd",
-    ".obsidian",
-    ".trash",
-    ".DS_Store",
-    "node_modules",
-    "target",
-    "dist",
-];
+/// 遍历时跳过的文件名。
+const SKIP_FILES: &[&str] = &[".DS_Store"];
 
 /// 笔记扩展名。
 const NOTE_EXTS: &[&str] = &["md", "markdown"];
@@ -39,25 +32,37 @@ const NOTE_EXTS: &[&str] = &["md", "markdown"];
 pub struct Library {
     /// 已 canonicalize 的库根
     root: PathBuf,
+    /// 目录排除配置
+    config: McpConfig,
 }
 
 impl Library {
     /// 按优先级定位库根：`--library` > `FLYMD_LIBRARY` > 应用设置文件 > 当前目录。
-    pub fn resolve(explicit: Option<&str>) -> Result<Self, String> {
+    ///
+    /// 定位完成后按 `内置默认 → 用户级配置 → 库级配置 → 环境变量 → 命令行`
+    /// 的顺序**合并**目录排除规则。
+    pub fn resolve(explicit: Option<&str>, cli_excludes: &[String]) -> Result<Self, String> {
+        let root = Self::resolve_root(explicit)?;
+        let config = crate::config::resolve(Some(&root), cli_excludes);
+        Ok(Self { root, config })
+    }
+
+    /// 按优先级定位库根。
+    fn resolve_root(explicit: Option<&str>) -> Result<PathBuf, String> {
         if let Some(p) = explicit {
-            return Self::from_path(Path::new(p));
+            return Self::from_path(Path::new(p)).map(|l| l.root);
         }
         if let Ok(p) = std::env::var("FLYMD_LIBRARY") {
             if !p.trim().is_empty() {
-                return Self::from_path(Path::new(p.trim()));
+                return Self::from_path(Path::new(p.trim())).map(|l| l.root);
             }
         }
         if let Some(p) = library_root_from_settings() {
-            return Self::from_path(&p);
+            return Self::from_path(&p).map(|l| l.root);
         }
         let cwd = std::env::current_dir().map_err(|e| format!("无法获取当前目录: {e}"))?;
         if has_note(&cwd) {
-            return Self::from_path(&cwd);
+            return Self::from_path(&cwd).map(|l| l.root);
         }
         Err(
             "未能定位笔记库。请用 --library <路径> 指定，或设置环境变量 FLYMD_LIBRARY。\n\
@@ -73,11 +78,26 @@ impl Library {
         if !canon.is_dir() {
             return Err(format!("库路径不是目录: {}", canon.display()));
         }
-        Ok(Self { root: canon })
+        Ok(Self {
+            root: canon,
+            config: McpConfig::with_defaults(),
+        })
+    }
+
+    /// 构造一个带指定排除配置的库（供测试与显式传参使用）。
+    #[allow(dead_code)]
+    pub fn with_config(p: &Path, config: McpConfig) -> Result<Self, String> {
+        let mut lib = Self::from_path(p)?;
+        lib.config = config;
+        Ok(lib)
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    pub fn config(&self) -> &McpConfig {
+        &self.config
     }
 
     /// 把客户端传入的相对路径解析为库内的绝对路径，并做越界防护。
@@ -108,14 +128,25 @@ impl Library {
         if !canon.starts_with(&self.root) {
             return Err(format!("路径越出库根范围: {rel}"));
         }
+        // 落在被排除目录里的文件一律不开放读取——否则 AI 猜到路径仍能读到，
+        // 排除就形同虚设。
+        if self.config.is_excluded_file(&rel.replace('\\', "/")) {
+            return Err(format!(
+                "路径位于被排除的目录中，不对 MCP 客户端开放: {rel}\n\
+                 提示：在 <库根>/.flymd/mcp.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
+            ));
+        }
         Ok(canon)
     }
 
     /// 递归索引库内所有笔记。
+    ///
+    /// 遍历时按相对路径判断目录排除，被排除的目录整棵跳过。
     pub fn notes(&self) -> Vec<NoteFile> {
         let mut out = Vec::new();
-        let mut dirs = vec![self.root.clone()];
-        while let Some(dir) = dirs.pop() {
+        // 队列元素：(绝对路径, 相对库根的路径)
+        let mut dirs: Vec<(PathBuf, String)> = vec![(self.root.clone(), String::new())];
+        while let Some((dir, dir_rel)) = dirs.pop() {
             let entries = match std::fs::read_dir(&dir) {
                 Ok(e) => e,
                 Err(_) => continue,
@@ -129,13 +160,24 @@ impl Library {
                 };
                 if ft.is_dir() {
                     // 不跟随符号链接目录，避免环路
-                    if ft.is_symlink() || SKIP_DIRS.contains(&name.as_str()) {
+                    if ft.is_symlink() {
                         continue;
                     }
-                    dirs.push(path);
+                    let child_rel = if dir_rel.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{dir_rel}/{name}")
+                    };
+                    if self.config.is_excluded_dir(&child_rel) {
+                        continue;
+                    }
+                    dirs.push((path, child_rel));
                     continue;
                 }
                 if !ft.is_file() {
+                    continue;
+                }
+                if SKIP_FILES.contains(&name.as_str()) {
                     continue;
                 }
                 let ext = path
@@ -162,6 +204,44 @@ impl Library {
             }
         }
         out.sort_by(|a, b| a.rel.cmp(&b.rel));
+        out
+    }
+
+    /// 列出库内**实际被排除**的目录（相对库根的路径）。
+    ///
+    /// 用于启动日志与 `--print-config`：让「哪些目录没进 AI 视野」是可自查的，
+    /// 而不是黑箱。
+    pub fn excluded_dirs(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut dirs: Vec<(PathBuf, String)> = vec![(self.root.clone(), String::new())];
+        while let Some((dir, dir_rel)) = dirs.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                let ft = match entry.file_type() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                if !ft.is_dir() || ft.is_symlink() {
+                    continue;
+                }
+                let child_rel = if dir_rel.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{dir_rel}/{name}")
+                };
+                if self.config.is_excluded_dir(&child_rel) {
+                    out.push(child_rel);
+                    continue;
+                }
+                dirs.push((path, child_rel));
+            }
+        }
+        out.sort();
         out
     }
 
@@ -430,5 +510,98 @@ mod tests {
             ]
         });
         assert_eq!(pick_library_root(&v).as_deref(), Some("/tmp/two"));
+    }
+
+    /// 构造一个带 `media/`、`附件/` 子目录的测试库。
+    fn exclude_fixture(tag: &str) -> PathBuf {
+        let root = tmpdir(tag);
+        std::fs::write(root.join("真笔记.md"), "# 真笔记\n").unwrap();
+        std::fs::create_dir_all(root.join("media/88-Template")).unwrap();
+        std::fs::write(
+            root.join("media/88-Template/simple.md"),
+            "# 模板\n\n- [ ] 红薯订阅\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("附件")).unwrap();
+        std::fs::write(root.join("附件/图片说明.md"), "# 说明\n").unwrap();
+        std::fs::create_dir_all(root.join("子目录/media")).unwrap();
+        std::fs::write(root.join("子目录/media/深层.md"), "# 深层\n").unwrap();
+        std::fs::create_dir_all(root.join("正常目录")).unwrap();
+        std::fs::write(root.join("正常目录/笔记.md"), "# 正常\n").unwrap();
+        root
+    }
+
+    #[test]
+    fn 被排除目录不进索引() {
+        let root = exclude_fixture("excl-index");
+        let lib = Library::with_config(&root, McpConfig::with_defaults()).unwrap();
+        let names: Vec<String> = lib.notes().into_iter().map(|n| n.rel).collect();
+
+        assert!(names.iter().any(|x| x == "真笔记.md"));
+        assert!(names.iter().any(|x| x == "正常目录/笔记.md"));
+        assert!(
+            !names.iter().any(|n| n.starts_with("media/")),
+            "media 目录不该出现在索引里，实际: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("附件/")),
+            "附件目录不该出现在索引里，实际: {names:?}"
+        );
+    }
+
+    #[test]
+    fn 嵌套层级里的同名目录也被排除() {
+        let root = exclude_fixture("excl-nested");
+        let lib = Library::with_config(&root, McpConfig::with_defaults()).unwrap();
+        let names: Vec<String> = lib.notes().into_iter().map(|n| n.rel).collect();
+        assert!(
+            !names.iter().any(|n| n.contains("/media/")),
+            "任意层级的 media 都该被排除，实际: {names:?}"
+        );
+    }
+
+    #[test]
+    fn 被排除目录里的文件不可读() {
+        let root = exclude_fixture("excl-read");
+        let lib = Library::with_config(&root, McpConfig::with_defaults()).unwrap();
+        let err = lib
+            .read_note("media/88-Template/simple.md")
+            .expect_err("被排除的模板不该能读到");
+        assert!(err.contains("被排除"), "错误信息应说明被排除，实际: {err}");
+    }
+
+    #[test]
+    fn allow_豁免后目录重新可见() {
+        let root = exclude_fixture("excl-allow");
+        let mut cfg = McpConfig::with_defaults();
+        cfg.allow.push("media/88-Template".to_string());
+        let lib = Library::with_config(&root, cfg).unwrap();
+        let names: Vec<String> = lib.notes().into_iter().map(|n| n.rel).collect();
+        assert!(
+            names.iter().any(|x| x == "media/88-Template/simple.md"),
+            "allow 豁免后应重新可见，实际: {names:?}"
+        );
+    }
+
+    #[test]
+    fn 排除目录清单可自查() {
+        let root = exclude_fixture("excl-list");
+        let lib = Library::with_config(&root, McpConfig::with_defaults()).unwrap();
+        let dirs = lib.excluded_dirs();
+        assert!(dirs.contains(&"media".to_string()), "实际: {dirs:?}");
+        assert!(dirs.contains(&"附件".to_string()), "实际: {dirs:?}");
+        assert!(dirs.contains(&"子目录/media".to_string()), "实际: {dirs:?}");
+    }
+
+    #[test]
+    fn 自定义排除规则生效() {
+        let root = exclude_fixture("excl-custom");
+        let mut cfg = McpConfig::default();
+        cfg.push_exclude("正常目录");
+        let lib = Library::with_config(&root, cfg).unwrap();
+        let names: Vec<String> = lib.notes().into_iter().map(|n| n.rel).collect();
+        assert!(!names.iter().any(|x| x == "正常目录/笔记.md"), "实际: {names:?}");
+        // 默认规则不在自定义配置里，media 仍然可见
+        assert!(names.iter().any(|x| x == "media/88-Template/simple.md"), "实际: {names:?}");
     }
 }

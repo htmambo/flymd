@@ -20,6 +20,12 @@ cargo build --release --manifest-path mcp-server/Cargo.toml
 # 手动指定库根
 ./mcp-server/target/release/flymd-mcp --library "/path/to/notes"
 
+# 额外排除目录（可重复）
+./mcp-server/target/release/flymd-mcp --exclude media --exclude 模板
+
+# 查看当前生效的排除配置
+./mcp-server/target/release/flymd-mcp --print-config
+
 # 交互式验证
 echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   | ./mcp-server/target/release/flymd-mcp
@@ -114,6 +120,61 @@ args = ["--library", "/path/to/notes"]
 
 ---
 
+## 目录排除
+
+Obsidian 库里的 `media/`、`templates/` 装的是附件和模板，不是笔记。把它们喂给 AI 会污染
+搜索、待办和列表结果——模板里的 `- [ ] 某某订阅` 会被当成用户的真待办。
+
+### 配置来源（按优先级合并，不是替换）
+
+| 来源 | 位置 |
+|---|---|
+| 内置默认 | 技术目录 + 常见资源/模板目录（见下） |
+| 用户级配置 | `~/.config/com.flymd/mcp.json`（macOS：`~/Library/Application Support/com.flymd/mcp.json`） |
+| 库级配置 | `<库根>/.flymd/mcp.json`（随库走、随 WebDAV 同步） |
+| 环境变量 | `FLYMD_MCP_EXCLUDE`，逗号或分号分隔 |
+| 命令行 | `--exclude <目录>`，可重复 |
+
+内置默认排除：
+
+- 技术目录：`.git` `.hg` `.svn` `node_modules` `target` `dist` `build` `.next` `.vite` `.obsidian` `.trash` `.flymd` `ebwebview` `code cache` `gpucache` `service worker`
+- 附件/资源/模板：`media` `assets` `asset` `attachment` `attachments` `templates` `template` `excalidraw` `.excalidraw` `附件` `模板`
+
+### 配置文件格式
+
+```json
+{
+  "excludeDirs": ["我的草稿", "工作/归档"],
+  "allowDirs": ["media/重要笔记"]
+}
+```
+
+`exclude` / `allow` 是 `excludeDirs` / `allowDirs` 的别名。
+
+### 匹配语义
+
+- 模式**不含** `/` → 按**目录名**匹配，任意层级命中（`media` 命中 `a/b/media`）
+- 模式**含** `/` → 按**相对库根的路径前缀**匹配（`工作/归档` 只命中那一处）
+- 大小写不敏感
+- `allowDirs` 优先于 `excludeDirs`
+  - allow 路径的**祖先目录也会放行**，否则遍历到祖先就停了，永远走不到被豁免的子目录
+
+### 全屏障
+
+被排除的目录整棵不进索引（影响 `list_notes` / `search` / `list_tasks` / `get_backlinks`），
+且 `read_note` 读到被排除路径直接报错——否则 AI 猜到路径仍能读到，排除形同虚设。
+
+### 自查
+
+```bash
+flymd-mcp --print-config
+```
+
+输出 JSON：库根、生效的排除/保留规则、加载了哪些配置文件、**库内实际被排除了哪些目录**、
+索引里剩多少篇笔记。服务器启动时也会往 stderr 打一行被排除目录的提示。
+
+---
+
 ## 安全边界
 
 | 防护 | 实现 |
@@ -122,10 +183,10 @@ args = ["--library", "/path/to/notes"]
 | 路径限制 | 所有路径必须是**相对库根**的相对路径；绝对路径、`..`、Windows 前缀一律拒绝 |
 | 符号链接逃逸 | 目标文件 `canonicalize` 后必须仍在库根内，指向库外的链接被拒绝 |
 | 体积上限 | 单个笔记读取上限 4 MB；输出上限 12 万字符 |
-| 忽略目录 | `.git` `.flymd` `.obsidian` `.trash` `node_modules` `target` `dist` |
+| 目录排除 | 被排除目录不进索引、也不可读取，规则可配置（见上节） |
 | 通道隔离 | **stdout 只承载 JSON-RPC 协议消息**，所有日志写 stderr |
 
-路径穿越与符号链接逃逸都有对应的单元测试覆盖（`library::tests`）。
+路径穿越、符号链接逃逸、目录排除都有对应的单元测试覆盖（`library::tests`、`config::tests`）。
 
 ---
 
@@ -133,9 +194,10 @@ args = ["--library", "/path/to/notes"]
 
 ```
 mcp-server/src/
-├── main.rs       # CLI 解析、库根解析、stdio JSON-RPC 循环
+├── main.rs       # CLI 解析、stdio JSON-RPC 循环、--print-config
 ├── protocol.rs   # JSON-RPC 2.0 分发 + MCP 握手（协议版本协商）
-├── library.rs    # 库根定位、文件索引、路径安全、时间格式化
+├── config.rs     # 目录排除配置：来源合并、匹配语义、配置文件读取
+├── library.rs    # 库根定位、文件索引（含目录排除）、路径安全、时间格式化
 ├── parse.rs      # 标题 / 待办 / 双链抽取（均跳过围栏代码块）
 └── tools.rs      # 工具 schema 与实现
 ```
@@ -150,6 +212,9 @@ mcp-server/src/
 
 ```bash
 cargo test --manifest-path mcp-server/Cargo.toml
+cargo clippy --manifest-path mcp-server/Cargo.toml --all-targets
 ```
 
-41 个单元测试，覆盖：围栏代码块内的伪标题/伪待办/伪链接不会被抽取、路径穿越拒绝、指向库外的符号链接拒绝、超大文件拦截、反链归一化匹配、协议握手与错误分层、CLI 参数解析。
+63 个单元测试，覆盖：围栏代码块内的伪标题/伪待办/伪链接不会被抽取、路径穿越拒绝、
+指向库外的符号链接拒绝、超大文件拦截、反链归一化匹配、协议握手与错误分层、CLI 参数解析、
+目录排除的索引屏蔽/读取拒绝/allow 豁免/多来源合并。
