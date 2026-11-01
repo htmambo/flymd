@@ -40,7 +40,8 @@ AI 请求逻辑不重写。Flymd 已经有两套现成的 AI 调用：
 1. `public/plugins/ai-assistant/main.js` 里的 `callAIForPlugins()`——但它在插件沙箱里，核心调不到。
 2. 核心层目前**没有**任何 AI 调用。
 
-所以本轮在核心侧实现一份**最小**的 OpenAI 兼容调用（约 80 行），但**配置复用** ai-assistant 的：
+所以本轮在核心侧实现一份**最小**的 OpenAI 兼容调用（请求部分约 80 行，含配置解析与
+SSE 兼容的 `ai.ts` 整体约 250 行），但**配置复用** ai-assistant 的：
 
 - 用户在 AI 助手里配好的 `baseUrl` / `apiKey` / `model` 存在 Tauri store 的 `plugin:ai-assistant` → `ai.config`，
   核心可以直接读。用户在 AI 助手里改一次 key，recipes 立刻跟着生效。
@@ -149,18 +150,22 @@ src/core/recipes/
 ├── types.ts        # Recipe 类型定义
 ├── cron.ts         # 5 段 cron 解析 + nextCronTime（纯函数）
 ├── parse.ts        # YAML → Recipe 校验
-├── vars.ts         # 模板变量渲染
-├── store.ts        # .flymd/recipes 目录读写
+├── vars.ts         # 模板变量渲染 + 待办提取
+├── glob.ts         # on-save 的路径 glob 过滤
+├── store.ts        # .flymd/recipes 目录读写 + runs.jsonl
 ├── ai.ts           # OpenAI 兼容调用 + 配置解析
 ├── engine.ts       # 调度器 + 触发 + 执行 + 运行日志
-└── *.test.ts       # 单测
+└── *.test.ts       # 单测（104 个）
 ```
 
 ### 4.2 改动文件
 
 - `src/main.ts`：给 `flymd-file-saved` 事件补 `detail.path`（现有监听者忽略 detail，向后兼容）；
   启动时初始化 recipes 引擎；库切换时重载。
+  引擎本体**按需动态加载**——`js-yaml` chunk 不得进入入口静态闭包（NFR-2 门禁，
+  见 `scripts/check-entry-closure.mjs`），所以 `main.ts` 只做类型引入。
 - `src/extensions/webdavSync.ts`：`DEFAULT_EXCLUDE_GLOBS` 加 `**/.flymd/recipes/runs.jsonl`。
+- `src/types/shims.d.ts`：`node:fs` 最小声明补上写侧 API（测试用真实文件系统）。
 
 ### 4.3 安全边界
 
