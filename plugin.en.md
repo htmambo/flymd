@@ -10,10 +10,15 @@
 - [Quick Start](#quick-start)
 - [Plugin Structure](#plugin-structure)
 - [Plugin API](#plugin-api)
+- [Theme Extensions](#theme-extensions)
 - [Lifecycle](#lifecycle)
 - [Example Plugins](#example-plugins)
 - [Publishing Plugins](#publishing-plugins)
-- [Theme Extensions](#theme-extensions)
+- [Submit Plugin/Extension to In-App Marketplace](#submit-pluginextension-to-in-app-marketplace)
+- [Best Practices](#best-practices)
+- [FAQ](#faq)
+- [Reference Resources](#reference-resources)
+- [License](#license)
 
 ## Overview
 
@@ -200,6 +205,70 @@ const response = await context.http.fetch('https://api.example.com/post', {
 });
 ```
 
+### context.htmlToMarkdown
+
+Convert a chunk of HTML text into a Markdown string using flyMD's built-in HTML → Markdown converter.
+Useful for turning HTML fetched from an external system (a blog backend, a Web API, the clipboard, …)
+into a local Markdown file.
+
+```javascript
+// Basic usage: convert a simple HTML fragment to Markdown
+const md = await context.htmlToMarkdown('<h1>Title</h1><p>Some <b>bold</b> text</p>');
+// md: "# Title\n\nSome **bold** text"
+
+// With baseUrl: turns relative links into absolute ones
+const html = '<p><a href="/post/123">View details</a></p>';
+const md2 = await context.htmlToMarkdown(html, {
+  baseUrl: 'https://example.com'
+});
+// md2: "[View details](https://example.com/post/123)"
+```
+
+**Parameters:**
+
+- `html: string`: the HTML string to convert (required)
+- `opts.baseUrl?: string`: optional, the base URL for relative links.
+  For example, when the remote returns `<a href="/a/b">`, passing `baseUrl: 'https://example.com'`
+  turns it into `https://example.com/a/b`.
+
+**Returns:**
+
+- `Promise<string>`: the converted Markdown text;
+  - an empty input or a failed conversion returns an empty string (no exception is thrown,
+    so a plugin can fall back as it sees fit).
+
+**Typical scenario: pulling a Typecho / WordPress post**
+
+Combine it with `context.http.fetch` to pull HTML from a remote XML-RPC / REST API, convert it to
+Markdown with `context.htmlToMarkdown`, then write it to a local file or into the current document.
+
+```javascript
+export async function activate(context) {
+  context.addMenuItem({
+    label: 'Pull post from remote',
+    async onClick() {
+      // 1. Call the remote API to fetch the HTML content
+      const resp = await context.http.fetch('https://blog.example.com/api/post/123');
+      const raw = await resp.json();
+      const html = raw.content || '';
+
+      // 2. Convert it to Markdown with the built-in converter
+      const md = await context.htmlToMarkdown(html, {
+        baseUrl: 'https://blog.example.com'
+      });
+
+      // 3. Put it into the current document (or write a local file)
+      if (md && md.trim()) {
+        context.setEditorValue(md);
+        context.ui.notice('Post converted to Markdown', 'ok');
+      } else {
+        context.ui.notice('HTML to Markdown conversion failed or the content was empty', 'err');
+      }
+    }
+  });
+}
+```
+
 ### context.getFrontMatterRaw / context.getDocMeta / context.getDocBody
 
 Read YAML Front Matter at the beginning of the current document and its parsed metadata, useful for blog publishing, library enhancements, and external app sync.
@@ -299,6 +368,43 @@ console.log(data); // { name: 'value', count: 42 }
 // Delete data (set to null)
 await context.storage.set('key', null);
 ```
+
+#### context.storage.scoped (library-scoped storage, v2.0+)
+
+Unlike `storage`, `storage.scoped` follows the **currently active library** — the data is written
+to the `prefs.<pluginId>` section of `<library root>/.flymd/local.json`, so it travels with the
+library directory and is excluded from WebDAV sync by default (credentials stay safe).
+
+**Use it for:**
+- Plugin "instance data" (per-library note metadata, reading history, whiteboard state, …)
+- Transient state you do not want shared across libraries
+- Preferences that contain sensitive information
+
+**Key difference:**
+- Old `storage`: global (follows the user, shared across libraries) — suited for API keys and
+  global switches
+- New `storage.scoped`: per-library (follows the library) — suited for instance data
+
+```javascript
+// Read (no library root / temporary library / key missing → returns null, does not throw)
+const v = await context.storage.scoped.get('myKey');
+
+// Write (no library root / temporary library → returns false, does not throw)
+const ok = await context.storage.scoped.set('myKey', { lastRead: Date.now() });
+
+// Remove
+const ok = await context.storage.scoped.remove('myKey');
+```
+
+**Graceful degradation:** with no library root, or on a temporary library, `get` returns `null`
+and `set`/`remove` return `false`. The plugin keeps running — the data just is not persisted.
+
+**WebDAV sync:** local.json is not uploaded by WebDAV (PR-1 excludes
+`**/.flymd/local.json` by default), so credentials stay safe.
+
+**Migration advice from `storage`:**
+- Global configuration (API key, model selection) → keep using `storage`
+- Instance data (per library) → switch to `storage.scoped`
 
 ### context.addMenuItem
 
@@ -421,6 +527,73 @@ context.addMenuItem({
 - Dropdown menu automatically positions to avoid viewport overflow
 - Supports ESC key to close dropdown
 - Clicking outside area closes dropdown
+
+### context.addRibbonButton (new)
+
+Register a shortcut button in the vertical ribbon on the left.
+
+**Important notes:**
+- Users can control your ribbon button on their own under "Plugins → Menu Management": show/hide,
+  and place it at the top or the bottom
+- Users can also reorder your ribbon buttons under "Plugins → Menu Management"
+- Your ribbon button may be hidden by the user, so consider also providing `context.addMenuItem`
+  as a fallback entry point
+
+```javascript
+// Register a ribbon button (text icon)
+const dispose = context.addRibbonButton({
+  icon: 'PDF',
+  iconType: 'text', // 'text' | 'svg', defaults to 'svg'
+  title: 'High-resolution PDF parsing',
+  onClick: () => {
+    context.ui.notice('Ribbon button clicked', 'ok');
+  }
+});
+
+// Optional: dispose of it (the host usually cleans up when the plugin is deactivated,
+// but you can keep the handle and release it yourself)
+// dispose();
+```
+
+**Parameters:**
+- `icon`: the icon content. With `iconType: 'svg'` pass an SVG string; with `iconType: 'text'`
+  pass plain text (2–4 characters is recommended)
+- `iconType`: `'svg' | 'text'`, defaults to `'svg'`
+- `title`: the tooltip shown on hover
+- `onClick(ev)`: the click callback (`ev.currentTarget` can be used as the anchor together with
+  `context.showDropdownMenu`)
+
+### context.showDropdownMenu (new)
+
+Pop up a dropdown menu next to the given element (styled and behaving like flyMD's built-in
+"Plugins" dropdown).
+
+```javascript
+const items = [
+  { label: 'Option 1', onClick: () => context.ui.notice('Option 1', 'ok') },
+  { type: 'divider' },
+  { label: 'Disabled item', disabled: true, note: 'unavailable' },
+];
+
+// Typical usage: pop up a menu when a ribbon button is clicked
+context.addRibbonButton({
+  icon: 'Tools',
+  iconType: 'text',
+  title: 'My tools',
+  onClick: (ev) => {
+    const anchor = ev.currentTarget || ev.target;
+    context.showDropdownMenu(anchor, items);
+  }
+});
+```
+
+**Parameters:**
+- `anchor`: the DOM element used to position the menu (usually `ev.currentTarget`)
+- `items`: the menu item array — same shape as the `children` of `context.addMenuItem`:
+  - normal item: `{ label, onClick, disabled?, note? }`
+  - divider: `{ type: 'divider' }`
+  - group title: `{ type: 'group', label }`
+  - submenu: `{ label, children: [...] }`
 
 ### context.addContextMenuItem
 
@@ -734,6 +907,223 @@ if (confirmed) {
 }
 ```
 
+### context.ui.showNotification (new)
+
+Show a notification bubble (bottom-right corner), with a richer set of options.
+
+```javascript
+// Success notification
+const id = context.ui.showNotification('Operation succeeded!', {
+  type: 'success',  // 'success' | 'error' | 'info'
+  duration: 2000    // display duration (ms); the default is used when omitted
+});
+
+// Error notification
+context.ui.showNotification('Operation failed!', {
+  type: 'error',
+  duration: 3000
+});
+
+// Info notification
+context.ui.showNotification('A new version is available', {
+  type: 'info',
+  duration: 5000
+});
+
+// Clickable notification
+context.ui.showNotification('Found 3 todo items — click for details', {
+  type: 'success',
+  duration: 10000,
+  onClick: () => {
+    // Runs when the user clicks the notification
+    console.log('User clicked the notification');
+  }
+});
+
+// Control the display duration manually
+const notificationId = context.ui.showNotification('Processing...', {
+  type: 'info',
+  duration: 0  // 0 means it does not close automatically
+});
+
+// Close the notification manually
+setTimeout(() => {
+  context.ui.hideNotification(notificationId);
+}, 5000);
+```
+
+**Parameters:**
+- `message` (string, required): the notification content
+- `options` (object, optional): notification options
+  - `type` (string): the notification type:
+    - `'success'` — success notification (green, ✔ icon, 2 s by default)
+    - `'error'` — error notification (red, ✖ icon, 3 s by default)
+    - `'info'` — info notification (blue, 🔔 icon, 5 s by default)
+  - `duration` (number): display duration in milliseconds; `0` means it does not close automatically
+  - `onClick` (function): callback invoked when the notification is clicked
+
+**Returns:**
+- The notification ID (string), which can be used to close the notification manually
+
+**Notification characteristics:**
+- Shown in the bottom-right corner of the app
+- Multiple notifications can be shown at once (they stack upwards automatically)
+- **Topmost layer**: z-index is 999999, so no dialog can cover or blur it
+- Smooth fade-in / fade-out animation
+- Clicking a notification can trigger a custom action
+
+**Difference from `context.ui.notice`:**
+- `notice`: the simplified version — only success/error, shown in the bottom status bar
+- `showNotification`: the full version — three types, clickable, manually closable, shown as a
+  standalone bubble
+
+**Example: using the notification system**
+
+```javascript
+export function activate(context) {
+  context.addMenuItem({
+    label: 'My tools',
+    children: [
+      {
+        label: 'Extract todos',
+        onClick: async () => {
+          try {
+            const content = context.getEditorValue();
+            const todos = content.match(/- \[ \]/g) || [];
+
+            if (todos.length === 0) {
+              // Use the new notification API for an info message
+              context.ui.showNotification('This document has no todos (< [] syntax)', {
+                type: 'info',
+                duration: 3000
+              });
+            } else {
+              // Show a clickable notification
+              context.ui.showNotification(`Found ${todos.length} todos — click to view`, {
+                type: 'success',
+                duration: 5000,
+                onClick: () => {
+                  console.log('Todo list:', todos);
+                }
+              });
+            }
+          } catch (error) {
+            // Show an error notification
+            context.ui.showNotification('Extraction failed: ' + error.message, {
+              type: 'error',
+              duration: 3000
+            });
+          }
+        }
+      }
+    ]
+  });
+}
+```
+
+### context.ui.hideNotification (new)
+
+Close a specific notification manually.
+
+```javascript
+// Show a persistent notification
+const id = context.ui.showNotification('Uploading file...', {
+  type: 'info',
+  duration: 0  // does not close automatically
+});
+
+// Close it manually once the upload finishes
+try {
+  await uploadFile();
+  context.ui.hideNotification(id);
+  context.ui.showNotification('Upload succeeded!', { type: 'success' });
+} catch (error) {
+  context.ui.hideNotification(id);
+  context.ui.showNotification('Upload failed', { type: 'error' });
+}
+```
+
+**Parameters:**
+- `id` (string, required): the notification ID returned by `showNotification`
+
+### context.layout.registerPanel (new)
+
+Register a plugin panel whose layout is managed by the host — for sidebar / bottom-panel effects
+(it **actually squeezes** the editing area instead of floating on top of it). It is currently used
+mainly by the AI Assistant, but any plugin can use it.
+
+> Note: this is an advanced API — use it only when you really need to **occupy a large UI area**.
+> For simple actions, keep using menus or the context menu.
+
+```javascript
+export function activate(context) {
+  // Register a left panel taking 320px of width
+  const panel = context.layout.registerPanel('main', {
+    side: 'left',      // 'left' | 'right' | 'bottom'
+    size: 320,         // pixels: width (left/right) or height (bottom)
+    visible: true      // whether it starts visible (default true)
+  });
+
+  // Adjust dynamically based on state
+  someEventEmitter.on('collapse', () => {
+    panel.setVisible(false);       // hide the panel — it no longer takes up space
+  });
+
+  someEventEmitter.on('expand', () => {
+    panel.update({ visible: true, size: 420 }); // show it and adjust the width
+  });
+
+  // Remember to release it before the plugin is unloaded (usually in deactivate)
+  return () => {
+    panel.dispose();
+  };
+}
+```
+
+**Signature:**
+
+```ts
+const handle = context.layout.registerPanel(
+  panelId: string,
+  options: {
+    side: 'left' | 'right' | 'bottom';
+    size: number;        // left/right: width; bottom: height
+    visible?: boolean;   // default true
+  }
+);
+```
+
+**Returns:** `handle: PluginDockPanelHandle`
+
+- `handle.setVisible(visible: boolean)`
+  Show / hide the panel. While hidden it no longer affects the width/height of the editing area.
+
+- `handle.setSide(side: 'left' | 'right' | 'bottom')`
+  Switch the side the panel lives on dynamically (e.g. from right to bottom).
+
+- `handle.setSize(size: number)`
+  Update the panel size:
+  - `side = 'left' | 'right'`: the width (px);
+  - `side = 'bottom'`: the height (px).
+
+- `handle.update(options: { side?: ..., size?: ..., visible?: ... })`
+  Update several properties at once — equivalent to calling the methods above in sequence.
+
+- `handle.dispose()`
+  Unregister the panel and remove its influence on the layout entirely. Usually called in
+  `deactivate()`.
+
+**Layout rules:**
+
+- All plugin panels (including the AI Assistant) are managed centrally by the host:
+  - left: the widths of all `side='left'` panels are summed into `--dock-left-gap`;
+  - right: the widths of all `side='right'` panels are summed into `--dock-right-gap`;
+  - bottom: the heights of all `side='bottom'` panels are summed into `--dock-bottom-gap`;
+  - the editing/preview area scales automatically from those three values and is **never covered**.
+- The library sidebar is still controlled by its own settings, but it is taken into account when
+  the workspace width is computed — plugins do not need to handle the library width themselves,
+  only their own panel size.
+
 ### context.getEditorValue
 
 Get current editor content.
@@ -761,6 +1151,61 @@ context.setEditorValue(current + '\n\nAppended content');
 - Mark document as unsaved
 - Update title bar and status bar
 - Auto re-render preview if in preview mode
+
+### context.getSelection
+
+Get the selection information of the current editor's **source view**.
+
+```javascript
+const sel = context.getSelection();
+console.log(sel.start, sel.end, sel.text);
+// sel.text is the raw Markdown fragment currently selected
+```
+
+**Returns:**
+- `start` / `end`: character offsets into the full Markdown source (0-based)
+- `text`: the source string within `[start, end)`
+
+### context.getSelectedMarkdown
+
+Return the **raw Markdown source string** for the current selection.
+
+```javascript
+const md = context.getSelectedMarkdown();
+if (md) {
+  console.log('Selected Markdown:', md);
+}
+```
+
+**Notes:**
+- The current implementation is equivalent to `context.getSelection().text`
+- It is the more semantic of the two; a future version may provide a more precise mapping in
+  WYSIWYG mode
+- Returns an empty string when nothing is selected
+
+### context.getSourceText
+
+Return the full Markdown source of the current document.
+
+```javascript
+const fullSource = context.getSourceText();
+// Can be combined with context.getSelection() or context.getLineText()
+```
+
+**Notes:**
+- The current implementation is equivalent to `context.getEditorValue()`
+- Suited for plugins that need to parse the whole document themselves by line number or position
+
+### context.getLineText
+
+Get the Markdown source text of a given line.
+
+```javascript
+const firstLine = context.getLineText(1);
+```
+
+**Parameters:**
+- `lineNumber`: the line number, starting at **1**; returns an empty string when out of range
 
 ### context.pickDocFiles
 
@@ -820,6 +1265,45 @@ if (!root) {
 **Typical usage:**
 - Combine with `context.getCurrentFilePath` to calculate “current file’s folder”;
 - Build library-relative paths when exporting or generating helper documents.
+
+### context.listLibraryFiles
+
+Recursively list the files inside the current library. Returns an array whose items contain:
+- `path`: absolute path
+- `relative`: path relative to the library root (always uses `/`)
+- `name`: the file name
+- `mtime`: modification time (millisecond timestamp, may be `0`)
+
+```javascript
+// Only md/markdown/txt, with "scan only / exclude" directory prefixes
+const files = await context.listLibraryFiles({
+  extensions: ['md', 'markdown', 'txt'],
+  maxDepth: 32,
+  includeDirs: ['notes/', 'essays/'],
+  excludeDirs: ['.git/', 'assets/', '_private/']
+});
+
+console.log(files[0]);
+// { path: 'C:/notes/a.md', relative: 'a.md', name: 'a.md', mtime: 1734067200000 }
+```
+
+**Parameters:**
+- `extensions` (optional): extension whitelist, defaults to `['md','markdown']` (no leading dot,
+  case-insensitive)
+- `maxDepth` (optional): maximum recursion depth, defaults to `32`
+- `includeDirs` (optional): directory "prefixes" to scan only (relative to the library root,
+  always using `/`; empty means the whole library)
+- `excludeDirs` (optional): directory "prefixes" to exclude (relative to the library root,
+  always using `/`)
+
+**Notes:**
+- `includeDirs` and `excludeDirs` both take effect during the walk (they decide which directories
+  recursion enters) — useful for performance on large libraries;
+- `excludeDirs` skips directories outright during the walk (no recursion into them) — useful for
+  performance on large libraries;
+- On Windows, directory exclusion matching is case-insensitive (otherwise users will complain);
+- The result has **already been filtered by the app-wide AI visibility scope** (see the next
+  section) — excluded directories never show up in the list.
 
 ### AI scope and controlled library I/O
 
@@ -912,11 +1396,18 @@ Event object:
 - `raw`: raw watcher event
 
 ```javascript
+// Typical: only care about newly created files (create), and only handle paths
+// that are inside the library (relatives is non-empty)
 const unwatch = await context.watchLibrary((ev) => {
   if (ev.type !== 'create') return;
-  console.log('New files:', ev.relatives.filter(Boolean));
+  for (let i = 0; i < ev.relatives.length; i++) {
+    const rel = ev.relatives[i];
+    if (!rel) continue;
+    console.log('New file:', rel);
+  }
 }, { recursive: true, immediate: true });
 
+// Stop watching when needed
 // unwatch();
 ```
 
@@ -934,6 +1425,28 @@ const unwatch = await context.watchPaths(
   { base: 'library', recursive: true, immediate: true }
 );
 ```
+
+### context.getPluginDataDir
+
+Return the current plugin's "plugin data directory" under `AppLocalData`, isolated per library:
+
+`<AppLocalData>/flymd/plugin-data/<pluginId>/<libraryKey>/`
+
+Typical use: storing **large files** such as vector indexes, caches, or database files (without
+polluting the user's library directory).
+
+```javascript
+const dir = await context.getPluginDataDir();
+// Example: write index metadata into the plugin data directory
+const sep = dir.includes('\\') ? '\\' : '/';
+await context.writeTextFile(dir + sep + 'meta.json', JSON.stringify({ ok: true }, null, 2));
+```
+
+**Notes:**
+- The directory is created automatically;
+- It throws when no library is currently open (isolation is per library);
+- `libraryKey` is derived by hashing the normalized library root, so different libraries stay
+  isolated.
 
 ### context.readFileBinary
 
@@ -955,6 +1468,42 @@ context.ui.notice('Read bytes: ' + bytes.length, 'ok');
 - Only available in desktop version (Tauri app), relies on underlying filesystem permissions;
 - Argument must be an absolute path; passing an empty or invalid path will throw an error;
 - Return value is always a `Uint8Array`, convenient for passing to `FormData`, `fetch` and similar APIs.
+
+### context.exists
+
+Check whether a local path exists. Returns a `boolean`.
+
+```javascript
+const ok = await context.exists('C:/tmp/a.txt');
+if (!ok) {
+  context.ui.notice('File does not exist', 'err');
+}
+```
+
+**Notes:**
+- Recommended to call `exists` before `readTextFile` / `readFileBinary`, so a missing file does not
+  make the host print an error log;
+- Passing an empty string returns `false`.
+
+### context.writeFileBinary
+
+Write binary content to a local file by absolute path. Useful for vector indexes (`.f32`), caches
+and similar scenarios.
+
+```javascript
+// Write a binary file
+const bytes = new Uint8Array([1, 2, 3, 4]);
+await context.writeFileBinary('C:/tmp/data.bin', bytes);
+```
+
+**Parameters:**
+- `absPath`: absolute path
+- `bytes`: `Uint8Array / ArrayBuffer / number[]`
+
+**Notes:**
+- Only available in desktop version (Tauri app);
+- If the directory does not exist, create it first (or use `context.getPluginDataDir()`, which
+  returns an already-created plugin data directory).
 
 ### context.appendTextFile
 
@@ -1237,6 +1786,80 @@ export function activate(context) {
 - If depending on other plugins, can specify dependency in `manifest.json`
 - Recommended to provide complete documentation for infrastructure plugins
 
+### context.getPreviewElement
+
+Get the DOM element of the current preview area — useful for advanced features such as exporting
+and screenshots.
+
+```javascript
+// Get the preview DOM element
+const previewEl = context.getPreviewElement();
+
+if (previewEl) {
+  console.log('Preview HTML:', previewEl.innerHTML);
+  console.log('Preview text length:', previewEl.innerText.length);
+
+  // You can walk the elements inside the preview (Mermaid diagrams, KaTeX formulas, …)
+  const svgList = previewEl.querySelectorAll('svg');
+  console.log('SVG element count:', svgList.length);
+} else {
+  context.ui.notice('Please switch to reading mode first', 'err');
+}
+```
+
+**Returns:**
+- On success: an `HTMLElement` (the `.preview-body` element)
+- On failure, or when the preview has not been rendered: `null`
+
+**Notes:**
+- The returned reference is read-only — clone it before modifying:
+  `previewEl.cloneNode(true)`
+- The preview content includes rendered Mermaid diagrams, KaTeX formulas, syntax highlighting, …
+- Suited for exporting PPTs, taking screenshots, analyzing content, and similar scenarios
+
+### context.saveFileWithDialog
+
+Open the system save dialog, let the user pick a path, and write binary data to the file.
+
+```javascript
+// Example: saving a binary file
+const pptxBytes = new Uint8Array([...]); // your PPTX data
+
+try {
+  const savedPath = await context.saveFileWithDialog({
+    filters: [
+      { name: 'PowerPoint', extensions: ['pptx'] },
+      { name: 'All files', extensions: ['*'] }
+    ],
+    defaultName: 'presentation.pptx',
+    data: pptxBytes
+  });
+
+  if (savedPath) {
+    context.ui.notice('File saved to: ' + savedPath, 'ok');
+  } else {
+    context.ui.notice('User canceled the save', 'ok');
+  }
+} catch (error) {
+  context.ui.notice('Save failed: ' + error.message, 'err');
+}
+```
+
+**Parameters:**
+- `filters` (optional): array of file type filters, each with `name` (display name) and
+  `extensions` (array of extensions)
+- `defaultName` (optional): the default file name
+- `data` (required): the binary data to save (`Uint8Array`)
+
+**Returns:**
+- The file path (`string`) when the save succeeds
+- `null` when the user cancels
+
+**Notes:**
+- Only available in desktop version (Tauri app); the browser build throws an error
+- It opens the native system save dialog
+- Usable for exporting any binary file — PPTs, images, archives, …
+
 ### Plugin Collaboration Example
 
 #### Scenario: Base Utility Library + Data Processing Plugin
@@ -1384,6 +2007,65 @@ export function activate(context) {
 - Smaller plugin size, only implement business logic
 - Ecosystem building: layered architecture of infrastructure plugins + business plugins
 
+### AI Assistant Shared API (`ai-assistant`)
+
+Since `0.1.8` the AI Assistant plugin exposes its AI calling capability through
+`context.registerAPI('ai-assistant', {...})`. Other plugins can call it directly, reusing it as
+infrastructure instead of storing their own API key. All methods return a `Promise`.
+
+| Method | Description |
+| --- | --- |
+| `callAI(prompt, options?)` | General chat interface; `options.system` overrides the system prompt, `options.messages` accepts a full message array |
+| `translate(text)` | Returns the translated plain text, automatically following the "free translation" setting in the AI Assistant |
+| `quickAction(content, action)` | Reuses the quick actions (continue / polish / proofread / outline, …); `action` takes the same values as the built-in features |
+| `generateTodos(content)` | Generates todos from a document, returns `{ raw, todos }` where `todos` is an array of `- [ ]` items |
+| `isConfigured()` | Reports whether the AI is usable right now (a key is set, or free mode is active) |
+| `getConfig()` | Returns a snapshot (shallow copy) of the AI Assistant configuration — useful for custom UI hints |
+
+**Practical example:**
+
+```javascript
+// Continuation powered by the AI Assistant plugin
+export async function activate(context) {
+  const ai = context.getPluginAPI('ai-assistant');
+
+  if (!ai) {
+    context.ui.notice('Please install and enable the AI Assistant plugin first', 'err');
+    return;
+  }
+
+  context.addMenuItem({
+    label: 'My AI features',
+    onClick: async () => {
+      try {
+        const ready = await ai.isConfigured();
+        if (!ready) {
+          context.ui.notice('Configure an API Key in the AI Assistant, or switch to free mode first', 'err');
+          return;
+        }
+
+        const current = context.getEditorValue();
+        const result = await ai.quickAction(current, 'continue');
+
+        context.setEditorValue(current + '\n\n' + result);
+        context.ui.notice('Continuation done', 'ok');
+      } catch (error) {
+        context.ui.notice('AI call failed: ' + error.message, 'err');
+      }
+    }
+  });
+}
+```
+
+**Notes:**
+
+- If your plugin strictly depends on the AI Assistant, state the minimum version in the
+  README/manifest
+- The `todos` array returned by `generateTodos` already contains only valid `- [ ]` lines — you
+  can write it straight back into the document or hand it to another plugin
+- Do not modify the result of `getConfig()` — it is only a snapshot; to change the configuration,
+  guide the user to the AI Assistant settings
+
 ## Theme Extensions
 
 flyMD has a built-in theme system and exposes optional Theme extension APIs for plugins to extend or override "color palettes, typography styles, and Markdown rendering styles".
@@ -1413,7 +2095,9 @@ interface ThemePrefs {
   typography: 'default' | 'serif' | 'modern' | 'reading' | 'academic'
   mdStyle:   'standard' | 'github' | 'notion' | 'journal' | 'card' | 'docs'
 }
+```
 
+```ts
 // Extension entry points
 flymdTheme.registerPalette(label: string, color: string, id?: string): void
 flymdTheme.registerTypography(id: ThemePrefs['typography'], label: string, css?: string): void

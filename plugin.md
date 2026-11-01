@@ -10,10 +10,15 @@
 - [快速开始](#快速开始)
 - [插件结构](#插件结构)
 - [插件API](#插件api)
+- [主题扩展（Theme）](#主题扩展theme)
 - [生命周期](#生命周期)
 - [示例插件](#示例插件)
 - [发布插件](#发布插件)
-- [主题扩展（Theme）](#主题扩展theme)
+- [提交插件/扩展到应用内市场](#提交插件扩展到应用内市场)
+- [最佳实践](#最佳实践)
+- [常见问题](#常见问题)
+- [参考资源](#参考资源)
+- [许可证](#许可证)
 
 ## 概述
 
@@ -1436,21 +1441,6 @@ await context.writeTextFile(dir + sep + 'meta.json', JSON.stringify({ ok: true }
 
 按绝对路径读取本地文件的二进制内容，返回 `Uint8Array`。适合用于 PDF 解析、图片处理等场景。
 
-### context.exists
-
-判断本地路径是否存在，返回 `boolean`。
-
-```javascript
-const ok = await context.exists('C:/tmp/a.txt');
-if (!ok) {
-  context.ui.notice('文件不存在', 'err');
-}
-```
-
-**注意：**
-- 推荐在 `readTextFile/readFileBinary` 前先 `exists`，避免“不存在文件”导致宿主打印错误日志；
-- 传入空字符串会返回 `false`。
-
 ```javascript
 const path = context.getCurrentFilePath();
 if (!path) {
@@ -1467,6 +1457,21 @@ context.ui.notice('已读取字节数：' + bytes.length, 'ok');
 - 仅在桌面版（Tauri 应用）可用，依赖底层文件系统权限；
 - 参数必须是绝对路径，传入空字符串或非法路径会抛出错误；
 - 返回值始终为 `Uint8Array`，方便直接传给 `FormData`、`fetch` 等接口。
+
+### context.exists
+
+判断本地路径是否存在，返回 `boolean`。
+
+```javascript
+const ok = await context.exists('C:/tmp/a.txt');
+if (!ok) {
+  context.ui.notice('文件不存在', 'err');
+}
+```
+
+**注意：**
+- 推荐在 `readTextFile/readFileBinary` 前先 `exists`，避免“不存在文件”导致宿主打印错误日志；
+- 传入空字符串会返回 `false`。
 
 ### context.writeFileBinary
 
@@ -1928,11 +1933,11 @@ export function activate(context) {
   }
 
   // 添加菜单项
-context.addMenuItem({
-  label: '批处理',
-  children: [
-    {
-      label: '提取所有标题',
+  context.addMenuItem({
+    label: '批处理',
+    children: [
+      {
+        label: '提取所有标题',
         onClick: async () => {
           const content = context.getEditorValue();
           const lines = content.split('\n');
