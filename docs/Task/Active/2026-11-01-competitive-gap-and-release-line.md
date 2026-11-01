@@ -88,7 +88,7 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 | 库根定位 | `--library` > `FLYMD_LIBRARY` > 应用设置文件（按平台，优先 `activeLibraryId`）> 当前目录 |
 | 安全边界 | 拒绝绝对路径 / `..` / 指向库外的符号链接；单篇读取上限 4 MB；输出上限 12 万字符；stdout 与日志隔离 |
 | 工程形态 | 独立 crate `mcp-server/`，**未改动 `src-tauri/main.rs`**；release 产物 1.3 MB，仅依赖 serde / serde_json / regex |
-| 分发 | CI 按平台构建，作为独立工件随 Release 分发；并尽力注入应用包（macOS `.app/Contents/MacOS`、Windows/Linux 主程序同级目录） |
+| 分发 | CI 按平台构建，作为独立工件随 Release 分发；并尽力注入应用包（macOS `.app/Contents/MacOS`、Windows/Linux 主程序同级目录）。资产名带平台后缀（`flymd-mcp-windows-x64.exe` / `flymd-mcp-macos-universal` / `flymd-mcp-linux-x64`）——GitHub Release 不允许同名资产，Linux 与 macOS 的产物默认都叫 `flymd-mcp` 会互相顶掉 |
 | 文档 | [mcp-server/README.md](../../../mcp-server/README.md)（开发视角）、[docs/Usage/MCP_SERVER_GUIDE.md](../../Usage/MCP_SERVER_GUIDE.md)（用户视角） |
 | 验证 | 41 个 Rust 单测 + 1023 个前端测试 + typecheck 全绿；对真实文库（1134 篇笔记 / 641 条待办）完成端到端握手联调 |
 

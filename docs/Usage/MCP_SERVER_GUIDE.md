@@ -26,13 +26,16 @@ flymd 内置一个 MCP (Model Context Protocol) 服务器，可以把你的笔�
 
 ### 方式一：从 Release 下载独立二进制（推荐）
 
-在 [Releases](https://github.com/htmambo/flymd/releases) 下载对应平台的 `flymd-mcp`：
+在 [Releases](https://github.com/htmambo/flymd/releases) 下载对应平台的独立二进制：
 
 | 平台 | 文件 |
 |---|---|
-| Windows x64 | `flymd-mcp.exe` |
-| macOS (Intel + Apple Silicon) | `flymd-mcp` |
-| Linux x64 | `flymd-mcp` |
+| Windows x64 | `flymd-mcp-windows-x64.exe` |
+| macOS (Intel + Apple Silicon) | `flymd-mcp-macos-universal` |
+| Linux x64 | `flymd-mcp-linux-x64` |
+
+> 文件名带平台后缀是为了避免 GitHub Release 的同名资产冲突。下载后建议改名为
+> `flymd-mcp`（Windows 保留 `.exe`），或在客户端配置里直接引用上面的文件名。
 
 ### 方式二：用已安装的桌面版
 

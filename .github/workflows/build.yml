@@ -254,7 +254,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-mcp-Windows-x64
-          path: mcp-server/target/x86_64-pc-windows-msvc/release/flymd-mcp.exe
+          # 带平台后缀：GitHub Release 不允许同名资产，
+          # Linux 与 macOS 的产物默认都叫 flymd-mcp 会互相顶掉
+          path: mcp-server/target/release-dist/flymd-mcp-windows-x64.exe
           if-no-files-found: error
 
       - name: Upload standalone MCP server (Linux)
@@ -262,7 +264,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-mcp-Linux-x64
-          path: mcp-server/target/x86_64-unknown-linux-gnu/release/flymd-mcp
+          path: mcp-server/target/release-dist/flymd-mcp-linux-x64
           if-no-files-found: error
 
       - name: Upload standalone MCP server (macOS)
@@ -270,7 +272,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: flymd-mcp-macOS-universal
-          path: mcp-server/target/universal-apple-darwin/release/flymd-mcp
+          path: mcp-server/target/release-dist/flymd-mcp-macos-universal
           if-no-files-found: error
 
       - name: Upload artifacts (Windows Portable)

@@ -68,6 +68,38 @@ function copyToSidecar(triple, src) {
   return dst
 }
 
+// Release 资产的平台后缀。
+// 为什么要带后缀：GitHub Release 不允许两个同名资产。Linux 与 macOS 的产物
+// 默认都叫 `flymd-mcp`，v2.0.0 首次发版就因此只传上去一个，另一个报 404。
+const RELEASE_SUFFIX = {
+  'x86_64-pc-windows-msvc': 'windows-x64',
+  'aarch64-pc-windows-msvc': 'windows-arm64',
+  'x86_64-unknown-linux-gnu': 'linux-x64',
+  'aarch64-unknown-linux-gnu': 'linux-arm64',
+  'universal-apple-darwin': 'macos-universal',
+  'aarch64-apple-darwin': 'macos-arm64',
+  'x86_64-apple-darwin': 'macos-x64',
+}
+
+/**
+ * 把产物按平台后缀复制到 release-dist/，供 CI 上传为 Release 资产。
+ * 返回落盘文件名。
+ */
+function stageForRelease(triple, src) {
+  const suffix = RELEASE_SUFFIX[triple]
+  if (!suffix) {
+    console.warn(`[build-mcp] 未知目标三元组 ${triple}，跳过 release-dist 暂存`)
+    return null
+  }
+  const dir = path.join(projectRoot, 'mcp-server', 'target', 'release-dist')
+  mkdirSync(dir, { recursive: true })
+  const name = `flymd-mcp-${suffix}${exeSuffix(triple)}`
+  const dst = path.join(dir, name)
+  copyFileSync(src, dst)
+  console.log(`[build-mcp] release-asset -> ${path.relative(projectRoot, dst)}`)
+  return dst
+}
+
 function main() {
   const opts = parseArgs()
 
@@ -91,6 +123,7 @@ function main() {
     }
     console.log(`[build-mcp] universal -> ${path.relative(projectRoot, out)}`)
     copyToSidecar('universal-apple-darwin', out)
+    stageForRelease('universal-apple-darwin', out)
     return
   }
 
@@ -108,6 +141,7 @@ function main() {
     `[build-mcp] 产物 -> ${path.relative(projectRoot, src)} (${(statSync(src).size / 1048576).toFixed(2)} MB)`,
   )
   copyToSidecar(triple, src)
+  stageForRelease(triple, src)
 }
 
 main()
