@@ -13,6 +13,13 @@
 //   8. 回归：点色板不误关面板、网络代理「应用」不串味、非法色守卫。
 
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+// 本文件的第一个用例会完整构建主题面板，实测就要 1.5s 左右，贴着 vitest 默认
+// 的 5s 超时线。整套 82 个测试文件并行跑时（本机实测整套件从 64s 涨到 183s），
+// 它就随机报 "Test timed out in 5000ms"，让发版门禁随机失败——与代码改动无关。
+// 这里按文件放宽到 30s，只影响超时判定，不放宽任何断言。
+// 同类问题见 src/modes/perfBatchH.test.ts。
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 import { readFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
