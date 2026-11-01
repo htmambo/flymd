@@ -2,6 +2,18 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.0.1
+
+> A patch release that only touches the MCP server. The desktop app is functionally identical to v2.0.0.
+
+### MCP: directory exclusion
+- Added directory exclusion so template and attachment directories stay out of the AI's view — a `- [ ] Subscription` placeholder inside `media/` used to reach the model as a real todo
+- Configuration sources are **merged as a union**, in priority order: built-in defaults → user-level `~/.config/com.flymd/mcp.json` → library-level `<library root>/.flymd/mcp.json` → `FLYMD_MCP_EXCLUDE` → `--exclude`
+- Built-in defaults exclude technical directories plus resource directories such as `media`, `assets`, `attachments`, `templates`, `附件`, and `模板`
+- Exclusion is a full barrier: excluded trees never enter the index, and `read_note` on an excluded path fails outright
+- New `--exclude <dir>` (repeatable) and `--print-config` (prints the effective rules and the directories actually excluded); the server also logs them to stderr at startup
+- MCP server bumped to 0.2.0
+
 ## Update v2.0.0
 
 > A consolidated release of roughly 3.5 months of accumulated work, including an architectural refactor, a brand-new web tier, and the MCP server.

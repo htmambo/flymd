@@ -2,6 +2,18 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## 更新 v2.0.1
+
+> 补丁版本，只改 MCP 服务器。桌面应用功能与 v2.0.0 一致。
+
+### MCP：目录排除机制
+- 新增目录排除配置，模板 / 附件目录不再进入 AI 视野——`media/` 里的 `- [ ] 某某订阅` 曾被当成真实待办喂给 AI
+- 配置来源按优先级**并集合并**：内置默认 → 用户级 `~/.config/com.flymd/mcp.json` → 库级 `<库根>/.flymd/mcp.json` → `FLYMD_MCP_EXCLUDE` → `--exclude`
+- 内置默认排除技术目录与 `media` `assets` `attachments` `templates` `附件` `模板` 等资源目录
+- 排除是全屏障：被排除目录整棵不进索引，`read_note` 读到被排除路径直接报错
+- 新增 `--exclude <目录>`（可重复）与 `--print-config`（打印生效配置 + 实际被排除目录），启动时亦有 stderr 提示
+- MCP 服务器版本升至 0.2.0
+
 ## 更新 v2.0.0
 
 > 本次为积压约 3.5 个月的开发集中发布，包含架构重构、全新 Web 端与 MCP 服务器。
