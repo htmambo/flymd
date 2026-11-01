@@ -2,6 +2,65 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.0.0
+
+> A consolidated release of roughly 3.5 months of accumulated work, including an architectural refactor, a brand-new web tier, and the MCP server.
+> The repository has moved to `htmambo/flymd` as the release trunk.
+
+### New: MCP server
+- Added `flymd-mcp`: a standalone Rust crate that exposes the local note library to MCP clients such as Claude Code, Cursor, and Codex — **read-only**
+- Six tools: `list_notes`, `read_note`, `search`, `get_outline`, `list_tasks`, `get_backlinks`
+- Library root is auto-detected from the app's active library; override with `--library` or the `FLYMD_LIBRARY` environment variable
+- Safety boundary: absolute paths, `..`, and symlinks pointing outside the library are rejected; 4 MB per-note read cap, 120k-character output cap
+- Standalone per-platform binaries ship with the Release and alongside the app bundle (see [MCP Server Guide](docs/Usage/MCP_SERVER_GUIDE.md))
+
+### Library privatization v2
+- Added an in-library private config channel: plugin data is written to `<library root>/.flymd/local.json` and follows the library when it is moved
+- Added the plugin library-scoped storage API `context.storage.scoped.{get,set,remove}`
+- Added a Rust atomic-write + cross-process file lock foundation to prevent torn writes
+- WebDAV sync now excludes `.flymd/local.json` by default
+- Existing data is migrated automatically; consumers now read from `local.json`
+- Portable / backup semantics redefined per library
+
+### Architecture & performance
+- `main.ts` split: 63 new modules under `src/core/` (content visibility, editor insert, document position, preview rendering, deferred startup, single-flight control, template engine, …)
+- Style system refactor: `src/styles/` split into 29 files, with a new `scripts/style-parity` consistency check
+- Large-file performance: viewport rendering and smooth CM6 editing, full file-tree lazy loading, cache and persistence cleanup, preview render pipeline extraction with snapshot locking
+
+### Editing experience
+- WYSIWYG mode now renders GFM task-list checkboxes and supports toggling them
+- WYSIWYG mode renders `sub` / `sup` / `abbr` inline HTML tags
+- Fenced math/katex/latex converts to `math_block` nodes
+- Complex block editing: better discoverability, block↔inline conversion, inline error bars
+- HTML source editing hardened: setting toggle, dirty checks, lock race fixes, generalized block editing
+- Code blocks: global soft-wrap toggle, dynamic line-number column width and colors, full-height zoom toggle, document boundary escape, `Ctrl+Home/End` block jump
+- Full-text search now supports multiple keywords (space = AND, quotes = phrase)
+- The entire callout title bar is now clickable to collapse; copy button uses text-based feedback
+- PDF export now offers “Open PDF” and “Show in Folder” actions
+
+### Interface
+- Persistent bottom status bar: path / message slot / line·col·words / unsaved / zoom%
+- Current-file path badge in the bottom-left (shows directory, full path on hover, click to copy)
+- Theme settings: editing and reading backgrounds merged into a single setting, anchored to `readBg`
+- New “colored library tree” toggle; tree connector lines fade by depth with brighter folder icons
+- Per-library custom metadata field display names
+- Custom context menu gains “Copy selected content”
+
+### Reliability
+- External file-change watching for open documents, with a new text diff view (diff v2): initial positioning, synced scrolling, inline copy, ignore-whitespace
+- Delete commands gain backend path validation (defense in depth)
+- Fixed window resize being completely broken on Linux (Wayland)
+- Fixed macOS exit and window-resize deadlocks
+
+### Web tier & AI gateway
+- Added `web/`: a Fastify 5 server plus a Vue 3 client
+- Server-side RAG: 5-stage pipeline with SSRF protection and a closed retrieval loop
+- AI gateway: multi-provider instances, protocol configuration, settings UI, multi-channel alert notifications
+
+### Other
+- License declaration aligned to the full GPL-3.0 text (fixing the `NC` custom identifier in `package.json`, which contradicted the README's own "including commercial use" statement; GitHub now detects it correctly)
+- Repository moved to `htmambo/flymd` as the release trunk
+
 ## Update v1.4.4
 - Added: Theme Settings now includes a “Default outline tab” toggle; when enabled, the left library panel opens the Outline tab by default instead of the Files tab
 - Added: Theme Settings now includes a “Disable update checks” toggle; when enabled, both startup background checks and the manual update button stop checking for new versions

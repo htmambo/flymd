@@ -10,6 +10,6 @@
       "description": "Quickly insert Markdown tables at the cursor position."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

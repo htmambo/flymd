@@ -10,6 +10,6 @@
       "description": "Long-form novel writing with mandatory backend pipeline (choices/write/audit/char billing/recharge cards)."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

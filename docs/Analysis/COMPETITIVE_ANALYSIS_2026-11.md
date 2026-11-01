@@ -98,16 +98,24 @@
 
 ## 五、顺带发现的两个自身问题（与竞品定位直接相关）
 
-### 5.1 发布线断裂：309 个提交从未合并进 main（此前误判为"地址分叉"，已更正）
+### 5.1 发布线断裂：309 个提交从未合并进 main（2026-11-01 已解决）
 
-> **更正说明**：初稿把本地 `origin`（`htmambo/flymd`）与 README 徽章指向的 `flyhunterl/flymd` 判为"仓库地址分叉"。经核查，`htmambo/flymd` 是 `flyhunterl/flymd` 的 **fork**（`fork: true`, `parent: flyhunterl/flymd`），徽章全部指向 upstream 是**正确**的发布主线设计。真正的问题是另一件事，且更严重。
+> **初稿更正记录**：初稿把两个仓库判为"地址分叉"，随后核实 `htmambo/flymd` 是 `flyhunterl/flymd` 的 **fork**（`fork: true`）。真正的问题是**发布线断裂**，且比地址问题严重得多。2026-11-01 已按"fork 即发布主线"的决策解决。
 
-- `flyhunterl/flymd` = upstream，**900★**，最后推送 2026-07-22（v1.4.4）；`htmambo/flymd` = fork，0★，最后推送 2026-10-31
-- **fork 的 `main` 与 upstream 的 `main` 完全一致**，均停在 `e6f73b8 发布 v1.4.4`（2026-07-22）
-- 开发堆在一条线性分支链上（互为祖先）：`optimized`(178) → `fix/macos-quit-close`(216) → `sync/main-v1.4.4`(280) → `fix/audit-round1-correctness`(**309**)
-- 这 **309 个提交**（2026-06-16 → 2026-10-31，469 文件，+86193/−22716）**从未合并进 `main`，也未以 PR 进入 upstream**（upstream 仅 1 个他人提交的 open PR）
-- 影响：900★ 用户与 winget / AUR 用户停留在 3.5 个月前的 v1.4.4；期间 SoloMD 4.0→4.6、Markra 密集发版；`src-tauri/src/main.rs:2941` 的更新检查也指向 upstream releases，用户连新版本提示都收不到
-- **详细恢复路径见** [../Task/Active/2026-11-01-competitive-gap-and-release-line.md](../Task/Active/2026-11-01-competitive-gap-and-release-line.md) §4
+**问题（当时状态）**：
+- `flyhunterl/flymd` = 原 upstream，900★，最后推送 2026-07-22（v1.4.4）；`htmambo/flymd` = fork，0★
+- fork 的 `main` 与 upstream 的 `main` 完全一致，均停在 `e6f73b8 发布 v1.4.4`（2026-07-22）
+- 开发堆在一条线性分支链上（互为祖先）：`optimized`(178) → `fix/macos-quit-close`(216) → `sync/main-v1.4.4`(280) → `fix/audit-round1-correctness`(309)
+- 这 309 个提交（2026-06-16 → 2026-10-31，469 文件，+86193/−22716）**从未合并进 `main`**，公开版本与开发分支脱节达 3.5 个月
+- 期间 SoloMD 4.0→4.6、Markra 密集发版，差距被拉大
+
+**解决方式（2026-11-01）**：
+- **决策：不向原 upstream 提 PR，`htmambo/flymd` 直接作为发布主线**
+- 309 个提交快进合并进 `main`（零冲突，upstream 无独有提交），并追加许可证修正与 MCP 服务器
+- 全仓仓库地址由 `flyhunterl/flymd` 切换为 `htmambo/flymd`（README 徽章、扩展市场 `index.json` 的 raw 引用、更新检查 API、PKGBUILD、metainfo、插件 manifest、About 面板等共 30 个文件）
+- 版本号由 1.4.4 升至 **2.0.0**（库私有化 v2 功能线此前从未发布，`docs/Usage/` 已按 v2.0 措辞撰写）
+- `scripts/get-version.sh` 的 `UPSTREAM_REPO` 默认值同步改为 `htmambo/flymd`（该脚本从 git tag 取版本，是打包的事实来源）
+- ⚠️ **遗留**：winget `flyhunterl.FlyMD` 与 AUR `flymd` 的清单仍指向原仓库，需各自提交更新后才能分发 v2.0.0
 
 ### 5.2 许可证声明自相矛盾（本次已修正）
 
@@ -134,7 +142,7 @@
 ### 引用来源
 
 - GitHub REST API: `https://api.github.com/repos/{owner}/{repo}`、`https://api.github.com/search/repositories`
-- https://github.com/flyhunterl/flymd
+- https://github.com/htmambo/flymd
 - https://github.com/zhitongblog/solomd
 - https://github.com/drl990114/MarkFlowy
 - https://github.com/markrahq/markra

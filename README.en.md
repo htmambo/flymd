@@ -1,9 +1,9 @@
 <p align="center">
-  <a href="https://github.com/flyhunterl/flymd/releases/latest"><img src="https://img.shields.io/github/v/release/flyhunterl/flymd" alt="GitHub Release" /></a>
-  <a href="https://github.com/flyhunterl/flymd/releases/latest"><img src="https://img.shields.io/github/release-date/flyhunterl/flymd" alt="Release Date" /></a>
-  <a href="https://github.com/flyhunterl/flymd/actions/workflows/build.yml"><img src="https://github.com/flyhunterl/flymd/actions/workflows/build.yml/badge.svg" alt="Build Status" /></a>
-  <a href="https://github.com/flyhunterl/flymd/stargazers"><img src="https://img.shields.io/github/stars/flyhunterl/flymd" alt="GitHub Stars" /></a>
-  <img src="https://img.shields.io/github/downloads/flyhunterl/flymd/total" alt="GitHub Downloads" />
+  <a href="https://github.com/htmambo/flymd/releases/latest"><img src="https://img.shields.io/github/v/release/htmambo/flymd" alt="GitHub Release" /></a>
+  <a href="https://github.com/htmambo/flymd/releases/latest"><img src="https://img.shields.io/github/release-date/htmambo/flymd" alt="Release Date" /></a>
+  <a href="https://github.com/htmambo/flymd/actions/workflows/build.yml"><img src="https://github.com/htmambo/flymd/actions/workflows/build.yml/badge.svg" alt="Build Status" /></a>
+  <a href="https://github.com/htmambo/flymd/stargazers"><img src="https://img.shields.io/github/stars/htmambo/flymd" alt="GitHub Stars" /></a>
+  <img src="https://img.shields.io/github/downloads/htmambo/flymd/total" alt="GitHub Downloads" />
 </p>
 
 <p align="center">
@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-green" alt="License: GPL-3.0" /></a>
-  <a href="https://github.com/flyhunterl/flymd"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform" /></a>
+  <a href="https://github.com/htmambo/flymd"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform" /></a>
   <a href="https://github.com/microsoft/winget-pkgs/tree/master/manifests/f/flyhunterl/FlyMD"><img src="https://img.shields.io/badge/winget-flyhunterl.FlyMD-blue" alt="Winget" /></a>
   <a href="https://t.me/+3SOMbwSbCvIxMGQ9"><img src="https://img.shields.io/badge/Telegram-Join-blue?logo=telegram&logoColor=white" alt="Telegram Community" /></a>
 </p>
@@ -26,9 +26,9 @@ FlyMD is a lightweight, high-performance local Markdown editor supporting high-p
 <img width="1920" height="1080" alt="hero" src="https://github.com/user-attachments/assets/acf758c1-6c8e-4b4f-a313-d4ce2190394b" />
 
 <p align="center">
-  <a href="https://github.com/flyhunterl/flymd/releases/latest">Download Desktop (Windows / macOS / Linux)</a>
+  <a href="https://github.com/htmambo/flymd/releases/latest">Download Desktop (Windows / macOS / Linux)</a>
   ·
-  <a href="https://github.com/flyhunterl/flymd/releases?q=android&expanded=true">Download Android (Beta)</a>
+  <a href="https://github.com/htmambo/flymd/releases?q=android&expanded=true">Download Android (Beta)</a>
 </p>
 
 ## Table of Contents
@@ -158,13 +158,17 @@ FlyMD is a lightweight, high-performance local Markdown editor supporting high-p
 
 ### Installation
 
-Download from [Releases](https://github.com/flyhunterl/flymd/releases):
+Download from [Releases](https://github.com/htmambo/flymd/releases):
 
 | Platform | Installation |
 |----------|--------------|
 | **Windows** | `winget install flyhunterl.FlyMD` or download installer |
 | **Linux** | Supports mainstream desktop environments; on Arch-based distributions, we recommend installing via the AUR package `flymd` (for example: `yay -S flymd` or `paru -S flymd`). |
 | **macOS** | Supports Intel and Apple Silicon |
+
+> ⚠️ **v2.0.0 channel note**: starting with v2.0.0 this project releases from [`htmambo/flymd`](https://github.com/htmambo/flymd).
+> The winget `flyhunterl.FlyMD` and AUR `flymd` manifests still point at the previous release line (v1.4.4),
+> so until those manifests are updated, download the v2.0.0 installer directly from [Releases](https://github.com/htmambo/flymd/releases).
 
 <details>
 <summary><strong>macOS Installation Notes</strong></summary>
@@ -440,7 +444,7 @@ See: [ROADMAP (English)](ROADMAP.en.md)
 
 ### Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=flyhunterl/flymd&type=date&legend=top-left)](https://www.star-history.com/#flyhunterl/flymd&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=htmambo/flymd&type=date&legend=top-left)](https://www.star-history.com/#htmambo/flymd&type=date&legend=top-left)
 
 ### License
 

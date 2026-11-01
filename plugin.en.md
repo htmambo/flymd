@@ -1903,7 +1903,7 @@ A: Each plugin can only add one main menu item, but can pop up submenus in the m
 ## Reference Resources
 
 - [Typecho Publisher Plugin](https://github.com/TGU-HansJack/typecho-publisher-flymd) - Official example plugin
-- [flyMD GitHub Repository](https://github.com/flyhunterl/flymd)
+- [flyMD GitHub Repository](https://github.com/htmambo/flymd)
 - [Tauri Documentation](https://tauri.app/)
 
 ## License
@@ -1912,4 +1912,4 @@ This document follows the same license as the project: flyMD Non-Commercial Open
 
 ---
 
-If you have questions or suggestions, welcome to submit an [Issue](https://github.com/flyhunterl/flymd/issues).
+If you have questions or suggestions, welcome to submit an [Issue](https://github.com/htmambo/flymd/issues).

@@ -2938,7 +2938,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
 
   // 节流留空：简单实现始终请求（前端可决定调用频率）
 
-  let url = "https://api.github.com/repos/flyhunterl/flymd/releases";
+  let url = "https://api.github.com/repos/htmambo/flymd/releases";
   // 共享 client：原 builder 为 .user_agent("flymd-updater") + .timeout(10s)，
   // 均可用 RequestBuilder::header("User-Agent")/.timeout 复原（见 AppState 注释审计）
   let resp = state

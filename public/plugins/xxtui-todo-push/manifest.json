@@ -10,6 +10,6 @@
       "description": "Parse selected todos and push them to xxtui, supporting API keys obtained via WeChat official account."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

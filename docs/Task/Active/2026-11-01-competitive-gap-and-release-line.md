@@ -75,7 +75,7 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 
 | # | 事项 | 说明 | 依赖 |
 |---|---|---|---|
-| 1 | **发布线恢复** | 309 commits → upstream main → 打 tag 发版 | 无（见 §4） |
+| 1 | **发布线恢复** | ✅ **已完成**：309 commits 快进合并进 `main`，仓库地址切换到 `htmambo/flymd`，版本升至 v2.0.0 并打 tag 发版 | 无（见 §4） |
 | 2 | **MCP Server** | ✅ **已完成**（commit `bbed898`）：独立 crate `mcp-server/`，6 个只读工具，41 个 Rust 单测，真实库端到端联调通过 | 已落地，详见 §3.1 |
 | 3 | **AI 写入护栏 + 回滚** | 复用已有 Git 版本控制插件，改为"AI 写入先落独立分支 / 快照，差异预览后合并"；成本最低的做法是每次 AI 改写前自动打快照 tag | 依赖现有 Git 插件 |
 
@@ -117,9 +117,11 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 
 ## 四、发布线断裂：证据与恢复路径
 
+> **2026-11-01 决策更新**：选择**方案 B 的变体**——不向原 upstream（`flyhunterl/flymd`，900★）提交 PR，直接以 `htmambo/flymd` 作为发布主线，版本号定为 **v2.0.0** 并立即打 tag 发版。下文保留原始事实记录作为背景。
+
 ### 4.1 事实（取自 GitHub API 与本地 git）
 
-- `htmambo/flymd` 是 `flyhunterl/flymd` 的 **fork**（`fork: true`, `parent: flyhunterl/flymd`）；upstream 900★，fork 0★
+- `htmambo/flymd` 是 `flyhunterl/flymd` 的 **fork**（`fork: true`, `parent: flyhunterl/flymd`）；原 upstream 900★，fork 0★
 - **fork 的 `main` 与 upstream 的 `main` 完全一致**：均为 `e6f73b8 发布 v1.4.4`（2026-07-22）
 - 开发全部堆在一条链式分支上，且互相为祖先（线性）：
   `optimized` (178) → `fix/macos-quit-close` (216) → `sync/main-v1.4.4` (280) → `fix/audit-round1-correctness` (**309**)
@@ -128,7 +130,7 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 - `.github/workflows/build.yml` 触发条件：`workflow_dispatch` / `push tag v*` / `pull_request → main` → **发版完全依赖打 tag**
 - 新增的 `web/`（Fastify 5 服务端 + Vue 3 客户端）也在这 309 个提交内，同样未对外可见
 
-### 4.2 这 3.5 个月积压了什么（相对 upstream main 的 diff 分布）
+### 4.2 这 3.5 个月积压了什么（相对 v1.4.4 的 diff 分布）
 
 | 目录 | 改动文件 | 新增行 | 删除行 | 内容性质 |
 |---|---|---|---|---|
@@ -145,41 +147,49 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 | `src/windows` | 8 | 2310 | -34 | 多窗口支持 |
 | `src/utils` | 15 | 815 | -14 | 工具层 |
 
-> 这不是一次补丁，**是一次 minor 版本级别的重构 + 一个全新 Web 端**。压着不发，等于把"架构升级 + 新端形态"两个最能拉开身位的机会一起浪费掉。建议按 **v1.5.0** 发布而非补丁号。
+> 这不是一次补丁，**是一次 minor 版本级别的重构 + 一个全新 Web 端**。压着不发，等于把"架构升级 + 新端形态"两个最能拉开身位的机会一起浪费掉。
+> **最终定为 v2.0.0**——库私有化 v2 功能线（2026-09-11 的 7 个 PR）此前从未发布，`docs/Usage/` 已按"适用版本 flymd 2.0+"撰写，用 v1.5.0 反而与文档措辞冲突。
 
 ### 4.3 已排除的连带风险
 
-- **扩展市场未受影响**：`public/plugins/` 下 30 个插件目录，当前分支与 upstream main **完全一致**；`index.json` 中所有插件 `ref` 指向 `raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/...`，目标文件在 upstream 均存在 → 不会出现 404 或版本错配。
-- **更新检查链路正常**：`src-tauri/src/main.rs:2941` 的更新检查指向 upstream releases，只要 upstream 恢复发版，提示即恢复。
-- **发行渠道指向一致**：`PKGBUILD` / `PKGBUILD.source` / `linux/com.flymd.metainfo.xml` / `public/update-extra.json` / 12 个插件 `manifest.json` 的 `homepage` 全部指向 `flyhunterl/flymd`，无需改动。
+- **扩展市场未受影响**：`public/plugins/` 下 30 个插件目录，切换前的当前分支与原 upstream main **完全一致**；`index.json` 中所有插件 `ref` 切换后指向 `raw.githubusercontent.com/htmambo/flymd/main/public/plugins/...`，目标文件在主线均存在 → 不会出现 404 或版本错配。
+- **更新检查链路**：`src-tauri/src/main.rs` 的更新检查已同步切到 `htmambo/flymd` releases，v2.0.0 发布后老版本用户能收到升级提示（仅限已切到新仓库的构建）。
+- **发行渠道指向一致**：`PKGBUILD` / `PKGBUILD.source` / `linux/com.flymd.metainfo.xml` / `public/update-extra.json` / 12 个插件 `manifest.json` 的 `homepage` 与 `index.json` 已统一指向 `htmambo/flymd`。
 
-### 4.4 后果
+### 4.4 后果（切换前的历史状态，供参考）
 
-- 900★ 用户与 winget / AUR 用户停留在 **v1.4.4（2026-07-22）**，已落后 3.5 个月
+- 原 upstream 用户与 winget / AUR 用户停留在 **v1.4.4（2026-07-22）**，落后 3.5 个月
 - 期间竞品进度：SoloMD 4.0 → 4.6（Agent 面板 + 知识图谱层 + 关系网络）；Markra 密集发版且接入 ACP / Agent Skills
 - README 里宣传的"智能大纲""插件生态""WebDAV 端到端加密"等能力，公开版本与开发分支已脱节
-- `src-tauri/src/main.rs` 的更新检查仍指向 `https://api.github.com/repos/flyhunterl/flymd/releases`——发布线一断，用户连"有新版本"的提示都收不到
 
 ### 4.5 恢复路径（三选一）
 
 > 下列动作涉及对公开仓库的推送与发版，属**对外可见操作**，执行前需要显式确认。
 
-**方案 A（推荐）——标准 fork 协作流**
-1. 把 `fix/audit-round1-correctness` 整理为可评审的若干 PR（建议按 `feat / perf / fix / docs` 拆分，或至少先提一个合并 PR）
-2. 逐个 PR 到 `flyhunterl/flymd` 的 `main`
-3. 合并后在 upstream 打 `v1.5.0` tag，触发 `build.yml` 三平台打包 + winget / AUR 提交流程
-4. fork 仓库改名为个人开发镜像，或在 README 顶部注明"开发分支仓库"
+**✅ 方案 B（已采纳，2026-11-01）——`htmambo/flymd` 直接作为发布主线**
+1. 309 个提交快进合并进 `main`（原 upstream 无独有提交，零冲突）
+2. 追加许可证修正与 MCP 服务器两个提交
+3. 全仓仓库地址由 `flyhunterl/flymd` 切换为 `htmambo/flymd`（30 个文件）
+4. 版本号 1.4.4 → **2.0.0**（`package.json` / `Cargo.toml` / `tauri.conf.json` / `Cargo.lock`）
+5. `scripts/get-version.sh` 的 `UPSTREAM_REPO` 默认值改为 `htmambo/flymd`（该脚本从 git tag 取版本，是打包的事实来源）
+6. 在 `htmambo/flymd` 打 `v2.0.0` tag → 触发 `build.yml` 三平台打包 + 生成 draft Release
+- 优点：发版链路最短，不维护 PR 往返；缺点：原 upstream 的 900★ 用户不会自动收到升级提示
 
-**方案 B——单一主仓库**
-- 把 upstream 转为个人主仓库（保留 `flyhunterl` 作为发布账号或转移所有权），fork 仅作备份
-- 优点：发版链路最短，不必维护 PR 往返；缺点：迁移期需处理链接与徽章
+**方案 A（未采纳）——标准 fork 协作流**
+1. 把 `fix/audit-round1-correctness` 整理为可评审的若干 PR
+2. 逐个 PR 到原 upstream 的 `main`
+3. 合并后打 `v1.5.0` tag，触发三平台打包 + winget / AUR 提交流程
 
-**方案 C——只同步代码，暂不发版**
+**方案 C（未采纳）——只同步代码，暂不发版**
+- 先把 309 个提交合并回 `main`，但**不**打 tag，暂不发布；用于降低后续合并冲突与 review 成本
+- ⚠️ 代价：用户仍然拿不到更新，落后继续扩大
+
+> ⚠️ **遗留项（切换到新主线后需另行处理）**：winget `flyhunterl.FlyMD` 与 AUR `flymd` 的清单仍指向原仓库，需要各自提交更新后，v2.0.0 才能通过这两个渠道分发。
 - 先把 309 个提交合并回 fork 的 `main`（甚至 PR 到 upstream 的 main），让代码收敛到主干
 - 但**不**打 tag，暂不发布；用于降低后续合并冲突与 review 成本
 - ⚠️ 代价：用户仍然拿不到更新，落后继续扩大
 
-**建议组合**：C（先合并主干、降冲突）→ A（拆 PR 回 upstream）→ 打 tag 发 v1.5.0。
+**实际执行**：B（`htmambo/flymd` 作为发布主线）→ 地址切换 → 版本升至 v2.0.0 → 打 tag 发版。
 
 ---
 

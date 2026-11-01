@@ -28,7 +28,7 @@
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "AI 助手",
       "description": "AI 助手",
       "author": "飞速MarkDown",
@@ -37,24 +37,24 @@
       "category": "AI",
       "rank": 1,
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/ai-assistant/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/ai-assistant/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "批量导出 PDF",
       "description": "一次选择多个文档并批量导出为 PDF",
       "author": "飞速MarkDown",
       "id": "batch-pdf",
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/batch-pdf/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/batch-pdf/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "PDF 高精度解析",
       "description": "使用大模型高精度识别解析 PDF 为 Markdown 或 docx，支持手写、布局、公式和表格识别。",
       "author": "flyMD",
@@ -62,31 +62,31 @@
       "featured": true,
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/pdf2doc/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/pdf2doc/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "MinerU PDF/图片解析",
       "description": "使用 MinerU 官方 API 对本地 PDF / 图片发起解析，返回结果压缩包链接。",
       "author": "flyMD",
       "id": "mineru",
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/mineru/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/mineru/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "Blinko",
       "description": "右键菜单一键将当前内容发送到 Blinko",
       "author": "flyMD",
       "id": "blinko-snap",
       "category": "发布/同步",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/blinko-snap/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/blinko-snap/manifest.json",
         "type": "manifest"
       }
     },
@@ -115,7 +115,7 @@
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "Markdown 表格助手",
       "description": "在光标处快速插入 Markdown 表格",
       "author": "flyMD",
@@ -124,12 +124,12 @@
       "rank": 3,
       "category": "编辑增强",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/markdown-table/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/markdown-table/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "编辑器增强",
       "description": "编辑器增强：在空行输入“/”启用指令，快速插入内容",
       "author": "xxtui",
@@ -137,24 +137,24 @@
       "featured": true,
       "category": "编辑增强",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/editor-enhancer/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/editor-enhancer/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "协同编辑",
       "description": "连接协同服务器的简单多人协同插件",
       "author": "flyMD",
       "id": "local-collab-os",
       "category": "协同/版本",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/local-collab-os/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/local-collab-os/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "xxtui 待办推送",
       "description": "扫描当前文档中的未完成待办并推送到 xxtui",
       "author": "飞速MarkDown & XXTUI",
@@ -163,7 +163,7 @@
       "rank": 2,
       "category": "发布/同步",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/xxtui-todo-push/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/xxtui-todo-push/manifest.json",
         "type": "manifest"
       }
     },
@@ -192,26 +192,26 @@
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "PicList 图床上传",
       "description": "通过本地 PicList 内置 HTTP 服务器上传本地图片，并将 Markdown 中的本地路径替换为图床外链。",
       "author": "flyMD",
       "id": "piclist-uploader",
       "category": "图床上传",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/piclist-uploader/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/piclist-uploader/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "图床相册",
       "description": "查看并管理通过内置图床上传的图片，支持复制链接、插入当前文档以及删除远端对象。",
       "author": "flyMD",
       "id": "s3-gallery",
       "category": "图床上传",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/s3-gallery/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/s3-gallery/manifest.json",
         "type": "manifest"
       }
     },
@@ -228,7 +228,7 @@
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "Typecho 博文管理",
       "description": "从 Typecho 拉取博文列表并下载为本地 Markdown，支持按时间 / 分类筛选，同时支持从当前文档覆盖远端文章。",
       "author": "flyMD",
@@ -236,7 +236,7 @@
       "featured": true,
       "category": "发布/同步",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/typecho-manager/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/typecho-manager/manifest.json",
         "type": "manifest"
       }
     },
@@ -253,31 +253,31 @@
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "Word/Excel 导入工具",
       "description": "从本地 Word / Excel 文件解析并导入为 Markdown。",
       "author": "flyMD",
       "id": "office-importer",
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/office-importer/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/office-importer/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "Git 版本管理",
       "description": "为当前库和文档提供 Git 快照与历史查看侧栏，并支持一键回滚到指定版本。",
       "author": "flyMD",
       "id": "git-history",
       "category": "协同/版本",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/git-history/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/git-history/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "双向链接（Backlinks）",
       "description": "基于 [[标题]] 语法自动建立笔记之间的正向/反向链接，并提供反向链接侧边面板与 AI 关联推荐。",
       "author": "flyMD",
@@ -285,12 +285,12 @@
       "featured": true,
       "category": "知识管理",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/backlinks-plugin/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/backlinks-plugin/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "关系图谱（Graph View）",
       "description": "基于双向链接索引的关系图谱视图，将当前文档作为中心展示局部关系网络。",
       "author": "flyMD",
@@ -298,12 +298,12 @@
       "featured": true,
       "category": "知识管理",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/graph-view/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/graph-view/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "文档脑图（Markmap）",
       "description": "将当前 Markdown 文档渲染为 Markmap 风格脑图，右侧停靠预览；支持全屏遮挡查看、导出 SVG/PNG；点击节点跳转文档位置。",
       "author": "flyMD",
@@ -311,72 +311,72 @@
       "featured": true,
       "category": "知识管理",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/doc-mindmap/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/doc-mindmap/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "白板视图",
       "description": "在可视化画布上摆放 Markdown 笔记节点并建立简单连接。",
       "author": "flyMD",
       "id": "whiteboard-view",
       "category": "知识管理",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/whiteboard/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/whiteboard/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "智能悬浮工具条",
       "description": "提供可拖拽且可吸附到顶部的悬浮工具条，并支持自定义标题快捷键等编辑增强功能。",
       "author": "flyMD",
       "id": "floating-toolbar",
       "category": "编辑增强",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/floating-toolbar/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/floating-toolbar/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "AutoYAML 元数据",
       "description": "自动为当前文档补全 YAML 前置信息，可选调用 AI 助手生成标签和摘要。",
       "author": "flyMD",
       "id": "autoyaml",
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/autoyaml/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/autoyaml/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "属性视图",
       "description": "基于 YAML 元数据和标签的属性查询与列表视图",
       "author": "flyMD",
       "id": "property-view",
       "category": "知识管理",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/property-view/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/property-view/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "笔记与任务日历",
       "description": "提供日记、会议记录、读书笔记等常用模板，并集成任务总览与简单日历视图，基于 YAML 前置信息与 TODO 语法构建规范化笔记与时间视图。",
       "author": "flyMD",
       "id": "note-templates",
       "category": "文档工具",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/note-templates/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/note-templates/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "AI 小说引擎",
       "description": "AI小说生成工具，新用户注册赠送50万字符",
       "author": "flyMD",
@@ -384,12 +384,12 @@
       "featured": true,
       "category": "AI",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/ai-novel/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/ai-novel/manifest.json",
         "type": "manifest"
       }
     },
     {
-      "homepage": "https://github.com/flyhunterl/flymd",
+      "homepage": "https://github.com/htmambo/flymd",
       "name": "flymd-RAG 知识库索引",
       "description": "为本地 Markdown/TXT 构建向量索引，提供语义检索（RAG 基础能力），可与 AI 写作助手联动使用。",
       "author": "flyMD",
@@ -397,7 +397,7 @@
       "featured": true,
       "category": "AI",
       "install": {
-        "ref": "https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/flymd-RAG/manifest.json",
+        "ref": "https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/flymd-RAG/manifest.json",
         "type": "manifest"
       }
     },

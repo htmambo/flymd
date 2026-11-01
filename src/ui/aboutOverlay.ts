@@ -111,7 +111,7 @@ export function initAboutOverlay(): void {
             <img src="${goodImgUrl}" alt="二维码" style="width:280px;height:280px;object-fit:contain;"/>
             <div style="text-align:center;">
               <p style="margin:0;color:var(--muted);font-size:12px;">${t('about.license.brief')}</p>
-              <p style="margin:4px 0 0;"><a href="https://github.com/flyhunterl/flymd/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">${t('about.license.link')}</a></p>
+              <p style="margin:4px 0 0;"><a href="https://github.com/htmambo/flymd/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">${t('about.license.link')}</a></p>
             </div>
           </div>
         `
@@ -133,7 +133,7 @@ export function initAboutOverlay(): void {
 <a href="https://www.llingfei.com" target="_blank" rel="noopener noreferrer">\
   <img class="favicon" src="https://icons.duckduckgo.com/ip3/www.llingfei.com.ico" alt="" referrerpolicy="no-referrer"/>博客\
 </a><span class="sep">&nbsp;&nbsp;</span>\
-<a href="https://github.com/flyhunterl/flymd" target="_blank" rel="noopener noreferrer">\
+<a href="https://github.com/htmambo/flymd" target="_blank" rel="noopener noreferrer">\
   <img class="favicon" src="https://icons.duckduckgo.com/ip3/github.com.ico" alt="" referrerpolicy="no-referrer"/>GitHub\
 </a></div><span id="about-version"></span>'
         dialog.appendChild(footer)

@@ -2570,7 +2570,7 @@ A: 每个插件只能添加一个主菜单项，但可以在菜单项的点击�
 ## 参考资源
 
 - [Typecho Publisher 插件](https://github.com/TGU-HansJack/typecho-publisher-flymd) - 官方示例插件
-- [flyMD GitHub 仓库](https://github.com/flyhunterl/flymd)
+- [flyMD GitHub 仓库](https://github.com/htmambo/flymd)
 - [Tauri 文档](https://tauri.app/)
 
 ## 许可证
@@ -2579,4 +2579,4 @@ A: 每个插件只能添加一个主菜单项，但可以在菜单项的点击�
 
 ---
 
-如有问题或建议，欢迎提交 [Issue](https://github.com/flyhunterl/flymd/issues)。
+如有问题或建议，欢迎提交 [Issue](https://github.com/htmambo/flymd/issues)。

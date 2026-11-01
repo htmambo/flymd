@@ -68,7 +68,7 @@ export function createPluginMarket(deps: PluginMarketDeps) {
       if (typeof u === 'string' && /^https?:\/\//i.test(u)) return u
     } catch {}
     // 默认索引（占位，仓库可替换为实际地址）
-    return 'https://raw.githubusercontent.com/flyhunterl/flymd/main/index.json'
+    return 'https://raw.githubusercontent.com/htmambo/flymd/main/index.json'
   }
 
   // 读取当前渠道（默认 GitHub 优先，以保持向后兼容）

@@ -10,6 +10,6 @@
       "description": "Select multiple documents and export them to PDF in batch."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

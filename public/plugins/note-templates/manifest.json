@@ -10,6 +10,6 @@
       "description": "Provide common templates such as daily notes, meeting notes, and reading notes, and integrate task overview with a simple calendar view, all based on YAML front matter and TODO syntax."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

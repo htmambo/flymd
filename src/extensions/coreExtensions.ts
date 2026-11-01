@@ -16,7 +16,7 @@ type CoreExtensionState = 'pending' | 'installed' | 'blocked'
 const CORE_EXT_STATE_KEY = 'coreExtensions:autoInstall'
 export const CORE_AI_EXTENSION_ID = 'ai-assistant'
 const CORE_AI_MANIFEST_URL =
-  'https://raw.githubusercontent.com/flyhunterl/flymd/main/public/plugins/ai-assistant/manifest.json'
+  'https://raw.githubusercontent.com/htmambo/flymd/main/public/plugins/ai-assistant/manifest.json'
 
 async function getCoreExtensionStateMap(
   store: Store | null,

@@ -10,6 +10,6 @@
       "description": "Automatically add YAML front matter metadata to the current document, optionally using the AI assistant to generate tags and summary."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

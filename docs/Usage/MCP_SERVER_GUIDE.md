@@ -26,7 +26,7 @@ flymd 内置一个 MCP (Model Context Protocol) 服务器，可以把你的笔�
 
 ### 方式一：从 Release 下载独立二进制（推荐）
 
-在 [Releases](https://github.com/flyhunterl/flymd/releases) 下载对应平台的 `flymd-mcp`：
+在 [Releases](https://github.com/htmambo/flymd/releases) 下载对应平台的 `flymd-mcp`：
 
 | 平台 | 文件 |
 |---|---|
@@ -44,7 +44,7 @@ flymd 内置一个 MCP (Model Context Protocol) 服务器，可以把你的笔�
 ### 方式三：从源码构建
 
 ```bash
-git clone https://github.com/flyhunterl/flymd.git
+git clone https://github.com/htmambo/flymd.git
 cd flymd
 node scripts/build-mcp-server.mjs
 # 产物：mcp-server/target/release/flymd-mcp

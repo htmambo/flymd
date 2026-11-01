@@ -1,6 +1,6 @@
 [package]
 name = "flymd"
-version = "1.4.4"
+version = "2.0.0"
 description = "飞速 Markdown 编辑器"
 authors = ["flymd"]
 license = "GPL-3.0"

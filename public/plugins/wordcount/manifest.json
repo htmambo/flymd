@@ -10,6 +10,6 @@
       "description": "Display character statistics for the current document."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }

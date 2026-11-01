@@ -6,16 +6,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/flyhunterl/flymd/releases/latest"><img src="https://img.shields.io/github/v/release/flyhunterl/flymd" alt="GitHub Release" /></a>
-  <a href="https://github.com/flyhunterl/flymd/releases/latest"><img src="https://img.shields.io/github/release-date/flyhunterl/flymd" alt="Release Date" /></a>
-  <a href="https://github.com/flyhunterl/flymd/actions/workflows/build.yml"><img src="https://github.com/flyhunterl/flymd/actions/workflows/build.yml/badge.svg" alt="Build Status" /></a>
-  <a href="https://github.com/flyhunterl/flymd/stargazers"><img src="https://img.shields.io/github/stars/flyhunterl/flymd" alt="GitHub Stars" /></a>
-  <img src="https://img.shields.io/github/downloads/flyhunterl/flymd/total" alt="GitHub Downloads" />
+  <a href="https://github.com/htmambo/flymd/releases/latest"><img src="https://img.shields.io/github/v/release/htmambo/flymd" alt="GitHub Release" /></a>
+  <a href="https://github.com/htmambo/flymd/releases/latest"><img src="https://img.shields.io/github/release-date/htmambo/flymd" alt="Release Date" /></a>
+  <a href="https://github.com/htmambo/flymd/actions/workflows/build.yml"><img src="https://github.com/htmambo/flymd/actions/workflows/build.yml/badge.svg" alt="Build Status" /></a>
+  <a href="https://github.com/htmambo/flymd/stargazers"><img src="https://img.shields.io/github/stars/htmambo/flymd" alt="GitHub Stars" /></a>
+  <img src="https://img.shields.io/github/downloads/htmambo/flymd/total" alt="GitHub Downloads" />
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-green" alt="License: GPL-3.0" /></a>
-  <a href="https://github.com/flyhunterl/flymd"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform" /></a>
+  <a href="https://github.com/htmambo/flymd"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg" alt="Platform" /></a>
   <a href="https://github.com/microsoft/winget-pkgs/tree/master/manifests/f/flyhunterl/FlyMD"><img src="https://img.shields.io/badge/winget-flyhunterl.FlyMD-blue" alt="Winget" /></a>
   <a href="https://t.me/+3SOMbwSbCvIxMGQ9"><img src="https://img.shields.io/badge/Telegram-Join-blue?logo=telegram&logoColor=white" alt="Telegram 社区" /></a>
 </p>
@@ -29,9 +29,9 @@ FlyMD 是一款轻量级、高性能的本地 Markdown 编辑器,支持 PDF 高�
 <img width="1920" height="1080" alt="hero" src="https://github.com/user-attachments/assets/acf758c1-6c8e-4b4f-a313-d4ce2190394b" />
 
 <p align="center">
-  <a href="https://github.com/flyhunterl/flymd/releases/latest">下载桌面版（Windows / macOS / Linux）</a>
+  <a href="https://github.com/htmambo/flymd/releases/latest">下载桌面版（Windows / macOS / Linux）</a>
   ·
-  <a href="https://github.com/flyhunterl/flymd/releases?q=android&expanded=true">下载安卓版（Beta）</a>
+  <a href="https://github.com/htmambo/flymd/releases?q=android&expanded=true">下载安卓版（Beta）</a>
 </p>
 
 ## 目录
@@ -175,13 +175,17 @@ FlyMD 是一款轻量级、高性能的本地 Markdown 编辑器,支持 PDF 高�
 
 ### 安装
 
-从 [Releases](https://github.com/flyhunterl/flymd/releases) 下载对应平台安装包:
+从 [Releases](https://github.com/htmambo/flymd/releases) 下载对应平台安装包:
 
 | 平台 | 安装方式 |
 |------|----------|
 | **Windows** | `winget install flyhunterl.FlyMD` 或下载安装包 |
 | **Linux** | 支持主流桌面环境,Arch 系发行版推荐通过 AUR 安装:`yay -S flymd` 或 `paru -S flymd` |
 | **macOS** | 支持 Intel 和 Apple Silicon |
+
+> ⚠️ **v2.0.0 渠道说明**：v2.0.0 起本项目以 [`htmambo/flymd`](https://github.com/htmambo/flymd) 为发布主线。
+> winget 的 `flyhunterl.FlyMD` 与 AUR 的 `flymd` 清单目前仍指向上一条发布线（v1.4.4），
+> 在清单更新前，请从 [Releases](https://github.com/htmambo/flymd/releases) 直接下载 v2.0.0 安装包。
 
 <details>
 <summary><strong>macOS 安装注意事项</strong></summary>
@@ -457,7 +461,7 @@ FlyMD 拥有丰富的插件生态,支持通过扩展插件无限扩展功能。
 
 ### Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=flyhunterl/flymd&type=date&legend=top-left)](https://www.star-history.com/#flyhunterl/flymd&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=htmambo/flymd&type=date&legend=top-left)](https://www.star-history.com/#htmambo/flymd&type=date&legend=top-left)
 
 ### 许可协议
 

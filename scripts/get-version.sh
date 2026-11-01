@@ -5,7 +5,7 @@ set -euo pipefail
 # 回退顺序：上游 git 标签 → package.json → 默认兜底版本。
 # 所有打包脚本（PKGBUILD、Debian、RPM 等）统一调用此脚本获取版本。
 
-UPSTREAM_REPO="${UPSTREAM_REPO:-flyhunterl/flymd}"
+UPSTREAM_REPO="${UPSTREAM_REPO:-htmambo/flymd}"
 PKG_JSON="${1:-./package.json}"
 FALLBACK_VER="1.3.9"
 

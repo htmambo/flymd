@@ -10,7 +10,7 @@
       "description": "Place Markdown note nodes on a visual canvas and create simple connections between them."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }
 

@@ -10,7 +10,7 @@
       "description": "Query Markdown files by YAML metadata and tags, and display them in a list view."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }
 

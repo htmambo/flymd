@@ -10,6 +10,6 @@
       "description": "Editor enhancements: type “/” on an empty line to trigger commands for quick inserts."
     }
   },
-  "homepage": "https://github.com/flyhunterl/flymd",
+  "homepage": "https://github.com/htmambo/flymd",
   "main": "main.js"
 }
