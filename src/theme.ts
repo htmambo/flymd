@@ -541,11 +541,19 @@ export function applyThemePrefs(prefs: ThemePrefs): void {
     } catch {}
 
     // 专注模式下更新侧栏背景色
+    //
+    // 这个定时器可能在当前环境销毁之后才触发：单测里测试文件已结束、
+    // 应用里窗口已关闭。此时直接访问 window 会抛 ReferenceError，
+    // 而它是**未捕获错误**——单测会因此以退出码 1 失败（尽管断言全过），
+    // 应用侧也会在窗口关闭瞬间报一串噪音日志。故先确认 window 还在。
     setTimeout(() => {
-      const updateFunc = (window as any).updateFocusSidebarBg
-      if (typeof updateFunc === 'function') {
-        updateFunc()
-      }
+      try {
+        if (typeof window === 'undefined') return
+        const updateFunc = (window as any).updateFocusSidebarBg
+        if (typeof updateFunc === 'function') {
+          updateFunc()
+        }
+      } catch {}
     }, 50)
   } catch {}
 }
