@@ -1,0 +1,55 @@
+# Maintainer: 果农
+#
+# AUR 包 `flymd` 的 2.0.1 清单。
+#
+# ⚠️ 现状：aur.archlinux.org 上的 `flymd` 包当前维护者是第三方（Integral），
+#    直接推送需要先「孤儿化」再收养，或由当前维护者提交。本次仓库地址切换
+#    （flyhunterl/flymd → htmambo/flymd）后，源码包必须从新仓库取。
+#
+# 提交方式（二选一）：
+#   A. 在 AUR 网页上申请孤儿化 → 克隆 https://aur.archlinux.org/flymd.git
+#      → 覆盖 PKGBUILD → git commit && git push
+#   B. 联系当前维护者 Integral，由 TA 提交同样的改动
+#
+# 包名沿用 `flymd`（不改名）：换包名会让原包名下的所有用户失去自动升级通道。
+pkgname=flymd
+pkgver=2.0.1
+pkgrel=1
+pkgdesc="A 7MB high-performance Markdown note tool"
+arch=('x86_64' 'aarch64' 'riscv64')
+url="https://github.com/htmambo/flymd"
+license=('GPL-3.0-only')
+depends=('cairo' 'gcc-libs' 'gdk-pixbuf2' 'glib2' 'gtk3' 'libsoup3' 'webkit2gtk-4.1')
+makedepends=('npm' 'cargo')
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('bdab052aeda078b12b818cf15ead5166098fd7bb780dbb276416a49f748520c3')
+
+prepare() {
+	cd "${pkgname}-${pkgver}/"
+	npm ci
+
+	cd src-tauri
+	cargo fetch --locked --target $(rustc --print host-tuple)
+}
+
+build() {
+	cd "${pkgname}-${pkgver}/"
+	CFLAGS+=" -ffat-lto-objects" npm run tauri:build -- --bundles deb
+}
+
+package() {
+	case "${CARCH}" in
+	"x86_64") local _debarch="amd64" ;;
+	"aarch64") local _debarch="arm64" ;;
+	"riscv64") local _debarch="riscv64" ;;
+	esac
+
+	dpkg-deb -x flymd_${pkgver}_${_debarch}.deb "${pkgdir}"
+
+	# 桌面项与图标
+	install -Dm644 flymd.desktop "${pkgdir}/usr/share/applications/flymd.desktop"
+	install -Dm644 Flymdnew.png "${pkgdir}/usr/share/pixmaps/flymd.png"
+
+	# 许可证
+	install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}
