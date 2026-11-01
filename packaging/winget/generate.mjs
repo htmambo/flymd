@@ -229,9 +229,8 @@ async function main() {
 
   console.log('\n下一步：把上面目录下的四个文件复制到 microsoft/winget-pkgs 的')
   console.log(`  manifests/f/flyhunterl/FlyMD/${opts.version}/`)
-  console.log('然后提 PR。可用 GitHub CLI 一键开分支：')
-  console.log(`  gh api -X PUT repos/microsoft/winget-pkgs/contents/manifests/f/flyhunterl/FlyMD/${opts.version} \\`)
-  console.log('    --field message="Add FlyMD 2.0.1" --field branch=<你的分支> --field content=<base64>')
+  console.log('然后提 PR。PR 标题建议：')
+  console.log(`  Add package: flyhunterl.FlyMD ${opts.version}`)
 }
 
 main().catch((e) => {

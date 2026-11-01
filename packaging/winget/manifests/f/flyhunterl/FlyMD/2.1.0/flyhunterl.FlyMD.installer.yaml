@@ -1,0 +1,19 @@
+# Created with YamlCreate.ps1 Dumplings Mod
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+
+PackageIdentifier: flyhunterl.FlyMD
+PackageVersion: 2.1.0
+InstallerType: nullsoft
+Scope: user
+UpgradeBehavior: install
+FileExtensions:
+- markdown
+- md
+ProductCode: flymd
+ReleaseDate: 2026-11-01
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/htmambo/flymd/releases/download/v2.1.0/flymd_2.1.0_x64-setup.exe
+  InstallerSha256: 90B1479F814926AF87E3B0CD057DD7EEC48D5A117E264A8E95F4D6012F645CCB
+ManifestType: installer
+ManifestVersion: 1.12.0
