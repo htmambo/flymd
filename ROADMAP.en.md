@@ -2,6 +2,38 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.1.0
+
+> The MCP server moves from read-only to writable, but every write is **recorded, previewable, and reversible**.
+> The desktop app and MCP clients share a single guard core.
+
+### MCP: AI write guard and rollback
+
+- Four new write tools: `preview_write` (diff only), `write_note`, `list_writes`, `rollback_write`
+- **Mandatory snapshot before every write**: the previous content is stored under `<library root>/.flymd/ai-guard/`, and a failed snapshot **aborts the write** — better to fail the write than leave a change with no way back
+- **Rollback can be rolled back**: the rollback itself produces a snapshot, so you can flip back and forth without losing history
+- Retention caps: 50 snapshots / 100 MB total; a snapshot over 1 MB is explicitly marked as not reversible rather than pretending it can be
+- Write constraints: ≤ 1 MB per write, one file per write, never inside an excluded directory
+
+### One guard core, two consumers
+
+- The snapshot store and diff live in the **lib target** of `mcp-server`; the desktop app references the very same code through a path dependency
+- Snapshot-format consistency is guaranteed **by construction**, not by keeping two implementations in sync by convention
+- **No new dependency for the desktop app** (the lib only needs serde / serde_json, both already present)
+- In-app AI writes and MCP client writes land in the **same snapshot directory**, so each can roll the other back
+
+### Desktop app
+
+- The host intercepts the three plugin document-write entry points, so any plugin edit is snapshotted
+- The AI Assistant gains a "Roll back last AI write" context-menu entry
+- **The library root is never plugin-supplied**: `ai_guard_*` commands are blocked for plugins and replaced by host-provided, trusted-root APIs
+- WebDAV sync excludes `.flymd/ai-guard/` by default (snapshots are old content and must not leave the device)
+
+### Reliability
+
+- CI: added the missing `push: branches: [main]` trigger — main-branch pushes previously ran **no CI at all**
+- CI: the check gate now runs `cargo check --manifest-path src-tauri/Cargo.toml`; the Tauri Rust side was previously only compiled in the three-platform build job (30 minutes before a failure surfaced)
+
 ## Update v2.0.1
 
 > A patch release that only touches the MCP server. The desktop app is functionally identical to v2.0.0.
