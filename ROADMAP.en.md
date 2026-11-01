@@ -2,10 +2,28 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
-## Update v2.3.0
+## Update v2.2.1
 
 > Directory exclusion no longer covers only the MCP channel. **One rule set, app-wide** —
 > template directories must not surface in scheduled tasks, the knowledge base, or plugin enumeration either.
+
+### Versioning convention (from v2.2.1 on)
+
+Previously v2.0.0 → v2.0.1 → v2.1.0 → v2.2.0 all shipped within a single day, so the
+**minor digit moved from 0 to 2 in six hours**. At that speed the minor number can no longer
+carry the meaning "this release brought something significant".
+
+From v2.2.1 on:
+
+- The **third digit (patch)** carries routine increments: feature completions, consistency
+  fixes, bug fixes, documentation
+- The **second digit (minor)** is reserved for sizeable releases: a batch of new capabilities
+  taking shape, or a compatibility-relevant change
+- The **first digit (major)** is reserved for breaking changes: data formats, configuration,
+  or incompatible plugin API adjustments
+
+The MCP server follows the same rule: `0.3.0` → `0.3.1` (the new config file name is a
+backward-compatible increment).
 
 ### Unified AI visibility scope
 

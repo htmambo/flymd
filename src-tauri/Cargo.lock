@@ -1768,7 +1768,7 @@ dependencies = [
 
 [[package]]
 name = "flymd"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "aws-config",
  "aws-sdk-s3",
@@ -1802,7 +1802,7 @@ dependencies = [
 
 [[package]]
 name = "flymd-mcp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "regex",
  "serde",
