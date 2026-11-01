@@ -43,11 +43,12 @@ flymd-mcp — flymd 笔记库的 MCP (Model Context Protocol) 服务器
 
 目录排除（按优先级合并）:
   1. 内置默认（技术目录 + media/assets/templates 等资源目录）
-  2. 用户级配置 ~/.config/com.flymd/mcp.json
-  3. 库级配置 <库根>/.flymd/mcp.json（随库走、随 WebDAV 同步）
+  2. 用户级配置 ~/.config/com.flymd/ai-scope.json
+  3. 库级配置 <库根>/.flymd/ai-scope.json（随库走、随 WebDAV 同步）
   4. 环境变量 FLYMD_MCP_EXCLUDE
   5. 命令行 --exclude
 
+  旧名 mcp.json 继续生效（两个文件都读、都合并），详见第 6 节。
   被排除的目录整棵不进索引，AI 也无法读到里面的文件。
 
 在 MCP 客户端中的配置示例（Claude Code）:

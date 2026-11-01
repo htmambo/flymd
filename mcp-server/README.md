@@ -178,8 +178,8 @@ Obsidian 库里的 `media/`、`templates/` 装的是附件和模板，不是笔�
 | 来源 | 位置 |
 |---|---|
 | 内置默认 | 技术目录 + 常见资源/模板目录（见下） |
-| 用户级配置 | `~/.config/com.flymd/mcp.json`（macOS：`~/Library/Application Support/com.flymd/mcp.json`） |
-| 库级配置 | `<库根>/.flymd/mcp.json`（随库走、随 WebDAV 同步） |
+| 用户级配置 | `~/.config/com.flymd/ai-scope.json`（macOS：`~/Library/Application Support/com.flymd/ai-scope.json`） |
+| 库级配置 | `<库根>/.flymd/ai-scope.json`（随库走、随 WebDAV 同步） |
 | 环境变量 | `FLYMD_MCP_EXCLUDE`，逗号或分号分隔 |
 | 命令行 | `--exclude <目录>`，可重复 |
 

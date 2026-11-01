@@ -256,9 +256,11 @@ pub fn library_config_paths(library_root: &Path) -> Vec<PathBuf> {
     ]
 }
 
-/// 旧接口：库级配置路径（保留给既有调用方与测试）。
+/// 库级配置路径（**通用名**）。
+///
+/// 只关心单个文件时用这个；要连旧名一起兼容，请用 [`library_config_paths`]。
 pub fn library_config_path(library_root: &Path) -> PathBuf {
-    library_root.join(".flymd").join(LEGACY_CONFIG_FILE_NAME)
+    library_root.join(".flymd").join(CONFIG_FILE_NAME)
 }
 
 /// 组装最终生效配置。
@@ -413,7 +415,7 @@ mod tests {
     #[test]
     fn 库级配置路径在_dot_flymd_下() {
         let p = library_config_path(Path::new("/tmp/lib"));
-        assert!(p.ends_with(".flymd/mcp.json"));
+        assert!(p.ends_with(".flymd/ai-scope.json"));
     }
 
     #[test]

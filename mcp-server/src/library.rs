@@ -138,7 +138,7 @@ impl Library {
         if self.config.is_excluded_file(&rel.replace('\\', "/")) {
             return Err(format!(
                 "路径位于被排除的目录中，不对 MCP 客户端开放: {rel}\n\
-                 提示：在 <库根>/.flymd/mcp.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
+                 提示：在 <库根>/.flymd/ai-scope.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
             ));
         }
         Ok(canon)
@@ -207,7 +207,7 @@ impl Library {
         if self.config.is_excluded_file(&rel.replace('\\', "/")) {
             return Err(format!(
                 "路径位于被排除的目录中，MCP 客户端不可写入: {rel}\n\
-                 提示：在 <库根>/.flymd/mcp.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
+                 提示：在 <库根>/.flymd/ai-scope.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
             ));
         }
         Ok(joined)

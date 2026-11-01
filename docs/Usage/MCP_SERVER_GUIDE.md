@@ -95,7 +95,7 @@ args = ["--library", "/你的笔记库根目录"]
 > 💡 `--library` 是可选的。不写时，flymd-mcp 会自动从 flymd 应用设置里读取**当前激活的文库路径**，一般不需要手动指定。
 
 > 💡 需要额外排除目录时，在 `args` 里追加 `--exclude <目录名>`（可以写多条）。
-> 更推荐用配置文件（`<库根>/.flymd/mcp.json`），因为它跟着库走、随 WebDAV 同步——详见第 6 节。
+> 更推荐用配置文件（`<库根>/.flymd/ai-scope.json`），因为它跟着库走、随 WebDAV 同步——详见第 6 节。
 
 ---
 
@@ -325,11 +325,11 @@ v0.2.0 不能（只读）。v0.3.0+ 可以，但**每次写入前会自动快照
 
 **Q：AI 结果里出现了模板或附件目录的内容怎么办？**
 `media` `templates` 这类目录默认已经排除了。如果还有别的目录混进来，在
-`<库根>/.flymd/mcp.json` 里加一条 `excludeDirs` 即可，然后重启 MCP 服务器（客户端里重启一次会话）。
+`<库根>/.flymd/ai-scope.json` 里加一条 `excludeDirs` 即可，然后重启 MCP 服务器（客户端里重启一次会话）。
 加完可以用 `flymd-mcp --print-config` 确认。
 
 **Q：我有个目录真的叫 `media`，但里面是真笔记，怎么让它回来？**
-在 `<库根>/.flymd/mcp.json` 的 `allowDirs` 里写上路径前缀即可，例如
+在 `<库根>/.flymd/ai-scope.json` 的 `allowDirs` 里写上路径前缀即可，例如
 `{"allowDirs": ["media/我的笔记"]}`。`allowDirs` 优先于排除规则。
 
 **Q：怎么知道现在到底排除了什么？**
