@@ -3,6 +3,7 @@ name = "flymd"
 version = "1.4.4"
 description = "飞速 Markdown 编辑器"
 authors = ["flymd"]
+license = "GPL-3.0"
 edition = "2021"
 rust-version = "1.70"
 
