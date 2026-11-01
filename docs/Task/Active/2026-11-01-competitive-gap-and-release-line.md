@@ -76,8 +76,25 @@ WYSIWYG + 源码双模式、KaTeX、Mermaid、表格、分屏、标签页、大�
 | # | 事项 | 说明 | 依赖 |
 |---|---|---|---|
 | 1 | **发布线恢复** | 309 commits → upstream main → 打 tag 发版 | 无（见 §4） |
-| 2 | **MCP Server** | 至少暴露 `read_note / list_notes / search / get_outline / list_tasks / get_backlinks` 6 个只读工具（flymd 的 RAG 插件与知识库索引是现成数据源），stdio 传输；这是接住 Claude Code / Cursor 的最低成本入口 | 依赖插件私有数据 API（`docs/Usage/PLUGIN_PRIVATE_DATA_GUIDE.md` 已存在） |
+| 2 | **MCP Server** | ✅ **已完成**（commit `bbed898`）：独立 crate `mcp-server/`，6 个只读工具，41 个 Rust 单测，真实库端到端联调通过 | 已落地，详见 §3.1 |
 | 3 | **AI 写入护栏 + 回滚** | 复用已有 Git 版本控制插件，改为"AI 写入先落独立分支 / 快照，差异预览后合并"；成本最低的做法是每次 AI 改写前自动打快照 tag | 依赖现有 Git 插件 |
+
+### 3.1 MCP Server 落地情况（2026-11-01）
+
+| 项 | 状态 |
+|---|---|
+| 协议 | JSON-RPC 2.0 over stdio，MCP `initialize` 握手 + 协议版本协商（支持 2024-11-05 / 2025-03-26 / 2025-06-18） |
+| 工具 | `list_notes` `read_note` `search` `get_outline` `list_tasks` `get_backlinks`，**全部只读** |
+| 库根定位 | `--library` > `FLYMD_LIBRARY` > 应用设置文件（按平台，优先 `activeLibraryId`）> 当前目录 |
+| 安全边界 | 拒绝绝对路径 / `..` / 指向库外的符号链接；单篇读取上限 4 MB；输出上限 12 万字符；stdout 与日志隔离 |
+| 工程形态 | 独立 crate `mcp-server/`，**未改动 `src-tauri/main.rs`**；release 产物 1.3 MB，仅依赖 serde / serde_json / regex |
+| 分发 | CI 按平台构建，作为独立工件随 Release 分发；并尽力注入应用包（macOS `.app/Contents/MacOS`、Windows/Linux 主程序同级目录） |
+| 文档 | [mcp-server/README.md](../../../mcp-server/README.md)（开发视角）、[docs/Usage/MCP_SERVER_GUIDE.md](../../Usage/MCP_SERVER_GUIDE.md)（用户视角） |
+| 验证 | 41 个 Rust 单测 + 1023 个前端测试 + typecheck 全绿；对真实文库（1134 篇笔记 / 641 条待办）完成端到端握手联调 |
+
+> ⚠️ **未做 `tauri.conf.json` 的 `externalBin`**：Tauri 在 sidecar 缺失时会让**整个 app 构建失败**，风险不可控。改为「独立工件为主渠道 + 尽力注入」的双轨方案。
+>
+> ⚠️ **写入通道仍未开放**：当前切片刻意只读。引入写能力前必须先做差异预览与回滚（见 P0-3）。
 
 ### P1 — 补齐 AI 编辑器入场券
 
