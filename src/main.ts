@@ -823,6 +823,31 @@ function getAutoSave(): AutoSaveHandles {
   return _autoSaveHandles
 }
 
+// Recipes 引擎（定时/触发式 AI 任务，YAML 驱动）
+// 设计见 docs/Task/Active/2026-11-01-scheduled-ai-recipes.md
+//
+// 注意：这里只做 **类型** 引入（编译期擦除，不产生运行时静态 import）。
+// recipes 的 YAML 解析依赖 js-yaml，而 js-yaml chunk 不得进入入口静态闭包
+// （见 scripts/check-entry-closure.mjs 的 NFR-2 门禁），所以引擎本体
+// 在启动时按需动态加载。
+import type { RecipesEngine } from './core/recipes/engine'
+
+let _recipesEngine: RecipesEngine | null = null
+let _recipesEnginePromise: Promise<RecipesEngine> | null = null
+async function getRecipesEngine(): Promise<RecipesEngine> {
+  if (_recipesEngine) return _recipesEngine
+  if (!_recipesEnginePromise) {
+    _recipesEnginePromise = (async () => {
+      const mod = await import('./core/recipes/engine')
+      _recipesEngine = mod.initRecipesEngine({
+        getStore: () => store,
+      })
+      return _recipesEngine
+    })()
+  }
+  return await _recipesEnginePromise
+}
+
 // 最近一次粘贴组合键：normal=Ctrl+V, plain=Ctrl+Shift+V；用于在 paste 事件中区分行为
 let _lastPasteCombo: 'normal' | 'plain' | null = null
 
@@ -4266,7 +4291,8 @@ async function saveFile() {
     dirty = false
     titlebarStatusApi?.refreshTitle()
     // 通知标签系统文件已保存
-    window.dispatchEvent(new CustomEvent('flymd-file-saved'))
+    // detail.path：给 recipes 这类"按保存事件触发"的消费方提供路径（现有监听者忽略 detail，向后兼容）
+    window.dispatchEvent(new CustomEvent('flymd-file-saved', { detail: { path: currentFilePath } }))
     await pushRecent(store, currentFilePath)
     await renderRecentPanel(false)
     logInfo('文件保存成功', { path: currentFilePath, size: editor.value.length })
@@ -4456,7 +4482,7 @@ async function saveAs() {
     // saveFile 也有这一步，但另存为此前漏了：监听器（tabs/integration 的
     // hookFileSavedEvent）会据此在路径变化时更新标签路径并清除脏标记。
     // 缺失导致另存为之后，标签仍指向旧路径且一直显示为未保存。
-    window.dispatchEvent(new CustomEvent('flymd-file-saved'))
+    window.dispatchEvent(new CustomEvent('flymd-file-saved', { detail: { path: target } }))
     // 切到新路径:老路径 unregister(避免继续监听旧文件),新路径 register + markSelfWrite
     try { if (oldPath) extWatcherIntegration?.unregisterFor(oldPath) } catch {}
     try { extWatcherIntegration?.registerFor(target) } catch (e) { console.warn('[extWatcher] registerFor (saveAs) failed', e) }
@@ -8925,6 +8951,18 @@ function bindEvents() {
 
     // 尝试初始化存储（确保完成后再加载扩展，避免读取不到已安装列表）
     await initStore()
+
+    // 定时/触发式 AI 任务（YAML recipes）
+    // 库根由 libraryConfig 的库作用域提供；库切换时引擎自己重载 recipe 并重排调度。
+    // 引擎按需动态加载（js-yaml 不得进入口静态闭包，见 NFR-2）。
+    // 加载失败不影响主流程（recipes 是增强能力，不是必需品）。
+    try {
+      const recipesEngine = await getRecipesEngine()
+      recipesEngine.start()
+    } catch (e) {
+      console.warn('[recipes] 启动失败：', e)
+    }
+
     // 便签模式检测（前置到 reveal 前：窗口几何恢复组需依据是否便签启动决定跳过）。
     // get_cli_args 为幂等命令（Rust 侧重新收集 env 参数），单次调用并缓存，
     // 后续 macOS 兜底打开直接复用缓存值，不再二次 IPC。

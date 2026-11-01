@@ -1,0 +1,24 @@
+# 每日复盘：每天晚上 21 点把当天日记提炼成三条要点
+#
+# mode: none —— 不落盘，只在运行日志里留一段摘要。
+# 想把结果写成笔记，把 mode 改成 note 并给一个 path。
+
+id: daily-review
+name: 每日复盘
+enabled: true
+
+trigger:
+  type: schedule
+  cron: "0 21 * * *"
+
+system: 你是一个简洁的复盘助手。
+
+prompt: |
+  基于本库的 markdown 文件清单：
+  {{files}}
+
+  今天是 {{date}}（{{weekday}}）。
+  请用三条要点总结今天值得记下来的东西，每条不超过 30 字。
+
+output:
+  mode: none

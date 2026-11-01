@@ -2,6 +2,33 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.2.0
+
+> AI no longer only works while you are sitting in front of the editor. Write a YAML recipe and let
+> Flymd process notes on a cron schedule or on save — and every write still goes through the guard.
+
+### Scheduled / triggered AI tasks (recipes)
+
+- New core module `src/core/recipes/`: recipes are YAML files under `<library root>/.flymd/recipes/*.yaml`
+- Two trigger kinds: **cron schedules** (standard 5-field syntax plus `@daily`-style macros) and
+  **on-save** triggers (path glob filtering with a debounce window)
+- Prompt templates support variables: `{{date}}` `{{file}}` `{{content}}` `{{todos}}` `{{files}}` and more;
+  a mistyped variable name is reported in the run log instead of failing silently
+- Three output modes: `none` (log only), `note` (append to a target note), `replace` (overwrite)
+- **Every write goes through the AI write guard**: the previous content is snapshotted first, and a failed
+  snapshot **aborts the write**; the result can be undone with MCP `rollback_write` or the AI Assistant's
+  "Roll back last AI write" menu entry
+- AI settings are **reused from the AI Assistant plugin** (change the key once there and every recipe
+  picks it up); falls back to the built-in free mode when nothing is configured
+
+### Execution trace
+
+- Every run appends a line to `<library root>/.flymd/recipes/runs.jsonl`: success, duration, target file,
+  the matching `snapshotId`, and an excerpt of the AI output — so "did that scheduled job run, what did it
+  write, can I undo it" is answerable at a glance
+- `runs.jsonl` stays device-local and is excluded from WebDAV sync; the recipes themselves (`*.yaml`)
+  travel with the library
+
 ## Update v2.1.0
 
 > The MCP server moves from read-only to writable, but every write is **recorded, previewable, and reversible**.

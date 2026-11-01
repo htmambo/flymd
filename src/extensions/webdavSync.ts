@@ -118,6 +118,11 @@ export const DEFAULT_EXCLUDE_GLOBS: readonly string[] = [
   // 同步出去等于把历史版本推到远端（泄露旧内容 + 纯浪费带宽），
   // 且快照是设备本地的回滚凭据，不该跨设备共享。
   '**/.flymd/ai-guard/**',
+  // recipes 的运行日志：每次执行一行 JSON，是**设备本地**的执行痕迹
+  // （谁在本机跑了什么、AI 返回了什么）。跨设备同步没有意义，还会泄露
+  // 本机的使用痕迹。recipe 本身（.flymd/recipes/*.yaml）是要同步的——
+  // 那是配置，跟着库走才对。
+  '**/.flymd/recipes/runs.jsonl',
 ]
 
 type SyncProfileInput = { localRoot: string; baseUrl: string; remoteRoot: string }

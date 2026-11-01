@@ -1,0 +1,30 @@
+# 保存后补待办：保存日记时自动把正文里的待办提取到汇总笔记
+#
+# 只对 日记/ 目录下的 .md 文件生效；同一文件 5 秒内反复保存只跑一次。
+
+id: todo-from-note
+name: 日记待办提取
+enabled: true
+
+trigger:
+  type: on-save
+  paths: ["日记/*.md"]
+  debounceMs: 5000
+
+system: 你是一个简洁的任务整理助手。
+
+prompt: |
+  请把下面这篇日记里**尚未完成**的待办事项提取出来，逐条列出，不要改写措辞。
+
+  文件：{{file}}
+
+  正文：
+  {{content}}
+
+  参考（AI 自行判断，未完成项是准的，已完成项忽略）：
+  {{todos}}
+
+output:
+  mode: note
+  path: "AI/待办.md"
+  heading: true

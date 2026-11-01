@@ -1,0 +1,32 @@
+# 每日汇总：每天早上 9 点把昨天的笔记汇总成日报
+#
+# 放到 <库根>/.flymd/recipes/ 下。
+# 想先验证链路，把 cron 改成 "* * * * *"（每分钟）跑一轮再改回来。
+
+id: daily-report
+name: 每日汇总
+enabled: true
+
+trigger:
+  type: schedule
+  # 分 时 日 月 周 —— 每天 09:00
+  cron: "0 9 * * *"
+
+system: 你是一个严谨的编辑助手，只输出结论，不写客套话。
+
+prompt: |
+  下面是本库里全部 markdown 文件的清单：
+  {{files}}
+
+  请基于文件名与你的理解，生成一份结构化的日报，包含三个部分：
+  1. 今日要点（最多 5 条）
+  2. 待办与跟进事项
+  3. 一句话总结
+
+  日期：{{date}}
+
+output:
+  # note = 追加到目标笔记（已存在就往下追加，不存在就创建）
+  mode: note
+  path: "AI/日报.md"
+  heading: true

@@ -31,6 +31,13 @@ describe('PR-1: DEFAULT_EXCLUDE_GLOBS reserved patterns', () => {
     // 快照同时是设备本地的回滚凭据，不该跨设备共享。
     expect(DEFAULT_EXCLUDE_GLOBS).toContain('**/.flymd/ai-guard/**')
   })
+
+  it('excludes the recipes run log but keeps the recipe files', () => {
+    // runs.jsonl 是设备本地的执行痕迹（本机跑了什么、AI 返回了什么），不该跨设备。
+    // 但 recipe 本身（.flymd/recipes/*.yaml）是**配置**，必须能跟着库同步。
+    expect(DEFAULT_EXCLUDE_GLOBS).toContain('**/.flymd/recipes/runs.jsonl')
+    expect(DEFAULT_EXCLUDE_GLOBS).not.toContain('**/.flymd/recipes/**')
+  })
 })
 
 describe('shouldSyncRelativePath - reserved excludes (PR-1)', () => {
