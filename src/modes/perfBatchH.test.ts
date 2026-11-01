@@ -6,9 +6,15 @@
 //
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { decorateCodeBlocks } from '../decorate'
 import { measureLineHeightsBatched } from './sourceLineNumbers'
+
+// 本文件在 jsdom 里真实构造数百个代码块并逐块装饰，是仓库里最慢的测试。
+// 空闲机器上最重的用例就要 ~2.4s，贴着 vitest 默认的 5s 超时线；CI 或本机
+// 一有负载就会随机报 "Test timed out in 5000ms"，让发版门禁随机失败
+// （与代码改动无关）。这里按文件放宽到 30s，只影响超时判定，不放宽断言。
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
 function makePreview(count: number): HTMLElement {
   const preview = document.createElement('div')
