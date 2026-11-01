@@ -6,16 +6,24 @@
 //!
 //! 配置来源（按优先级从低到高，**合并**而非替换）：
 //! 1. 内置默认：技术目录 + 常见资源/模板目录
-//! 2. 用户级配置：`~/.config/com.flymd/mcp.json`（不随库同步）
-//! 3. 库级配置：`<库根>/.flymd/mcp.json`（随库走、随 WebDAV 同步）
+//! 2. 用户级配置：`~/.config/com.flymd/ai-scope.json`（不随库同步）
+//! 3. 库级配置：`<库根>/.flymd/ai-scope.json`（随库走、随 WebDAV 同步）
 //! 4. 环境变量 `FLYMD_MCP_EXCLUDE`（逗号分隔）
 //! 5. 命令行 `--exclude <dir>`（可重复）
+//!
+//! **兼容旧名**：早期这套规则只服务 MCP，配置文件叫 `mcp.json`。现在它同时管
+//! 应用内的 AI 通道（recipes 的全库扫描、RAG 知识库、插件的库内读写），名字
+//! 改成更通用的 `ai-scope.json`；但**旧文件仍然继续读取并生效**——用户已有的
+//! `mcp.json` 不会因为改名而失效。两个文件都读，都合并进同一份规则。
 //!
 //! 匹配语义：
 //! - 模式**不含** `/` → 按**目录名**匹配，任意层级都命中（`media` 命中 `a/b/media`）
 //! - 模式**含** `/` → 按**相对库根的路径前缀**匹配（`Personal/media` 只命中这一处）
 //! - 大小写不敏感
 //! - `allowDirs` 优先于 `excludeDirs`：路径前缀命中 allow 时不排除
+//!
+//! 这份规则是**全应用唯一**的排除实现：MCP 服务器、桌面应用的 Rust 命令
+//! （`flymd_list_markdown_files`）、宿主给插件的库内读写入口，都走这里。
 
 use std::path::{Path, PathBuf};
 
@@ -145,6 +153,21 @@ impl McpConfig {
         let rel_parent = parent.to_string_lossy().replace('\\', "/");
         self.is_excluded_dir(&rel_parent)
     }
+
+    /// 批量判断：给一批相对库根的文件路径，返回其中**被排除**的那些。
+    ///
+    /// 桌面应用侧用它给插件做批量过滤——一次 IPC 判定一批，
+    /// 规则仍然只有这一份实现（应用侧不另写一份匹配逻辑）。
+    pub fn filter_excluded_files(&self, rel_paths: &[String]) -> Vec<String> {
+        let mut out = Vec::new();
+        for p in rel_paths {
+            let rel = p.replace('\\', "/");
+            if self.is_excluded_file(&rel) {
+                out.push(rel);
+            }
+        }
+        out
+    }
 }
 
 /// 从配置文件读取（JSON）。文件不存在或解析失败都不报错，返回空配置。
@@ -187,28 +210,55 @@ fn read_config_file(path: &Path) -> McpConfig {
     cfg
 }
 
+/// 通用配置文件名（新）：这套规则现在管的不只是 MCP。
+pub const CONFIG_FILE_NAME: &str = "ai-scope.json";
+
+/// 旧配置文件名（兼容）：早期只服务 MCP 时叫这个。
+pub const LEGACY_CONFIG_FILE_NAME: &str = "mcp.json";
+
 /// 用户级配置路径（不随库走）。
-pub fn user_config_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let home = PathBuf::from(home);
-    let mut out = Vec::new();
+///
+/// 返回**所有**候选路径（通用名优先，旧名在后）——旧文件继续生效。
+pub fn user_config_paths() -> Vec<PathBuf> {
+    let home = match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        Some(h) => PathBuf::from(h),
+        None => return Vec::new(),
+    };
+    let mut dirs: Vec<PathBuf> = Vec::new();
     // macOS
-    out.push(home.join("Library/Application Support/com.flymd/mcp.json"));
+    dirs.push(home.join("Library/Application Support/com.flymd"));
     // Linux
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-        out.push(PathBuf::from(xdg).join("com.flymd/mcp.json"));
+        dirs.push(PathBuf::from(xdg).join("com.flymd"));
     }
-    out.push(home.join(".config/com.flymd/mcp.json"));
+    dirs.push(home.join(".config/com.flymd"));
     // Windows
     if let Some(appdata) = std::env::var_os("APPDATA") {
-        out.push(PathBuf::from(appdata).join("com.flymd/mcp.json"));
+        dirs.push(PathBuf::from(appdata).join("com.flymd"));
     }
-    out.into_iter().find(|p| p.exists())
+
+    let mut out = Vec::new();
+    for dir in dirs {
+        out.push(dir.join(CONFIG_FILE_NAME));
+        out.push(dir.join(LEGACY_CONFIG_FILE_NAME));
+    }
+    out
 }
 
 /// 库级配置路径（随库走，随 WebDAV 同步）。
+///
+/// 返回**所有**候选路径（通用名优先，旧名在后）——旧文件继续生效。
+pub fn library_config_paths(library_root: &Path) -> Vec<PathBuf> {
+    let dir = library_root.join(".flymd");
+    vec![
+        dir.join(CONFIG_FILE_NAME),
+        dir.join(LEGACY_CONFIG_FILE_NAME),
+    ]
+}
+
+/// 旧接口：库级配置路径（保留给既有调用方与测试）。
 pub fn library_config_path(library_root: &Path) -> PathBuf {
-    library_root.join(".flymd").join("mcp.json")
+    library_root.join(".flymd").join(LEGACY_CONFIG_FILE_NAME)
 }
 
 /// 组装最终生效配置。
@@ -217,11 +267,13 @@ pub fn library_config_path(library_root: &Path) -> PathBuf {
 pub fn resolve(library_root: Option<&Path>, cli_excludes: &[String]) -> McpConfig {
     let mut cfg = McpConfig::with_defaults();
 
-    if let Some(p) = user_config_path() {
+    for p in user_config_paths() {
         cfg.merge(&read_config_file(&p));
     }
     if let Some(root) = library_root {
-        cfg.merge(&read_config_file(&library_config_path(root)));
+        for p in library_config_paths(root) {
+            cfg.merge(&read_config_file(&p));
+        }
     }
     // 环境变量
     if let Ok(env) = std::env::var("FLYMD_MCP_EXCLUDE") {
@@ -362,5 +414,54 @@ mod tests {
     fn 库级配置路径在_dot_flymd_下() {
         let p = library_config_path(Path::new("/tmp/lib"));
         assert!(p.ends_with(".flymd/mcp.json"));
+    }
+
+    #[test]
+    fn 通用配置文件名与旧名都读_旧名不失效() {
+        let root = std::env::temp_dir().join(format!("flymd-cfg-compat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".flymd")).unwrap();
+
+        // 旧名文件：继续生效
+        std::fs::write(
+            root.join(".flymd/mcp.json"),
+            r#"{"excludeDirs":["旧名目录"]}"#,
+        )
+        .unwrap();
+        // 新名文件：也生效
+        std::fs::write(
+            root.join(".flymd/ai-scope.json"),
+            r#"{"excludeDirs":["新名目录"]}"#,
+        )
+        .unwrap();
+
+        let cfg = resolve(Some(&root), &[]);
+        assert!(cfg.is_excluded_dir("旧名目录"), "旧配置文件必须继续生效");
+        assert!(cfg.is_excluded_dir("新名目录"), "新配置文件必须生效");
+        assert!(cfg.is_excluded_dir("media"), "内置默认仍生效");
+    }
+
+    #[test]
+    fn 库级配置候选路径含新旧两个名字() {
+        let paths = library_config_paths(Path::new("/tmp/lib"));
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with(".flymd/ai-scope.json"), "通用名优先");
+        assert!(paths[1].ends_with(".flymd/mcp.json"), "旧名兼容");
+    }
+
+    #[test]
+    fn 批量过滤返回被排除的路径() {
+        let cfg = McpConfig::with_defaults();
+        let input = vec![
+            "日记/今天.md".to_string(),
+            "media/88-Template/simple.md".to_string(),
+            "media/test/x.md".to_string(),
+            "a/b/media/deep.md".to_string(),
+            "顶层.md".to_string(),
+        ];
+        let blocked = cfg.filter_excluded_files(&input);
+        assert_eq!(blocked.len(), 3, "media 下的与深层 media 都该被排除");
+        assert!(blocked.iter().any(|b| b == "media/88-Template/simple.md"));
+        assert!(blocked.iter().any(|b| b == "a/b/media/deep.md"));
     }
 }

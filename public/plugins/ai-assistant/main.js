@@ -2383,6 +2383,25 @@ function buildTodoFileNameBase(now){
   return `TODO-${y}${m}${d}`
 }
 
+// 把库内绝对路径转成库根相对路径（宿主 readLibraryFile/writeLibraryFile 用的形式）。
+// 转换不了（无库根 / 不在库内 / 含 ..）返回 null。
+async function toLibraryRelPath(context, absPath){
+  try {
+    if (!context || typeof context.getLibraryRoot !== 'function') return null
+    const root = await context.getLibraryRoot()
+    if (!root) return null
+    const rn = String(root).replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase()
+    const pn = String(absPath || '').replace(/\\/g, '/')
+    if (!pn.toLowerCase().startsWith(rn + '/')) return null
+    const rel = pn.slice(rn.length + 1)
+    if (!rel) return null
+    if (rel.split('/').some((s) => s === '..')) return null
+    return rel
+  } catch {
+    return null
+  }
+}
+
 async function generateTodoFilePathFromCurrent(ctx){
   const input = ctx && typeof ctx === 'object' ? ctx : {}
   const src = typeof input.filePath === 'string' && input.filePath
@@ -2444,14 +2463,23 @@ async function createTodoStickyFromContent(context, content, fileCtx){
 
     let existingText = ''
     try {
-      if (typeof context.invoke === 'function') {
-        try {
-          existingText = String(await context.invoke('read_text_file_any', { path: targetPath }) || '')
-        } catch (err) {
-          const msg = String((err && err.message) || err || '')
-          if (!/path not found/i.test(msg)) throw err
-          existingText = ''
+      // 走宿主的**库内受限读写**入口（context.readLibraryFile）。
+      //
+      // 之前这里调的是 `context.invoke('read_text_file_any')` —— 那个命令在插件
+      // denylist 里（它接受任意绝对路径，等于让插件以应用权限读全盘），调用必然
+      // 被拒，TODO 便签功能实际上一直是坏的（报「读取 TODO 文件失败」）。
+      // 宿主给的 readLibraryFile/writeLibraryFile 受库根与目录排除规则约束，
+      // 写入还会留护栏快照，可回滚。
+      if (typeof context.readLibraryFile === 'function') {
+        const rel = await toLibraryRelPath(context, targetPath)
+        if (!rel) {
+          context.ui.notice('无法确定 TODO 文件的库内路径', 'err', 2600)
+          return
         }
+        existingText = String((await context.readLibraryFile(rel)) || '')
+      } else {
+        context.ui.notice('当前版本不支持库内文件读写，请升级 Flymd', 'err', 3000)
+        return
       }
     } catch (err) {
       context.ui.notice('读取 TODO 文件失败：' + (err && err.message ? err.message : '未知错误'), 'err', 3000)
@@ -2462,8 +2490,13 @@ async function createTodoStickyFromContent(context, content, fileCtx){
     const finalContent = (base ? (base + '\n\n') : '') + todoText + '\n'
 
     try {
-      if (typeof context.invoke === 'function') {
-        await context.invoke('write_text_file_any', { path: targetPath, content: finalContent })
+      if (typeof context.writeLibraryFile === 'function') {
+        const rel = await toLibraryRelPath(context, targetPath)
+        if (!rel) {
+          context.ui.notice('无法确定 TODO 文件的库内路径', 'err', 2600)
+          return
+        }
+        await context.writeLibraryFile(rel, finalContent)
       } else {
         await context.openFileByPath(targetPath)
         context.setEditorValue(finalContent)

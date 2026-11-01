@@ -1278,7 +1278,86 @@ console.log(files[0]);
 **注意：**
 - `includeDirs` 与 `excludeDirs` 都会在遍历阶段生效（会影响递归进入哪些目录），适合大库性能场景；
 - `excludeDirs` 会在遍历阶段直接跳过目录（不会进入递归），适合大库性能场景；
-- Windows 下排除目录匹配是大小写不敏感的（否则用户会骂你）。
+- Windows 下排除目录匹配是大小写不敏感的（否则用户会骂你）；
+- 返回结果**已经过全应用统一的 AI 可见范围过滤**（见下一节）——被排除的目录不会出现在列表里。
+
+### AI 可见范围与受控读写
+
+宿主有一套**全应用统一**的目录排除规则，规则来源与 MCP 服务器完全一致：
+
+- 内置默认：技术目录（`.git` / `node_modules` / `.obsidian` …）+ 常见资源目录（`media` / `assets` / `attachments` / `templates` / `模板` / `附件` …）；
+- 用户级配置：`~/.config/com.flymd/ai-scope.json`；
+- 库级配置：`<库根>/.flymd/ai-scope.json`（旧名 `mcp.json` 继续生效）。
+
+被排除的目录对**所有** AI 通道都不可见：MCP 客户端、AI 助手的知识库、定时任务（recipes）、插件的库文件枚举——边界一致，不会出现「同一个模板目录在 MCP 里看不见、在知识库里却能召回」。
+
+插件**不需要**自己实现一遍匹配逻辑，交给宿主判定。
+
+#### context.getAiScope
+
+取当前库生效的 AI 可见范围规则。返回：
+- `excluded`：排除规则数组（目录名或相对路径前缀）
+- `allowed`：豁免规则数组（相对路径前缀，优先于排除）
+
+```javascript
+const scope = await context.getAiScope();
+// { excluded: ['.git', 'media', 'templates', ...], allowed: [] }
+```
+
+#### context.filterAiExcludedPaths
+
+批量判定哪些库内相对路径被排除。返回**被排除**的子集（判定在 Rust 侧，一次 IPC 判一批）。
+
+```javascript
+const blocked = await context.filterAiExcludedPaths(['笔记/a.md', 'media/模板.md']);
+// ['media/模板.md']
+```
+
+#### context.readLibraryFile
+
+读库内文件。路径必须是**库内相对路径**。
+
+```javascript
+const text = await context.readLibraryFile('AI/日报.md'); // 文件不存在返回 null
+```
+
+**约束：**
+- 绝对路径、`..` 越界一律拒绝；
+- 落在被排除目录里的路径拒绝（AI 不该看见的地方，插件也不该碰）；
+- 返回 `null` 表示文件不存在。
+
+#### context.writeLibraryFile
+
+写库内文件。路径必须是**库内相对路径**。
+
+```javascript
+await context.writeLibraryFile('AI/日报.md', '# 标题\n内容');
+```
+
+**约束：**
+- 同 `readLibraryFile` 的路径约束；
+- **写入前自动留 AI 写入护栏快照**，可用下面的 `aiGuardRollbackLast` 回滚；
+- 父目录不存在会自动创建。
+
+#### context.aiGuardList
+
+列出本库可回滚的 AI 写入。返回 `{ items: [{ id, path, operation, actor, reason, createdAt }] }`。
+
+```javascript
+const { items } = await context.aiGuardList(20);
+```
+
+#### context.aiGuardRollbackLast
+
+回滚最近一次 AI 写入（也可按路径指定）。回滚本身也会生成快照，所以**回滚可以再回滚**。
+
+```javascript
+await context.aiGuardRollbackLast({ path: 'AI/日报.md' });
+```
+
+**注意：**
+- 库根由宿主决定，**不接受插件传入**——否则恶意插件可以传 `libraryRoot="/"` 让回滚写到库外；
+- 这两个 API 与 MCP 客户端的 `list_writes` / `rollback_write` 落在**同一个快照目录**，互相可回滚。
 
 ### context.watchLibrary
 

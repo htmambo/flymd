@@ -157,20 +157,21 @@ fn write_message<W: Write>(out: &mut W, msg: &serde_json::Value) -> std::io::Res
 fn print_config(lib: &Library) {
     let cfg = lib.config();
     let excluded = lib.excluded_dirs();
-    let sources: Vec<serde_json::Value> = config::user_config_path()
-        .map(|p| serde_json::json!({"级别": "用户级", "路径": p.to_string_lossy()}))
+    let sources: Vec<serde_json::Value> = config::user_config_paths()
         .into_iter()
-        .chain({
-            let p = config::library_config_path(lib.root());
-            if p.exists() {
-                Some(serde_json::json!({
-                    "级别": "库级",
-                    "路径": p.to_string_lossy(),
-                }))
-            } else {
-                None
-            }
-        })
+        .filter(|p| p.exists())
+        .map(|p| serde_json::json!({"级别": "用户级", "路径": p.to_string_lossy()}))
+        .chain(
+            config::library_config_paths(lib.root())
+                .into_iter()
+                .filter(|p| p.exists())
+                .map(|p| {
+                    serde_json::json!({
+                        "级别": "库级",
+                        "路径": p.to_string_lossy(),
+                    })
+                }),
+        )
         .collect();
 
     let out = serde_json::json!({

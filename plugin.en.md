@@ -821,6 +821,84 @@ if (!root) {
 - Combine with `context.getCurrentFilePath` to calculate “current file’s folder”;
 - Build library-relative paths when exporting or generating helper documents.
 
+### AI scope and controlled library I/O
+
+The host owns **one app-wide** directory exclusion rule set. Its sources are identical to the MCP server's:
+
+- Built-in defaults: technical directories (`.git` / `node_modules` / `.obsidian` …) plus common resource directories (`media` / `assets` / `attachments` / `templates` …);
+- User-level config: `~/.config/com.flymd/ai-scope.json`;
+- Library-level config: `<library root>/.flymd/ai-scope.json` (the legacy name `mcp.json` still works).
+
+Excluded directories are invisible to **every** AI channel: MCP clients, the AI Assistant knowledge base, scheduled tasks (recipes), and plugin library-file enumeration. The boundary stays consistent — a template directory never disappears on one side while still being retrievable on the other.
+
+Plugins do **not** need to re-implement the matching logic; the host decides.
+
+#### context.getAiScope
+
+Get the AI visibility rules in effect for the current library. Returns:
+- `excluded`: exclusion rules (directory names or library-relative path prefixes)
+- `allowed`: override rules (library-relative path prefixes, take precedence over exclusions)
+
+```javascript
+const scope = await context.getAiScope();
+// { excluded: ['.git', 'media', 'templates', ...], allowed: [] }
+```
+
+#### context.filterAiExcludedPaths
+
+Decide which library-relative paths are excluded. Returns the **excluded** subset (the decision runs in Rust — one IPC per batch).
+
+```javascript
+const blocked = await context.filterAiExcludedPaths(['notes/a.md', 'media/template.md']);
+// ['media/template.md']
+```
+
+#### context.readLibraryFile
+
+Read a file inside the library. The path must be **library-relative**.
+
+```javascript
+const text = await context.readLibraryFile('AI/report.md'); // null when the file does not exist
+```
+
+**Constraints:**
+- Absolute paths and `..` traversal are rejected;
+- Paths inside excluded directories are rejected (plugins must not touch what the AI may not see);
+- Returns `null` when the file does not exist.
+
+#### context.writeLibraryFile
+
+Write a file inside the library. The path must be **library-relative**.
+
+```javascript
+await context.writeLibraryFile('AI/report.md', '# Title\nbody');
+```
+
+**Constraints:**
+- Same path constraints as `readLibraryFile`;
+- **An AI write-guard snapshot is taken automatically** before writing, so the change can be rolled back with `aiGuardRollbackLast`;
+- Missing parent directories are created automatically.
+
+#### context.aiGuardList
+
+List the AI writes of this library that can be rolled back. Returns `{ items: [{ id, path, operation, actor, reason, createdAt }] }`.
+
+```javascript
+const { items } = await context.aiGuardList(20);
+```
+
+#### context.aiGuardRollbackLast
+
+Roll back the most recent AI write (or a specific path). The rollback itself produces a snapshot, so **a rollback can be rolled back**.
+
+```javascript
+await context.aiGuardRollbackLast({ path: 'AI/report.md' });
+```
+
+**Notes:**
+- The library root is decided by the host and **cannot be supplied by the plugin** — otherwise a malicious plugin could pass `libraryRoot="/"` and write outside the library;
+- These APIs and the MCP client's `list_writes` / `rollback_write` share **the same snapshot directory**, so each can roll the other back.
+
 ### context.watchLibrary
 
 Watch filesystem changes under the current library root (optionally recursive). Returns an `unwatch()` function.

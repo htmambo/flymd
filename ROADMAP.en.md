@@ -2,6 +2,36 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.3.0
+
+> Directory exclusion no longer covers only the MCP channel. **One rule set, app-wide** —
+> template directories must not surface in scheduled tasks, the knowledge base, or plugin enumeration either.
+
+### Unified AI visibility scope
+
+- The rule set still has exactly one implementation, in the Rust `flymd_mcp::config::McpConfig`;
+  the desktop app references it through the path dependency it already has — no new dependency, no second
+  copy of the matching logic
+- `flymd_list_markdown_files` now **prunes** while walking instead of filtering afterwards:
+  scheduled tasks (recipes) no longer see template / attachment directories in `{{files}}`
+- Two new Tauri commands: `flymd_ai_scope` (the rules in effect) and `flymd_ai_scope_filter` (batch decisions)
+- The config file is now `<library root>/.flymd/ai-scope.json` (renamed, since it no longer serves only MCP);
+  **the legacy name `mcp.json` keeps working**, so existing configurations stay valid
+- The AI Assistant knowledge base (flymd-RAG) **inherits this for free** through the host's
+  `listLibraryFiles`; its incremental watcher path gets an explicit check
+- Plugin library-file enumeration is subject to the same rules
+
+### Plugin API
+
+- New `context.getAiScope()` / `context.filterAiExcludedPaths()`: read the rules in effect and decide
+  paths in batches — **plugins no longer need their own matching logic**
+- New `context.readLibraryFile()` / `context.writeLibraryFile()`: library-scoped reads and writes
+  constrained by the library root and the exclusion rules; writes take an AI write-guard snapshot
+- **Fixed**: the AI Assistant's "TODO sticky note" called `read_text_file_any` / `write_text_file_any`,
+  which are on the plugin denylist (the denylist landed 1206 commits after that call) — the feature was
+  broken; it now goes through the library-scoped I/O
+- Documented `context.aiGuardList()` / `context.aiGuardRollbackLast()` in the plugin docs
+
 ## Update v2.2.0
 
 > AI no longer only works while you are sitting in front of the editor. Write a YAML recipe and let

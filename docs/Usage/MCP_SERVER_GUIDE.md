@@ -139,7 +139,7 @@ Obsidian 之类的库里常有 `media/`（附件）、`templates/`（模板）�
 但里面可能写着 `- [ ] 某某订阅` 这样的**占位符**——一旦被索引，AI 就会把它当成你的真实待办，
 搜索结果里也会混进模板内容。
 
-flymd-mcp 默认把这些目录排除在外：
+flymd 默认把这些目录排除在外：
 
 | 类别 | 默认排除 |
 |---|---|
@@ -150,16 +150,35 @@ flymd-mcp 默认把这些目录排除在外：
 `get_backlinks` 都看不到），而且 `read_note` 读到其中的文件会直接报错——否则 AI 只要猜到
 路径名就能绕过排除。
 
+### 6.0 这套规则是全应用统一的
+
+排除规则**只有一份实现**，在 Flymd 的 Rust 核心里。所有 AI 通道都按它来：
+
+| AI 通道 | 受排除规则约束 |
+|---|---|
+| MCP 客户端（外部 AI 读写你的库） | ✅ |
+| 应用内的定时任务（YAML recipes 的 `{{files}}`） | ✅ |
+| AI 助手的知识库（flymd-RAG） | ✅ |
+| 插件的库文件枚举（`context.listLibraryFiles`） | ✅ |
+| 插件的库内读写（`context.readLibraryFile` / `writeLibraryFile`） | ✅ |
+
+这样边界才成立：同一个模板目录不会在 MCP 里消失、却在知识库里被检索到，
+或者定时任务把它当成真待办喂给模型。
+
 ### 6.1 添加自己的排除项
 
 四个来源，**按优先级合并**（不是互相替换）：
 
 | 来源 | 位置 | 适合场景 |
 |---|---|---|
-| 库级配置 | `<库根>/.flymd/mcp.json` | 跟着库走、随 WebDAV 同步，团队共享 |
-| 用户级配置 | `~/.config/com.flymd/mcp.json`（macOS 为 `~/Library/Application Support/com.flymd/mcp.json`） | 跨所有库生效的个人偏好 |
+| 库级配置 | `<库根>/.flymd/ai-scope.json` | 跟着库走、随 WebDAV 同步，团队共享 |
+| 用户级配置 | `~/.config/com.flymd/ai-scope.json`（macOS 为 `~/Library/Application Support/com.flymd/ai-scope.json`） | 跨所有库生效的个人偏好 |
 | 环境变量 | `FLYMD_MCP_EXCLUDE`，逗号或分号分隔 | 临时调整 |
 | 命令行 | `--exclude <目录>`，可重复 | 单次运行 |
+
+> **旧名继续生效**：早期这套规则只服务 MCP，配置文件叫 `mcp.json`。
+> `.flymd/mcp.json` 与 `~/.config/com.flymd/mcp.json` **仍然会被读取并生效**，
+> 两个文件都读、都合并。你已有的配置不会因为改名而失效。
 
 库级配置写法：
 
@@ -170,8 +189,8 @@ flymd-mcp 默认把这些目录排除在外：
 }
 ```
 
-- `excludeDirs` —— 要排除的目录
-- `allowDirs` —— 豁免名单，**优先于**排除规则
+- `excludeDirs` —— 要排除的目录（也接受 `exclude` 这个键名）
+- `allowDirs` —— 豁免名单，**优先于**排除规则（也接受 `allow` 这个键名）
 
 命令行写法：
 

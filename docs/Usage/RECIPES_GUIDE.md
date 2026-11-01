@@ -113,6 +113,10 @@ output:
 
 `{{files}}` 会触发一次全库扫描，所以只在真的用到时才付这个代价。
 
+> **`{{files}}` 遵守全局目录排除规则**：模板 / 附件目录（`media` / `templates` / `模板` …）
+> 不会出现在清单里。规则与 MCP 客户端、AI 助手的知识库完全一致，
+> 配置在 `<库根>/.flymd/ai-scope.json`（详见 `docs/Usage/MCP_SERVER_GUIDE.md` 第 6 节）。
+
 ## 五、结果写到哪里
 
 `output.mode` 决定 AI 的回答怎么处理：

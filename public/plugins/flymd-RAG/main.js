@@ -989,6 +989,30 @@ function shouldIndexRel(rel, cfg, caseInsensitive) {
   return true
 }
 
+/**
+ * 判断某个库内相对路径是否落在**全应用统一**的目录排除范围里。
+ *
+ * RAG 自己的 `excludeDirs` 只是插件侧的偏好；宿主另有一份全局规则
+ * （内置默认 + <库根>/.flymd/ai-scope.json），MCP 客户端、AI 助手的知识库、
+ * 定时任务全都按它来。知识库必须跟它们保持一致——否则同一个模板目录，
+ * 在 MCP 里 AI 看不见，在 RAG 的检索结果里却能召回。
+ *
+ * 判定交给宿主（`filterAiExcludedPaths`），规则只在 Rust 侧有一份实现；
+ * 宿主没有这个 API 时按"不排除"处理（老宿主无此能力，不该阻断索引）。
+ */
+async function isAiScopeBlocked(ctx, rel) {
+  try {
+    if (!ctx || typeof ctx.filterAiExcludedPaths !== 'function') return false
+    const rels = Array.isArray(rel) ? rel : [rel]
+    const list = rels.map((x) => String(x || '')).filter((x) => !!x)
+    if (!list.length) return false
+    const blocked = await ctx.filterAiExcludedPaths(list)
+    return Array.isArray(blocked) && blocked.length > 0
+  } catch {
+    return false
+  }
+}
+
 function stopIncrementalWatch() {
   try {
     for (const fn of FLYSMART_WATCH_DISPOSERS || []) {
@@ -1032,6 +1056,8 @@ async function refreshIncrementalWatch(ctx, cfgOverride) {
             continue
           }
           if (!shouldIndexRel(rel, cfg, caseInsensitive)) continue
+          // 全应用统一的目录排除规则：被排除的目录不进知识库
+          if (await isAiScopeBlocked(ctx, rel)) continue
           enqueueIncrementalTask('upsert', rel)
         }
         // 某些环境会丢事件：任何事件进来都顺带触发一次低成本补漏
@@ -2621,6 +2647,8 @@ async function incrementalIndexOne(ctx, relativePath, opts) {
     if (!sourceRel) return
     if (isOfficeDerivedRel(sourceRel, caseInsensitive)) return
     if (!shouldIndexRel(sourceRel, cfg, caseInsensitive)) return
+    // 全应用统一的目录排除规则（与 MCP / 定时任务 / AI 助手一致）
+    if (await isAiScopeBlocked(ctx, sourceRel)) return
     let indexRel = isOfficeRel(sourceRel) ? buildOfficeDerivedRel(sourceRel) : sourceRel
 
     if (typeof ctx.getPluginDataDir !== 'function') {

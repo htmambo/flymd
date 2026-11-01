@@ -2,6 +2,35 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## 更新 v2.3.0
+
+> 目录排除规则不再只管 MCP 一条通道。**一套规则，全应用生效**——
+> 模板目录在定时任务、知识库、插件枚举里也不该出现。
+
+### AI 可见范围统一
+
+- 排除规则的实现仍然只有一份，在 Rust 的 `flymd_mcp::config::McpConfig` 里；
+  桌面应用通过已有的路径依赖引用它，不新增任何依赖、不复刻第二份匹配逻辑
+- `flymd_list_markdown_files` 改为按规则**剪枝**遍历：定时任务（recipes）的 `{{files}}`
+  看不到模板 / 附件目录了
+- 新增两个 Tauri 命令：`flymd_ai_scope`（取生效规则）、`flymd_ai_scope_filter`（批量判定）
+- 配置文件名扩展为 `<库根>/.flymd/ai-scope.json`（更名，因为不再只服务 MCP）；
+  **旧名 `mcp.json` 继续生效**，用户已有配置不会失效
+- AI 助手的知识库（flymd-RAG）通过宿主的 `listLibraryFiles` **自动继承**；
+  增量监听路径单独补判定
+- 插件的库文件枚举同样受规则约束
+
+### 插件 API
+
+- 新增 `context.getAiScope()` / `context.filterAiExcludedPaths()`：
+  拿到生效规则、批量判定路径，**插件不需要自己实现匹配逻辑**
+- 新增 `context.readLibraryFile()` / `context.writeLibraryFile()`：
+  库根约束 + 排除规则约束的库内读写入口，写入自动留护栏快照
+- **修复**：AI 助手的「TODO 便签」此前调用的 `read_text_file_any` / `write_text_file_any`
+  在插件 denylist 里（denylist 晚于该调用 1206 个提交），功能一直是坏的
+  ——现在改走库内受限读写
+- 补记 `context.aiGuardList()` / `context.aiGuardRollbackLast()` 的插件文档
+
 ## 更新 v2.2.0
 
 > AI 不再只在「你守在编辑器前」时才工作。写一条 YAML 配方，让 Flymd 按 cron 或保存事件

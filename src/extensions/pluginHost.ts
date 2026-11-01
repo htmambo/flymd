@@ -19,6 +19,7 @@ import { save, open } from '@tauri-apps/plugin-dialog'
 import type { Store } from '@tauri-apps/plugin-store'
 import { getLibraryScope } from '../core/libraryConfig'
 import { readLibraryPrivate, writeLibraryPrivate } from '../core/libraryPrivate'
+import { readTextFileAnySafe, writeTextFileAnySafe } from '../core/fsSafe'
 
 // ===== PR-5: 库作用域存储工厂 =====
 // 抽离成独立函数便于单测(类比 createDocPositionStore 模式)。
@@ -462,6 +463,50 @@ function normalizeRelative(base: string, target: string): string {
 
 function isWindowsPath(p: string): boolean {
   return /[a-zA-Z]:[\\/]/.test(p) || p.includes('\\')
+}
+
+/**
+ * 把插件给的路径归一成**库内相对路径**。
+ * 绝对路径、前导斜杠、`..` 越界、空路径一律返回 null（调用方据此拒绝）。
+ *
+ * 前导斜杠也拒绝：约定与 MCP 的 `resolve_write_path` 一致——
+ * 「路径必须是相对于库根的相对路径」，不猜测用户是不是想表达「从库根开始」。
+ */
+export function normalizeLibraryRelPath(p: unknown): string | null {
+  if (typeof p !== 'string') return null
+  const raw = p.trim().replace(/\\/g, '/')
+  if (!raw) return null
+  if (raw.startsWith('/')) return null
+  if (/^[a-zA-Z]:/.test(raw)) return null
+  const segs = raw.split('/').filter((s) => s !== '' && s !== '.')
+  if (segs.some((s) => s === '..')) return null
+  if (!segs.length) return null
+  return segs.join('/')
+}
+
+/**
+ * 断言某个库内相对路径在 AI 可见范围内。
+ *
+ * 判定在 Rust 侧做（规则只有一份：`flymd_mcp::config::McpConfig`），
+ * 这里只负责把结果翻译成一句人话。
+ */
+async function assertPathAiVisible(root: string, rel: string): Promise<void> {
+  try {
+    const res = (await invoke('flymd_ai_scope_filter', {
+      libraryRoot: root,
+      paths: [rel],
+    })) as { blocked?: string[] }
+    if (Array.isArray(res?.blocked) && res.blocked.length > 0) {
+      throw new Error(
+        `路径「${rel}」在 AI 可见范围之外（已被目录排除规则排除）。` +
+          `如需放开，在 <库根>/.flymd/ai-scope.json 的 allowDirs 里加上它。`,
+      )
+    }
+  } catch (e) {
+    // 判定本身失败要拦住：宁可拒绝一次合法写入，也不能在规则失效时放行
+    if (e instanceof Error && /AI 可见范围之外/.test(e.message)) throw e
+    throw new Error(`无法确认路径的 AI 可见范围：${(e as Error)?.message || String(e)}`)
+  }
 }
 
 function normalizePathForKey(p: string): string {
@@ -1431,6 +1476,94 @@ export function createPluginHost(
         }
         return res
       },
+      // ===== AI 可见范围（全应用统一的目录排除规则）=====
+      //
+      // 规则只有一份：在 Rust 的 `flymd_mcp::config::McpConfig` 里，MCP 服务器、
+      // 桌面应用的 Rust 命令、这里全都走它。插件**不需要**自己实现一遍匹配逻辑，
+      // 也不允许自己指定库根——库根由宿主提供。
+      //
+      // 配置位置：`<库根>/.flymd/ai-scope.json`（旧名 `mcp.json` 继续生效）。
+      getAiScope: async () => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        const res = (await invoke('flymd_ai_scope', { libraryRoot: root })) as {
+          excluded?: string[]
+          allowed?: string[]
+        }
+        return {
+          excluded: Array.isArray(res?.excluded) ? res.excluded : [],
+          allowed: Array.isArray(res?.allowed) ? res.allowed : [],
+        }
+      },
+      /**
+       * 批量判定哪些库内相对路径被排除。返回**被排除**的子集。
+       * 判定在 Rust 侧做（一次 IPC 判一批），插件侧零规则副本。
+       */
+      filterAiExcludedPaths: async (paths: string[]) => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        const list = Array.isArray(paths) ? paths.map((x) => String(x || '')) : []
+        if (!list.length) return []
+        const res = (await invoke('flymd_ai_scope_filter', {
+          libraryRoot: root,
+          paths: list,
+        })) as { blocked?: string[] }
+        return Array.isArray(res?.blocked) ? res.blocked : []
+      },
+      // ===== 库内受限读写 =====
+      //
+      // 插件原本要读写库内文件只能调 `read_text_file_any` / `write_text_file_any`，
+      // 但那两个命令在插件 denylist 里（它们接受任意绝对路径，等于让插件以应用
+      // 权限读写全盘）。这里给出**库根约束**的替代入口：
+      // - 路径必须是库内相对路径，越界一律拒绝
+      // - 落在被排除目录里的路径拒绝读写（AI 不该看见的地方，插件也不该碰）
+      // - 写入前留护栏快照，可回滚
+      readLibraryFile: async (relPath: string) => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        const rel = normalizeLibraryRelPath(relPath)
+        if (!rel) throw new Error('路径必须是库内相对路径')
+        await assertPathAiVisible(root, rel)
+        const abs = joinPath(root, rel)
+        try {
+          return await readTextFileAnySafe(abs)
+        } catch {
+          return null
+        }
+      },
+      writeLibraryFile: async (relPath: string, content: string) => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        const rel = normalizeLibraryRelPath(relPath)
+        if (!rel) throw new Error('路径必须是库内相对路径')
+        await assertPathAiVisible(root, rel)
+        const abs = joinPath(root, rel)
+        const text = String(content ?? '')
+
+        let before: string | null = null
+        try {
+          before = await readTextFileAnySafe(abs)
+        } catch {
+          before = null
+        }
+        // 写入留快照：可回滚
+        await invoke('ai_guard_snapshot', {
+          libraryRoot: root,
+          path: abs,
+          newContent: text,
+          beforeContent: before,
+          operation: 'plugin_library_write',
+          actor: 'plugin',
+          reason: null,
+        })
+        const dir = abs.replace(/[\\/][^\\/]*$/, '')
+        if (dir && dir !== abs) {
+          try {
+            await mkdir(dir as any, { recursive: true } as any)
+          } catch {}
+        }
+        await writeTextFileAnySafe(abs, text)
+      },
       setEditorValue: (v: string) => {
         try {
           const ed = deps.getEditor()
@@ -1797,6 +1930,38 @@ export function createPluginHost(
             sensitivity: 'base',
           }),
         )
+        // ===== AI 可见范围过滤 =====
+        //
+        // 插件自己传的 excludeDirs 只是插件侧的偏好；**全应用统一**的目录排除规则
+        // （内置默认 + <库根>/.flymd/ai-scope.json）在这里统一生效——
+        // 否则同一个库，RAG 知识库里的模板目录会被检索到，而 MCP 客户端看不到，
+        // 两边的 AI 看到的内容就不一样了。
+        //
+        // 判定在 Rust 侧做（一次 IPC 判一批），规则只有一份实现。
+        if (out.length) {
+          try {
+            const res = (await invoke('flymd_ai_scope_filter', {
+              libraryRoot: base,
+              paths: out.map((f) => f.relative),
+            })) as { blocked?: string[] }
+            const blocked = new Set(
+              (Array.isArray(res?.blocked) ? res.blocked : []).map((x) =>
+                String(x || '').replace(/\\/g, '/').toLowerCase(),
+              ),
+            )
+            if (blocked.size) {
+              const kept = out.filter(
+                (f) => !blocked.has(String(f.relative || '').replace(/\\/g, '/').toLowerCase()),
+              )
+              out.length = 0
+              out.push(...kept)
+            }
+          } catch (e) {
+            // 判定失败时**保持原样**并记警告：宁可少一条列表，也不要因为一次
+            // IPC 抖动就把整个库的枚举结果清空。
+            console.warn(`[Plugin ${p.id}] AI 可见范围过滤失败，保留原列表:`, e)
+          }
+        }
         return out
       },
       getPluginDataDir: async () => {

@@ -1917,44 +1917,121 @@ async fn flymd_piclist_upload(req: PicListUploadReq, state: State<'_, AppState>)
   Ok(url_field.to_string())
 }
 
-// 为插件提供的“全库 Markdown 扫描”命令：在给定根目录下递归枚举所有 md/markdown/txt 文件
+// 相对库根的路径（统一用 `/` 分隔）。无法计算时返回 None。
+fn library_relative_path(root: &std::path::Path, target: &std::path::Path) -> Option<String> {
+  let rel = target.strip_prefix(root).ok()?;
+  Some(rel.to_string_lossy().replace('\\', "/"))
+}
+
+// 递归枚举库内所有 md/markdown/txt 文件，**按 AI 可见范围剪枝**。
+//
+// 抽成独立函数是为了能直接单测（命令本身是 async + tauri runtime）。
+fn list_markdown_files_filtered(
+  root: &std::path::Path,
+  scope: &flymd_mcp::config::McpConfig,
+) -> Result<Vec<String>, String> {
+  use std::fs;
+  use std::path::Path;
+
+  fn walk_dir(
+    dir: &Path,
+    root: &Path,
+    scope: &flymd_mcp::config::McpConfig,
+    acc: &mut Vec<String>,
+  ) -> Result<(), String> {
+    let entries = fs::read_dir(dir)
+      .map_err(|e| format!("read_dir error ({}): {}", dir.display(), e))?;
+    for entry in entries {
+      let entry = entry.map_err(|e| format!("read_dir entry error: {e}"))?;
+      let path = entry.path();
+      if path.is_dir() {
+        // 被排除的目录整棵不进结果（剪枝，不只是事后过滤）
+        if let Some(rel) = library_relative_path(root, &path) {
+          if scope.is_excluded_dir(&rel) {
+            continue;
+          }
+        }
+        walk_dir(&path, root, scope, acc)?;
+      } else if crate::is_markdown_like_path(&path) {
+        if let Some(s) = path.to_str() {
+          acc.push(s.to_string());
+        }
+      }
+    }
+    Ok(())
+  }
+
+  let mut acc = Vec::<String>::new();
+  walk_dir(root, root, scope, &mut acc)?;
+  Ok(acc)
+}
+
+// 为插件提供的"全库 Markdown 扫描"命令：在给定根目录下递归枚举所有 md/markdown/txt 文件
 #[tauri::command]
 async fn flymd_list_markdown_files(root: String) -> Result<Vec<String>, String> {
-  use std::fs;
-  use std::path::{Path, PathBuf};
+  use std::path::PathBuf;
 
   let root_path = PathBuf::from(root.clone());
   if !root_path.is_dir() {
     return Err(format!("root 不是有效目录: {}", root));
   }
 
+  // 目录排除规则：与 MCP 服务器**共用同一份实现**（flymd_mcp::config）。
+  //
+  // 这条命令是应用内 AI 看到全库的入口——recipes 的 `{{files}}`、插件的库文件枚举
+  // 都走它。若这里不过滤，模板/附件目录就会只在一侧消失：MCP 客户端里的 AI 看不到
+  // `media/88-Template/`，而应用内的定时任务却看得见，边界就不成立了。
+  let scope = flymd_mcp::config::resolve(Some(&root_path), &[]);
+
   // 在后台线程递归遍历，避免阻塞 async runtime
   let result = tauri::async_runtime::spawn_blocking(move || {
-    fn walk_dir(dir: &Path, acc: &mut Vec<String>) -> Result<(), String> {
-      let entries = fs::read_dir(dir)
-        .map_err(|e| format!("read_dir error ({}): {}", dir.display(), e))?;
-      for entry in entries {
-        let entry = entry.map_err(|e| format!("read_dir entry error: {e}"))?;
-        let path = entry.path();
-        if path.is_dir() {
-          walk_dir(&path, acc)?;
-        } else if crate::is_markdown_like_path(&path) {
-          if let Some(s) = path.to_str() {
-            acc.push(s.to_string());
-          }
-        }
-      }
-      Ok(())
-    }
-
-    let mut acc = Vec::<String>::new();
-    walk_dir(&root_path, &mut acc)?;
-    Ok::<Vec<String>, String>(acc)
+    list_markdown_files_filtered(&root_path, &scope)
   })
   .await
   .map_err(|e| format!("join error: {e}"))??;
 
   Ok(result)
+}
+
+/// 解析当前库的 AI 可见范围规则（库根必须是绝对路径）。
+///
+/// 抽出来是为了两个命令共用同一份校验逻辑，也是为了能直接单测。
+fn resolve_ai_scope(library_root: &str) -> Result<flymd_mcp::config::McpConfig, String> {
+  use std::path::PathBuf;
+
+  let root = PathBuf::from(library_root);
+  if !root.is_absolute() {
+    return Err(format!("库根必须是绝对路径: {library_root}"));
+  }
+  Ok(flymd_mcp::config::resolve(Some(&root), &[]))
+}
+
+/// 返回当前库生效的 **AI 可见范围**规则（排除 / 保留）。
+///
+/// 宿主与插件据此知道"哪些目录 AI 不该看到"。规则来源与 MCP 服务器完全一致
+/// （`flymd_mcp::config::McpConfig`），配置在 `<库根>/.flymd/ai-scope.json`
+/// （旧名 `mcp.json` 继续生效）。
+#[tauri::command]
+async fn flymd_ai_scope(library_root: String) -> Result<serde_json::Value, String> {
+  let cfg = resolve_ai_scope(&library_root)?;
+  Ok(serde_json::json!({
+    "excluded": cfg.exclude,
+    "allowed": cfg.allow,
+  }))
+}
+
+/// 批量判断：给一批**库内相对路径**，返回其中被排除的那些。
+///
+/// 判定在 Rust 侧做（规则只有一份），插件与宿主不需要再实现一遍匹配逻辑——
+/// 一次 IPC 判定一批，避免逐文件往返。
+#[tauri::command]
+async fn flymd_ai_scope_filter(
+  library_root: String,
+  paths: Vec<String>,
+) -> Result<serde_json::Value, String> {
+  let cfg = resolve_ai_scope(&library_root)?;
+  let blocked = cfg.filter_excluded_files(&paths);
+  Ok(serde_json::json!({ "blocked": blocked }))
 }
 
 // 文件树"目录是否含受支持文档"整树预扫描：一次 IPC 返回整棵树里"含受支持文档"的目录集合，
@@ -2660,6 +2737,8 @@ fn main() {
       ai_novel_api,
       flymd_piclist_upload,
       flymd_list_markdown_files,
+      flymd_ai_scope,
+      flymd_ai_scope_filter,
       flymd_search_files_content,
       scan_dirs_doc_presence,
       check_update,
@@ -4663,5 +4742,144 @@ mod window_reveal_tests {
       1,
       "16 个并发调用中必须恰好 1 个赢家（exactly-once）"
     );
+  }
+}
+
+#[cfg(test)]
+mod ai_scope_tests {
+  use super::*;
+
+  /// 建一个带排除目录的测试库，返回库根路径。
+  ///
+  /// 结构：
+  /// ```
+  /// root/
+  ///   笔记/正常.md
+  ///   media/88-Template/模板.md      ← 内置默认排除（media）
+  ///   media/test/情况.md
+  ///   .flymd/ai-scope.json          ← 库级配置：额外排除「草稿」
+  ///   草稿/半成品.md
+  ///   顶层.md
+  /// ```
+  fn make_library() -> std::path::PathBuf {
+    let base = std::env::temp_dir().join(format!(
+      "flymd_ai_scope_test_{}_{:?}",
+      std::process::id(),
+      std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    let root = base.join("lib");
+    for d in [
+      root.join("笔记"),
+      root.join("media").join("88-Template"),
+      root.join("media").join("test"),
+      root.join("草稿"),
+      root.join(".flymd"),
+    ] {
+      std::fs::create_dir_all(&d).expect("create test dirs");
+    }
+    for f in [
+      root.join("笔记").join("正常.md"),
+      root.join("media").join("88-Template").join("模板.md"),
+      root.join("media").join("test").join("情况.md"),
+      root.join("草稿").join("半成品.md"),
+      root.join("顶层.md"),
+    ] {
+      std::fs::write(&f, b"# x").expect("write test file");
+    }
+    std::fs::write(
+      root.join(".flymd").join("ai-scope.json"),
+      r#"{"excludeDirs":["草稿"]}"#,
+    )
+    .expect("write scope config");
+    root
+  }
+
+  fn rels(root: &std::path::Path, list: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = list
+      .iter()
+      .filter_map(|p| library_relative_path(root, std::path::Path::new(p)))
+      .collect();
+    out.sort();
+    out
+  }
+
+  #[test]
+  fn 全库扫描排除_media_目录() {
+    let root = make_library();
+    let scope = flymd_mcp::config::resolve(Some(&root), &[]);
+    let list = list_markdown_files_filtered(&root, &scope).expect("list files");
+    let rel = rels(&root, &list);
+
+    assert!(
+      !rel.iter().any(|r| r.starts_with("media/")),
+      "media/ 下的文件必须被排除，实际: {rel:?}"
+    );
+    assert!(rel.contains(&"笔记/正常.md".to_string()), "正常笔记要留下");
+    assert!(rel.contains(&"顶层.md".to_string()), "顶层笔记要留下");
+  }
+
+  #[test]
+  fn 全库扫描遵守库级_ai_scope_配置() {
+    let root = make_library();
+    let scope = flymd_mcp::config::resolve(Some(&root), &[]);
+    let list = list_markdown_files_filtered(&root, &scope).expect("list files");
+    let rel = rels(&root, &list);
+
+    assert!(
+      !rel.iter().any(|r| r.starts_with("草稿/")),
+      "库级配置排除的「草稿」必须生效，实际: {rel:?}"
+    );
+  }
+
+  #[test]
+  fn 全局规则_allow_优先于_exclude() {
+    let root = make_library();
+    // 在默认排除之外，豁免 media/test
+    std::fs::write(
+      root.join(".flymd").join("ai-scope.json"),
+      r#"{"excludeDirs":["草稿"],"allowDirs":["media/test"]}"#,
+    )
+    .expect("write scope config");
+
+    let scope = flymd_mcp::config::resolve(Some(&root), &[]);
+    let list = list_markdown_files_filtered(&root, &scope).expect("list files");
+    let rel = rels(&root, &list);
+
+    assert!(
+      rel.contains(&"media/test/情况.md".to_string()),
+      "被 allow 豁免的目录要重新出现，实际: {rel:?}"
+    );
+    assert!(
+      !rel.iter().any(|r| r.starts_with("media/88-Template")),
+      "没被豁免的 media 子目录仍然排除"
+    );
+  }
+
+  #[test]
+  fn 批量过滤返回被排除的相对路径() {
+    let root = make_library();
+    let scope = flymd_mcp::config::resolve(Some(&root), &[]);
+    let input = vec![
+      "笔记/正常.md".to_string(),
+      "media/88-Template/模板.md".to_string(),
+      "草稿/半成品.md".to_string(),
+    ];
+    let blocked = scope.filter_excluded_files(&input);
+    assert_eq!(blocked.len(), 2, "media 与 草稿 都该被排除: {blocked:?}");
+    assert!(blocked.iter().any(|b| b.contains("88-Template")));
+    assert!(blocked.iter().any(|b| b.contains("草稿")));
+  }
+
+  #[test]
+  fn 库根必须是绝对路径() {
+    // flymd_ai_scope / flymd_ai_scope_filter 共用这套校验
+    assert!(resolve_ai_scope("relative/path").is_err());
+    assert!(resolve_ai_scope("").is_err());
+    assert!(resolve_ai_scope(&root_str_for_test()).is_ok());
+  }
+
+  fn root_str_for_test() -> String {
+    make_library().to_string_lossy().to_string()
   }
 }
