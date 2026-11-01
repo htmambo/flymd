@@ -4,6 +4,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, Emitter, State};
+
+mod ai_guard;
 use std::sync::atomic::Ordering;
 // 全局共享：保存通过“打开方式/默认程序”传入且可能早于前端监听的文件路径
 #[derive(Default)]
@@ -2668,6 +2670,11 @@ fn main() {
       git_init_repo,
       git_commit_snapshot,
       git_restore_file_version,
+      // AI 写入护栏（与 MCP 侧共用 flymd_mcp::guard）
+      ai_guard::ai_guard_snapshot,
+      ai_guard::ai_guard_preview,
+      ai_guard::ai_guard_restore,
+      ai_guard::ai_guard_list,
       run_installer,
       set_network_proxy,
       get_network_proxy,

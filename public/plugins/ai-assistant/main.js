@@ -5896,6 +5896,63 @@ async function replaceSelectionWithLast(context){
 
 function copyLast(){ try { const s = String(__AI_LAST_REPLY__||''); if(!s) return; navigator.clipboard?.writeText(s) } catch {} }
 
+// ===== AI 写入护栏（回滚）=====
+//
+// 宿主在插件改写文档前会自动留快照（写入前的内容），落在
+// <库根>/.flymd/ai-guard/。这里提供「回滚上一次 AI 写入」的入口。
+// 与 MCP 侧的写入护栏共用同一份快照实现，因此 MCP 客户端的写入也能在这里回滚。
+
+/** 判断快照里的相对路径是否指向当前文件。 */
+function sameFile(relPath, absPath, root) {
+  try {
+    const rel = String(relPath).replace(/\\/g, '/')
+    const abs = String(absPath).replace(/\\/g, '/')
+    const r = String(root).replace(/\\/g, '/').replace(/\/+$/, '')
+    return abs.startsWith(r + '/') && abs.slice(r.length + 1) === rel
+  } catch { return false }
+}
+
+/** 回滚最近一次 AI 写入。 */
+async function rollbackLastAiWrite(context) {
+  try {
+    const root = await context.getLibraryRoot?.()
+    const file = context.getCurrentFilePath?.()
+    if (!root || !file) {
+      context.ui.notice(aiText('当前文档未保存，无法回滚', 'Current document is not saved, cannot roll back'), 'err', 2400)
+      return
+    }
+    // 走宿主提供的入口：库根由宿主决定，插件不自己传
+    if (typeof context.aiGuardList !== 'function' || typeof context.aiGuardRollbackLast !== 'function') {
+      context.ui.notice(aiText('当前版本不支持 AI 写入回滚', 'AI write rollback is not supported in this version'), 'err', 3000)
+      return
+    }
+    const list = await context.aiGuardList(20)
+    const items = (list && Array.isArray(list.items)) ? list.items : []
+    if (!items.length) {
+      context.ui.notice(aiText('没有可回滚的 AI 写入', 'No AI writes to roll back'), 'err', 2400)
+      return
+    }
+    // 优先回滚当前文档的最近一次写入
+    const target = items.find((it) => it && sameFile(it.path, String(file), String(root))) || items[0]
+    const ok = await context.ui.confirm(
+      aiText(
+        '确定要回滚这一次 AI 写入吗？\n\n文档：' + (target.path || '') + '\n操作：' + (target.operation || '') + '\n\n回滚后可以再次回滚回来。',
+        'Roll back this AI write?\n\nDocument: ' + (target.path || '') + '\nOperation: ' + (target.operation || '') + '\n\nThe rollback itself can be rolled back.'
+      )
+    )
+    if (!ok) return
+    await context.aiGuardRollbackLast({ path: target.path, confirm: true })
+    context.ui.notice(aiText('已回滚上一次 AI 写入', 'Rolled back the last AI write'), 'ok', 2400)
+  } catch (e) {
+    console.error('[AI] 回滚失败', e)
+    context.ui.notice(
+      aiText('回滚失败：' + (e && e.message ? e.message : '未知错误'),
+            'Rollback failed: ' + (e && e.message ? e.message : 'unknown error')),
+      'err', 4000
+    )
+  }
+}
+
 export async function openSettings(context){
   ensureCss()
   const cfg = await loadCfg(context)
@@ -6132,6 +6189,14 @@ export async function activate(context) {
             type: 'group',
             label: aiText('快捷操作', 'Quick actions')
           },
+          {
+            label: aiText('回滚上一次 AI 写入', 'Roll back last AI write'),
+            icon: '↩️',
+            onClick: async () => {
+              await rollbackLastAiWrite(context)
+            }
+          },
+          { type: 'divider' },
           {
             label: aiText('续写', 'Continue writing'),
             icon: '✍️',

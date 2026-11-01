@@ -109,6 +109,13 @@ const PLUGIN_INVOKE_DENYLIST: ReadonlySet<string> = new Set<string>([
   'unlock_file',
   'read_file_locked',
   'write_file_locked',
+  // AI 写入护栏：命令的 library_root 参数若由插件提供，恶意插件可传
+  // libraryRoot="/" 让回滚写到库外的任意路径。因此**禁止插件直接调用**，
+  // 改由宿主提供 aiGuardList / aiGuardRollbackLast（库根由宿主决定）。
+  'ai_guard_snapshot',
+  'ai_guard_preview',
+  'ai_guard_restore',
+  'ai_guard_list',
   // 上传图床管理
   'flymd_record_uploaded_image',
   'flymd_list_uploaded_images',
@@ -1027,6 +1034,48 @@ export function createPluginHost(
       }
     }
 
+    // ===== AI 写入护栏：插件改写文档前留快照，可回滚 =====
+    //
+    // 插件的三个写入 API（setEditorValue / replaceRange / insertAtCursor）是
+    // **同步**的，而快照要跨进程调 Rust 命令，是异步的。这里有两个约束：
+    //
+    // 1. 快照必须记下「写入前」的内容。所以在调用写入的**那一刻同步**捕获
+    //    当前文本与写后文本，再异步落盘——即使快照命令晚于写入返回，
+    //    存下来的仍然是正确的「写入前」内容。
+    // 2. 多次写入的快照顺序必须与写入顺序一致，否则回滚会回到错误的版本。
+    //    用一条 Promise 链把快照串起来。
+    //
+    // 快照失败只记警告、不阻断写入：同步 API 无法让调用方 await 一个失败。
+    // 需要「失败即中止」的强保证时，走 MCP 写入通道（那边是全异步的）。
+    let guardSnapshotQueue: Promise<void> = Promise.resolve()
+    const scheduleGuardSnapshot = (beforeContent: string, afterContent: string, operation: string) => {
+      try {
+        const filePath = deps.getCurrentFilePath()
+        if (!filePath) return // 未保存的新文档：没有可保护的东西
+        guardSnapshotQueue = guardSnapshotQueue
+          .then(async () => {
+            try {
+              const root = await deps.getLibraryRoot()
+              if (!root) return
+              await invoke('ai_guard_snapshot', {
+                libraryRoot: root,
+                path: filePath,
+                newContent: afterContent,
+                beforeContent,
+                operation,
+                actor: 'plugin',
+                reason: null,
+              })
+            } catch (e) {
+              console.warn('[plugin guard] 写入快照失败：', e)
+            }
+          })
+          .catch(() => {})
+      } catch (e) {
+        console.warn('[plugin guard] 排队写入快照失败：', e)
+      }
+    }
+
     const ctx = {
       http,
       htmlToMarkdown: (html: string, opts?: { baseUrl?: string }) =>
@@ -1344,10 +1393,49 @@ export function createPluginHost(
       getCurrentFilePath: () => deps.getCurrentFilePath(),
       getLibraryRoot: () => deps.getLibraryRoot(),
       getEditorValue: () => getSourceTextForPlugin(),
+      // ===== AI 写入护栏（插件侧入口）=====
+      //
+      // 库根由宿主提供（deps.getLibraryRoot），**不接受插件传入**——
+      // 否则恶意插件可以传 libraryRoot="/" 让回滚写到库外。
+      aiGuardList: async (limit?: number) => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        return await invoke('ai_guard_list', { libraryRoot: root, limit: limit ?? 20 })
+      },
+      aiGuardRollbackLast: async (opts?: { path?: string; confirm?: boolean }) => {
+        const root = await deps.getLibraryRoot()
+        if (!root) throw new Error('当前未打开任何库')
+        const list = (await invoke('ai_guard_list', { libraryRoot: root, limit: 20 })) as {
+          items?: Array<{ id: string; path?: string; operation?: string }>
+        }
+        const items = Array.isArray(list?.items) ? list.items : []
+        if (!items.length) throw new Error('没有可回滚的 AI 写入')
+        const want = opts?.path ? String(opts.path).replace(/\\/g, '/') : ''
+        const target = (want ? items.find((it: any) => it && String(it.path).replace(/\\/g, '/') === want) : null) || items[0]
+        const res = (await invoke('ai_guard_restore', {
+          libraryRoot: root,
+          snapshotId: target.id,
+          confirm: opts?.confirm !== false,
+        })) as { content?: string | null; deleted?: boolean; path?: string }
+        // 回滚后把内容同步回编辑器
+        if (res && typeof res.content === 'string') {
+          try {
+            const ed = deps.getEditor()
+            if (ed) {
+              applyTextEditToTextarea(ed, 0, String(ed.value || '').length, res.content, { preserveSelection: true })
+              deps.markDirtyAndRefresh()
+              if (deps.isPreviewMode()) void deps.renderPreview()
+              else if (deps.isWysiwyg()) deps.scheduleWysiwygRender()
+            }
+          } catch {}
+        }
+        return res
+      },
       setEditorValue: (v: string) => {
         try {
           const ed = deps.getEditor()
           if (!ed) return
+          scheduleGuardSnapshot(String(ed.value || ''), String(v ?? ''), 'plugin_set_editor')
           applyTextEditToTextarea(
             ed,
             0,
@@ -1375,6 +1463,10 @@ export function createPluginHost(
         try {
           const ed = deps.getEditor()
           if (!ed) return
+          const cur = String(ed.value || '')
+          const s = Math.max(0, Math.min(cur.length, Number(start) || 0))
+          const e = Math.max(s, Math.min(cur.length, Number(end) || 0))
+          scheduleGuardSnapshot(cur, cur.slice(0, s) + String(text ?? '') + cur.slice(e), 'plugin_replace_range')
           applyTextEditToTextarea(ed, start, end, text)
           deps.markDirtyAndRefresh()
           if (deps.isPreviewMode()) {
@@ -1390,6 +1482,10 @@ export function createPluginHost(
           if (!ed) return
           const s = ed.selectionStart >>> 0
           const e = ed.selectionEnd >>> 0
+          const cur = String(ed.value || '')
+          const lo = Math.min(s, e)
+          const hi = Math.max(s, e)
+          scheduleGuardSnapshot(cur, cur.slice(0, lo) + String(text ?? '') + cur.slice(hi), 'plugin_insert_cursor')
           applyTextEditToTextarea(ed, Math.min(s, e), Math.max(s, e), text)
           deps.markDirtyAndRefresh()
           if (deps.isPreviewMode()) {

@@ -1773,6 +1773,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "chrono",
+ "flymd-mcp",
  "fs2",
  "futures-util",
  "hex",
@@ -1797,6 +1798,15 @@ dependencies = [
  "url",
  "walkdir",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "flymd-mcp"
+version = "0.3.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

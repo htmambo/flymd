@@ -38,6 +38,11 @@ fs2 = "0.4"
 # 迭代式目录遍历（scan_dirs_doc_presence 用）：内置 follow_links(false) 防 symlink 循环，
 # 迭代式无栈溢出风险。已是传递依赖，显式声明便于复用。
 walkdir = "2"
+# MCP 服务器的可复用核心（config / diff / guard / time）。
+# 应用侧的 AI 写入护栏与 MCP 客户端的写入护栏共用同一份快照实现，
+# 格式一致性由「同一份代码」保证。该 lib 只依赖 serde / serde_json，
+# 两者本 crate 已有，因此这里不引入任何新的外部依赖。
+flymd-mcp = { path = "../mcp-server" }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

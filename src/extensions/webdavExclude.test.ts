@@ -25,6 +25,12 @@ describe('PR-1: DEFAULT_EXCLUDE_GLOBS reserved patterns', () => {
     expect(Array.isArray(DEFAULT_EXCLUDE_GLOBS)).toBe(true)
     expect(DEFAULT_EXCLUDE_GLOBS.length).toBeGreaterThanOrEqual(5)
   })
+
+  it('excludes the AI write guard snapshot directory', () => {
+    // AI 写入护栏的快照存的是写入前的旧内容，同步出去等于泄露历史版本。
+    // 快照同时是设备本地的回滚凭据，不该跨设备共享。
+    expect(DEFAULT_EXCLUDE_GLOBS).toContain('**/.flymd/ai-guard/**')
+  })
 })
 
 describe('shouldSyncRelativePath - reserved excludes (PR-1)', () => {

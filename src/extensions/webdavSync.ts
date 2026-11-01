@@ -114,6 +114,10 @@ export const DEFAULT_EXCLUDE_GLOBS: readonly string[] = [
   '**/.DS_Store',
   '**/Thumbs.db',
   '**/.flymd/local.json',
+  // AI 写入护栏的快照目录：存的是每次 AI 写入**之前**的旧内容。
+  // 同步出去等于把历史版本推到远端（泄露旧内容 + 纯浪费带宽），
+  // 且快照是设备本地的回滚凭据，不该跨设备共享。
+  '**/.flymd/ai-guard/**',
 ]
 
 type SyncProfileInput = { localRoot: string; baseUrl: string; remoteRoot: string }
