@@ -1,8 +1,11 @@
 //! MCP 工具定义与实现。
 //!
-//! 当前切片**全部只读**：不提供任何写入笔记的通道。AI 客户端能读、能搜、
-//! 能看大纲与待办，但不能改动用户的文件——这是把笔记库交给外部 agent 时
-//! 最关键的一条边界。
+//! 六个**只读**工具（`list_notes` `read_note` `search` `get_outline` `list_tasks`
+//! `get_backlinks`）不改动用户的任何文件。
+//!
+//! 四个**写入**工具（`preview_write` `write_note` `list_writes` `rollback_write`）
+//! 受写入护栏约束：写入前强制快照、可预览 diff、可回滚——护栏内核在
+//! `crate::guard`，快照格式与设计文档 §3「快照格式规范 v1」逐字对齐。
 
 use serde_json::{json, Value};
 
@@ -11,6 +14,9 @@ use crate::parse;
 
 /// 单次 `tools/call` 的结果上限，避免把客户端上下文一次打爆。
 const MAX_OUTPUT_CHARS: usize = 120_000;
+
+/// 单次写入的内容上限（1 MB）。
+const MAX_WRITE_BYTES: usize = 1024 * 1024;
 
 /// `tools/list` 返回的工具清单。
 pub fn list() -> Value {
@@ -125,6 +131,82 @@ pub fn list() -> Value {
                     "required": ["path"],
                     "additionalProperties": false
                 }
+            },
+            {
+                "name": "preview_write",
+                "description": "预览写入某个笔记会产生什么差异（unified diff）。不写盘、不产生快照。正式写入前会自动快照，可用 rollback_write 回滚。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "相对于库根的笔记路径，例如 \"笔记/2026-11-01 日记.md\"。"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "准备写入的完整 Markdown 内容。"
+                        }
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "write_note",
+                "description": "写入一个笔记（单次只改一个文件，内容上限 1 MB，被排除目录不可写）。写入前会自动快照原内容，可用 rollback_write 回滚；返回差异与快照 ID。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "相对于库根的笔记路径，例如 \"笔记/2026-11-01 日记.md\"。"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "写入后的完整 Markdown 内容（覆盖整个文件）。"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": "可选，写入原因，记录进快照元数据供审计。"
+                        }
+                    },
+                    "required": ["path", "content"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "list_writes",
+                "description": "列出本库通过 AI 写入留下的快照（可回滚的写入记录），按时间倒序。写入前会自动快照，可用 rollback_write 回滚。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {
+                            "type": "integer",
+                            "description": "最多返回多少条，默认 20。",
+                            "minimum": 1
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "rollback_write",
+                "description": "回滚一次 AI 写入，把文件恢复到快照时的内容。回滚本身也会生成快照（可再回滚）；若快照对应的文件原本不存在，回滚等于删除文件，必须传 confirm: true。",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "snapshotId": {
+                            "type": "string",
+                            "description": "list_writes 返回的快照 ID。"
+                        },
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "确认删除文件；快照对应的文件原本不存在时必须为 true。"
+                        }
+                    },
+                    "required": ["snapshotId"],
+                    "additionalProperties": false
+                }
             }
         ]
     })
@@ -139,6 +221,10 @@ pub fn call(name: &str, args: &Value, lib: &Library) -> Result<String, String> {
         "get_outline" => get_outline(args, lib)?,
         "list_tasks" => list_tasks(args, lib)?,
         "get_backlinks" => get_backlinks(args, lib)?,
+        "preview_write" => preview_write(args, lib)?,
+        "write_note" => write_note(args, lib)?,
+        "list_writes" => list_writes(args, lib)?,
+        "rollback_write" => rollback_write(args, lib)?,
         other => return Err(format!("未知工具: {other}")),
     };
     Ok(truncate(&out))
@@ -160,6 +246,13 @@ fn arg_str(args: &Value, key: &str) -> Option<String> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .filter(|s| !s.trim().is_empty())
+}
+
+/// 取字符串参数（允许空串——把笔记写成空文件是合法操作）。
+fn arg_str_raw(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 /// 取布尔参数。
@@ -208,7 +301,7 @@ fn list_notes(args: &Value, lib: &Library) -> Result<String, String> {
                 "- {} ({}, {})",
                 n.rel,
                 human_size(n.size),
-                crate::library::format_time(t)
+                flymd_mcp::time::format_time(t)
             ),
             None => format!("- {} ({})", n.rel, human_size(n.size)),
         });
@@ -381,6 +474,178 @@ fn get_backlinks(args: &Value, lib: &Library) -> Result<String, String> {
     ))
 }
 
+/// 预览写入产生的差异：不写盘、不产生快照。
+fn preview_write(args: &Value, lib: &Library) -> Result<String, String> {
+    let path = arg_str(args, "path").ok_or("缺少参数 path")?;
+    let content = arg_str_raw(args, "content").ok_or("缺少参数 content")?;
+    check_write_size(&content)?;
+
+    let abs = lib.resolve_write_path(&path)?;
+    let (old_text, existed) = match std::fs::read(&abs) {
+        Ok(bytes) => (
+            String::from_utf8(bytes)
+                .map_err(|_| format!("{path} 不是合法的 UTF-8 文本，无法预览"))?,
+            true,
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
+        Err(e) => return Err(format!("读取 {path} 失败: {e}")),
+    };
+    let old_label = if existed {
+        path.clone()
+    } else {
+        "/dev/null".to_string()
+    };
+    let diff = flymd_mcp::diff::unified_diff(&old_text, &content, &old_label, &path);
+    if diff.is_empty() {
+        return Ok(format!("{path} 的内容没有变化，无需写入。"));
+    }
+    Ok(format!(
+        "预览写入 {path} 将产生的差异（未写盘、未产生快照）：\n{diff}"
+    ))
+}
+
+/// 写入笔记：校验 → 读原内容 → 建快照 → 原子写 → 返回 diff 与快照 ID。
+fn write_note(args: &Value, lib: &Library) -> Result<String, String> {
+    let path = arg_str(args, "path").ok_or("缺少参数 path")?;
+    let content = arg_str_raw(args, "content").ok_or("缺少参数 content")?;
+    let reason = arg_str(args, "reason");
+    check_write_size(&content)?;
+
+    // ① 越界防护 + 被排除目录必须拒绝
+    let abs = lib.resolve_write_path(&path)?;
+
+    // ② 读原内容
+    let before_bytes = match std::fs::read(&abs) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("读取 {path} 失败: {e}")),
+    };
+    let existed = before_bytes.is_some();
+    let before_text = match &before_bytes {
+        Some(bytes) => Some(
+            String::from_utf8(bytes.clone())
+                .map_err(|_| format!("{path} 不是合法的 UTF-8 文本，无法安全写入"))?,
+        ),
+        None => None,
+    };
+    // 原文件超限时没法生成可回滚的快照——宁可写不进去。
+    if let Some(bytes) = &before_bytes {
+        if bytes.len() > flymd_mcp::guard::MAX_SNAPSHOT_BYTES {
+            return Err(format!(
+                "{path} 现有内容 {:.1} MB，超过 {} MB 上限，无法生成可回滚快照，已中止写入。",
+                bytes.len() as f64 / 1048576.0,
+                flymd_mcp::guard::MAX_SNAPSHOT_BYTES / 1048576
+            ));
+        }
+    }
+
+    // ③ 建快照（失败即中止：不能留下没有回滚路径的改动）
+    let guard = lib.guard_store();
+    let payload = flymd_mcp::guard::SnapshotPayload {
+        path: path.as_str(),
+        operation: "write_note",
+        actor: "mcp",
+        reason: reason.as_deref(),
+        rollback_of: None,
+        before: before_text.as_deref(),
+        after: Some(content.as_str()),
+    };
+    let meta = guard.create(&payload)?;
+
+    // ④ 原子写
+    flymd_mcp::guard::atomic_write_bytes(&abs, content.as_bytes())?;
+
+    // ⑤ 返回 diff + 快照 ID + 新内容大小
+    let old_text = before_text.unwrap_or_default();
+    let old_label = if existed {
+        path.clone()
+    } else {
+        "/dev/null".to_string()
+    };
+    let diff = flymd_mcp::diff::unified_diff(&old_text, &content, &old_label, &path);
+    let mut out = format!(
+        "已写入：{path}\n快照 ID：{}\n新内容：{}（原 {}）\n提示：可用 rollback_write 回滚这次写入。\n",
+        meta.id,
+        human_size(content.len() as u64),
+        human_size(meta.before_bytes),
+    );
+    if diff.is_empty() {
+        out.push_str("（内容与原文件一致，没有差异）\n");
+    } else {
+        out.push_str(&diff);
+    }
+    Ok(out)
+}
+
+/// 列出本库可回滚的写入（快照）。
+fn list_writes(args: &Value, lib: &Library) -> Result<String, String> {
+    let limit = arg_int(args, "limit", 20);
+    let guard = lib.guard_store();
+    let metas = guard.list(Some(limit));
+    if metas.is_empty() {
+        return Ok("本库还没有 AI 写入留下的快照。".to_string());
+    }
+    let mut lines = Vec::new();
+    for m in &metas {
+        let state = if m.truncated {
+            "内容超限已截断，不可回滚"
+        } else if m.existed_before {
+            "写入前已存在"
+        } else {
+            "写入前不存在（回滚=删除文件）"
+        };
+        let rollback = match &m.rollback_of {
+            Some(r) => format!("，回滚自 {r}"),
+            None => String::new(),
+        };
+        lines.push(format!(
+            "- {}  {}  {}  {}（{}）{}",
+            m.id, m.created_at, m.path, m.operation, state, rollback
+        ));
+    }
+    Ok(format!(
+        "本库的 AI 写入记录（显示 {} 条，快照目录 {}）：\n{}",
+        lines.len(),
+        guard.root().display(),
+        lines.join("\n")
+    ))
+}
+
+/// 回滚一次 AI 写入。
+fn rollback_write(args: &Value, lib: &Library) -> Result<String, String> {
+    let id = arg_str(args, "snapshotId").ok_or("缺少参数 snapshotId")?;
+    let confirm = arg_bool(args, "confirm", false);
+    let guard = lib.guard_store();
+    let meta = guard.get(&id)?;
+    // 目标路径同样要过越界与排除目录校验。
+    lib.resolve_write_path(&meta.path)?;
+    let outcome = guard.rollback(&id, confirm, "mcp")?;
+    let action = if outcome.deleted {
+        "已删除该文件（写入前它并不存在）"
+    } else {
+        "已还原文件内容"
+    };
+    Ok(format!(
+        "已回滚：{}\n{}\n回滚快照 ID：{}（rollbackOf={}，可再次回滚）",
+        outcome.path,
+        action,
+        outcome.snapshot.id,
+        outcome.rolled_back
+    ))
+}
+
+/// 单次写入内容大小校验。
+fn check_write_size(content: &str) -> Result<(), String> {
+    if content.len() > MAX_WRITE_BYTES {
+        return Err(format!(
+            "写入内容 {:.1} MB，超过 {} MB 上限，已拒绝。",
+            content.len() as f64 / 1048576.0,
+            MAX_WRITE_BYTES / 1048576
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +745,214 @@ mod tests {
     fn 未知工具返回错误() {
         let lib = setup("unknown");
         assert!(call("nonexistent", &json!({}), &lib).is_err());
+    }
+
+    /// 从写入结果里取出快照 ID。
+    fn snapshot_id_of(out: &str) -> String {
+        out.lines()
+            .find(|l| l.starts_with("快照 ID："))
+            .expect("结果里应有快照 ID")
+            .trim_start_matches("快照 ID：")
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn write_note_写入后内容正确且产生快照() {
+        let lib = setup("write");
+        let out = call(
+            "write_note",
+            &json!({"path": "a.md", "content": "# 新内容\n\n- [ ] 新待办\n"}),
+            &lib,
+        )
+        .unwrap();
+        assert!(out.contains("已写入：a.md"));
+        assert!(out.contains("快照 ID："));
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            "# 新内容\n\n- [ ] 新待办\n"
+        );
+        // 快照目录应落在 <库根>/.flymd/ai-guard/
+        let id = snapshot_id_of(&out);
+        assert!(
+            lib.root()
+                .join(".flymd/ai-guard")
+                .join(&id)
+                .join("meta.json")
+                .is_file(),
+            "应生成快照目录"
+        );
+    }
+
+    #[test]
+    fn write_note_拒绝被排除目录() {
+        let lib = setup("write-excl");
+        std::fs::create_dir_all(lib.root().join("media")).unwrap();
+        let err = call(
+            "write_note",
+            &json!({"path": "media/模板.md", "content": "x"}),
+            &lib,
+        )
+        .expect_err("被排除目录不该能写");
+        assert!(err.contains("被排除"), "错误信息应说明被排除，实际: {err}");
+        assert!(!lib.root().join("media/模板.md").exists());
+    }
+
+    #[test]
+    fn write_note_拒绝越界路径() {
+        let lib = setup("write-escape");
+        assert!(call(
+            "write_note",
+            &json!({"path": "../逃逸.md", "content": "x"}),
+            &lib
+        )
+        .is_err());
+        assert!(call(
+            "write_note",
+            &json!({"path": "/etc/passwd", "content": "x"}),
+            &lib
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn write_note_拒绝超限内容() {
+        let lib = setup("write-big");
+        let big = "x".repeat(1024 * 1024 + 1);
+        let err = call(
+            "write_note",
+            &json!({"path": "a.md", "content": big}),
+            &lib,
+        )
+        .expect_err("超限内容应被拒绝");
+        assert!(err.contains("上限"), "错误信息应说明上限，实际: {err}");
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            "# 标题A\n\n- [ ] 待办甲\n- [x] 已办乙\n",
+            "被拒绝的写入不该改动文件"
+        );
+    }
+
+    #[test]
+    fn write_note_快照失败则不写文件() {
+        let lib = setup("write-nosnap");
+        // 把快照目录占成一个普通文件，快照必然创建失败
+        std::fs::create_dir_all(lib.root().join(".flymd")).unwrap();
+        std::fs::write(lib.root().join(".flymd/ai-guard"), "占位").unwrap();
+        let err = call(
+            "write_note",
+            &json!({"path": "a.md", "content": "# 不该写进去\n"}),
+            &lib,
+        )
+        .expect_err("快照失败应中止写入");
+        assert!(!err.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            "# 标题A\n\n- [ ] 待办甲\n- [x] 已办乙\n",
+            "快照失败时不该动原文件"
+        );
+    }
+
+    #[test]
+    fn preview_write_返回差异且不产生快照() {
+        let lib = setup("preview");
+        let out = call(
+            "preview_write",
+            &json!({"path": "a.md", "content": "# 标题A\n\n- [ ] 待办甲\n- [x] 已办乙\n- [ ] 追加\n"}),
+            &lib,
+        )
+        .unwrap();
+        assert!(out.contains("+"), "应返回差异: {out}");
+        assert!(out.contains("追加"));
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            "# 标题A\n\n- [ ] 待办甲\n- [x] 已办乙\n",
+            "预览不该写盘"
+        );
+        assert!(
+            !lib.root().join(".flymd/ai-guard").exists(),
+            "预览不该产生快照"
+        );
+    }
+
+    #[test]
+    fn list_writes_能看到写入记录() {
+        let lib = setup("listwrites");
+        call(
+            "write_note",
+            &json!({"path": "a.md", "content": "# 新内容\n"}),
+            &lib,
+        )
+        .unwrap();
+        let out = call("list_writes", &json!({}), &lib).unwrap();
+        assert!(out.contains("a.md"), "应列出写入记录: {out}");
+        assert!(out.contains("write_note"));
+    }
+
+    #[test]
+    fn rollback_write_删除文件需要显式确认() {
+        let lib = setup("rollback-confirm");
+        let out = call(
+            "write_note",
+            &json!({"path": "新文件.md", "content": "# 新建\n"}),
+            &lib,
+        )
+        .unwrap();
+        let id = snapshot_id_of(&out);
+
+        let err = call("rollback_write", &json!({"snapshotId": id}), &lib)
+            .expect_err("删除文件必须先确认");
+        assert!(err.contains("confirm"), "错误信息应提示 confirm，实际: {err}");
+        assert!(lib.root().join("新文件.md").exists(), "未确认时不该删除");
+
+        let out = call(
+            "rollback_write",
+            &json!({"snapshotId": id, "confirm": true}),
+            &lib,
+        )
+        .unwrap();
+        assert!(out.contains("已回滚：新文件.md"));
+        assert!(!lib.root().join("新文件.md").exists(), "确认后应删除文件");
+    }
+
+    #[test]
+    fn 端到端_写入列出回滚后内容逐字节复原() {
+        let lib = setup("e2e");
+        let original = std::fs::read_to_string(lib.root().join("a.md")).unwrap();
+        let new_content = "# 标题A\n\n- [ ] 待办甲\n- [x] 已办乙\n- [ ] AI 追加的待办\n";
+
+        // 写入
+        let out = call(
+            "write_note",
+            &json!({"path": "a.md", "content": new_content, "reason": "AI 续写"}),
+            &lib,
+        )
+        .unwrap();
+        let id = snapshot_id_of(&out);
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            new_content
+        );
+
+        // 列出
+        let list = call("list_writes", &json!({}), &lib).unwrap();
+        assert!(list.contains(&id), "列表里应能看到该快照: {list}");
+
+        // 回滚
+        let out = call("rollback_write", &json!({"snapshotId": id}), &lib).unwrap();
+        assert!(out.contains("已回滚：a.md"));
+        assert_eq!(
+            std::fs::read_to_string(lib.root().join("a.md")).unwrap(),
+            original,
+            "回滚后内容应与写入前逐字节一致"
+        );
+
+        // 回滚本身也留了快照，可以再回滚
+        let list = call("list_writes", &json!({}), &lib).unwrap();
+        assert_eq!(
+            list.matches("rollback_write").count(),
+            1,
+            "回滚应生成一条新快照: {list}"
+        );
     }
 }

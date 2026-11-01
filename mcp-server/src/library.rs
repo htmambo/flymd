@@ -4,9 +4,9 @@
 //! 原样传进来，`..` 穿越、绝对路径、指向库外的符号链接都必须被拒绝。
 
 use std::path::{Component, Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
-use crate::config::McpConfig;
+use flymd_mcp::config::McpConfig;
 
 /// 单个笔记的索引条目。
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ impl Library {
     /// 的顺序**合并**目录排除规则。
     pub fn resolve(explicit: Option<&str>, cli_excludes: &[String]) -> Result<Self, String> {
         let root = Self::resolve_root(explicit)?;
-        let config = crate::config::resolve(Some(&root), cli_excludes);
+        let config = flymd_mcp::config::resolve(Some(&root), cli_excludes);
         Ok(Self { root, config })
     }
 
@@ -100,6 +100,11 @@ impl Library {
         &self.config
     }
 
+    /// 本库的写入护栏快照存储。
+    pub fn guard_store(&self) -> flymd_mcp::guard::GuardStore {
+        flymd_mcp::guard::GuardStore::new(&self.root)
+    }
+
     /// 把客户端传入的相对路径解析为库内的绝对路径，并做越界防护。
     pub fn resolve_relative(&self, rel: &str) -> Result<PathBuf, String> {
         let rel = rel.trim();
@@ -137,6 +142,75 @@ impl Library {
             ));
         }
         Ok(canon)
+    }
+
+    /// 把客户端传入的相对路径解析为**可写入**的库内绝对路径。
+    ///
+    /// 与 `resolve_relative` 的区别：目标文件可能还不存在（新建笔记），
+    /// 因此不能对整条路径做 canonicalize——改为校验「最近的已存在祖先目录」。
+    ///
+    /// 防护项与只读通道一致，并额外加一条：
+    /// - 越界防护（绝对路径、`..`、指向库外的符号链接）
+    /// - **被排除目录一律拒绝写入**——排除目录是用户划定的边界
+    /// - 目标本身是符号链接时拒绝写入（写穿链接会写到别处）
+    pub fn resolve_write_path(&self, rel: &str) -> Result<PathBuf, String> {
+        let rel = rel.trim();
+        if rel.is_empty() {
+            return Err("路径不能为空".into());
+        }
+        let p = Path::new(rel);
+        if p.is_absolute() {
+            return Err(format!("路径必须是相对于库根的相对路径，收到绝对路径: {rel}"));
+        }
+        for c in p.components() {
+            match c {
+                Component::ParentDir => {
+                    return Err(format!("路径不允许包含 `..`：{rel}"));
+                }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!("非法路径: {rel}"));
+                }
+                _ => {}
+            }
+        }
+        let joined = self.root.join(p);
+        if joined.exists() {
+            let canon = joined
+                .canonicalize()
+                .map_err(|e| format!("无法访问 {rel}: {e}"))?;
+            if !canon.starts_with(&self.root) {
+                return Err(format!("路径越出库根范围: {rel}"));
+            }
+            if joined.is_symlink() {
+                return Err(format!("目标是符号链接，拒绝写入: {rel}"));
+            }
+        } else {
+            // 目标还不存在：校验最近的已存在祖先目录，确保不会写到库外。
+            let mut base = joined
+                .parent()
+                .map(|x| x.to_path_buf())
+                .unwrap_or_else(|| self.root.clone());
+            while !base.exists() {
+                match base.parent() {
+                    Some(parent) if parent != base => base = parent.to_path_buf(),
+                    _ => break,
+                }
+            }
+            let canon = base
+                .canonicalize()
+                .map_err(|e| format!("无法访问 {rel}: {e}"))?;
+            if !canon.starts_with(&self.root) {
+                return Err(format!("路径越出库根范围: {rel}"));
+            }
+        }
+        // 排除目录是用户明确划出的边界，AI 不该往里写。
+        if self.config.is_excluded_file(&rel.replace('\\', "/")) {
+            return Err(format!(
+                "路径位于被排除的目录中，MCP 客户端不可写入: {rel}\n\
+                 提示：在 <库根>/.flymd/mcp.json 的 excludeDirs 里移除对应目录，或用 --exclude 覆盖。"
+            ));
+        }
+        Ok(joined)
     }
 
     /// 递归索引库内所有笔记。
@@ -287,38 +361,6 @@ impl Library {
         }
         out
     }
-}
-
-/// 把 Unix 时间戳格式化为 `YYYY-MM-DD HH:MM`（UTC）。
-///
-/// 不引入 chrono 等依赖：只用于列表里展示修改时间，精度到分钟足够。
-pub fn format_time(t: SystemTime) -> String {
-    let secs = t
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let days = secs.div_euclid(86_400);
-    let rem = secs.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
-        rem / 3600,
-        (rem % 3600) / 60
-    )
-}
-
-/// 从「自 1970-01-01 起的天数」反推公历日期（Howard Hinnant 算法）。
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 /// 双链目标归一化：去扩展名、去首尾空白、转小写。

@@ -91,7 +91,7 @@ fn initialize(params: &Value) -> Value {
             "name": SERVER_NAME,
             "version": SERVER_VERSION
         },
-        "instructions": "通过 list_notes / read_note / search / get_outline / list_tasks / get_backlinks 只读访问本地 flymd 笔记库。路径均为相对库根的相对路径。"
+        "instructions": "通过 list_notes / read_note / search / get_outline / list_tasks / get_backlinks 只读访问本地 flymd 笔记库；通过 preview_write / write_note / list_writes / rollback_write 写入笔记。路径均为相对库根的相对路径。写入前会自动快照，可用 rollback_write 回滚。"
     })
 }
 
@@ -180,11 +180,11 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_返回六个工具() {
+    fn tools_list_返回十个工具() {
         let lib = setup("list");
         let resp = handle(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), &lib).unwrap();
         let tools = resp["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 10);
         assert!(tools.iter().all(|t| t["inputSchema"].is_object()));
     }
 

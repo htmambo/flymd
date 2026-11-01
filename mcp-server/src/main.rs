@@ -1,7 +1,8 @@
 //! flymd MCP 服务器入口。
 //!
 //! 以 stdio 传输与 MCP 客户端（Claude Code / Cursor / Codex 等）通信，
-//! 把本地 flymd 笔记库以**只读**方式暴露出去。
+//! 把本地 flymd 笔记库暴露出去。读是自由的，写受**写入护栏**约束：
+//! 写入前强制快照、可预览 diff、可回滚。
 //!
 //! 用法：
 //! ```text
@@ -12,12 +13,14 @@
 use std::io::{BufRead, BufWriter, Write};
 use std::process::ExitCode;
 
-mod config;
+// config / diff / guard / time 都在 lib 目标里（`flymd_mcp::`），
+// src-tauri 以路径依赖引用同一份实现——护栏核心只有一份代码。
 mod library;
 mod parse;
 mod protocol;
 mod tools;
 
+use flymd_mcp::config;
 use library::Library;
 
 const USAGE: &str = "\
@@ -50,7 +53,16 @@ flymd-mcp — flymd 笔记库的 MCP (Model Context Protocol) 服务器
 在 MCP 客户端中的配置示例（Claude Code）:
   claude mcp add flymd -- flymd-mcp
 
-注意: 本服务器对笔记库只读，不会修改任何文件。
+写入护栏:
+  读取工具（list_notes / read_note / search / get_outline / list_tasks /
+  get_backlinks）不改动任何文件。
+  写入工具（preview_write / write_note / list_writes / rollback_write）受护栏约束:
+    - write_note 写入前自动快照原内容到 <库根>/.flymd/ai-guard/，可用
+      rollback_write 回滚（回滚本身也会生成快照，可再回滚）；
+    - preview_write 只返回差异，不写盘、不产生快照；
+    - 单次写入只改一个文件，内容上限 1 MB；
+    - 被排除目录不可写入，越界路径一律拒绝；
+    - 快照写不成功就中止写入，不留下没有回滚路径的改动。
 ";
 
 fn main() -> ExitCode {

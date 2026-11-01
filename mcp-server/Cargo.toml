@@ -1,10 +1,16 @@
 [package]
 name = "flymd-mcp"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.70"
 license = "GPL-3.0"
 description = "flymd 的 MCP (Model Context Protocol) 服务器：把本地笔记库以只读方式暴露给 Claude Code / Cursor 等 MCP 客户端"
+
+# lib 目标：只含 config / diff / guard / time，不引 regex。
+# src-tauri 以路径依赖引用它，共享同一份护栏核心，且不给 Tauri 应用新增依赖。
+[lib]
+name = "flymd_mcp"
+path = "src/lib.rs"
 
 [[bin]]
 name = "flymd-mcp"
