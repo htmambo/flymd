@@ -14,6 +14,8 @@
     "test:watch": "vitest",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "mcp:build": "node scripts/build-mcp-server.mjs",
+    "mcp:test": "cargo test --manifest-path mcp-server/Cargo.toml",
     "package:manjaro": "bash scripts/package-manjaro.sh",
     "pretauri:dev": "node scripts/ensure-icons.cjs",
     "pretauri:build": "node scripts/ensure-icons.cjs"

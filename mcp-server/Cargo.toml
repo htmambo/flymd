@@ -1,0 +1,22 @@
+[package]
+name = "flymd-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+license = "GPL-3.0"
+description = "flymd 的 MCP (Model Context Protocol) 服务器：把本地笔记库以只读方式暴露给 Claude Code / Cursor 等 MCP 客户端"
+
+[[bin]]
+name = "flymd-mcp"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

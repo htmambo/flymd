@@ -42,6 +42,12 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test MCP server
+        run: cargo test --manifest-path mcp-server/Cargo.toml
+
       - name: Build frontend
         run: pnpm build
 
@@ -108,6 +114,20 @@ jobs:
         with:
           targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
+      # MCP 服务器（mcp-server/ 独立 crate）：构建各平台二进制。
+      # 产物既注入应用包，也作为独立工件随 Release 分发。
+      - name: Build MCP server (macOS universal)
+        if: startsWith(matrix.platform, 'macos-')
+        run: node scripts/build-mcp-server.mjs --universal
+
+      - name: Build MCP server (Windows)
+        if: matrix.os == 'Windows'
+        run: node scripts/build-mcp-server.mjs --target x86_64-pc-windows-msvc
+
+      - name: Build MCP server (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: node scripts/build-mcp-server.mjs --target x86_64-unknown-linux-gnu
+
       # Windows 特定依赖
       - name: Install Windows bundlers (NSIS + WiX)
         if: matrix.os == 'Windows'
@@ -155,6 +175,9 @@ jobs:
           RUST_LOG: trace
           TAURI_BUNDLER_TARGET: universal-apple-darwin
         run: npm run tauri:build -- --bundles app --target universal-apple-darwin --verbose
+      - name: Inject MCP server into .app bundle (macOS)
+        if: startsWith(matrix.platform, 'macos-')
+        run: node scripts/bundle-mcp-server.mjs --triple universal-apple-darwin
       - name: Zip .app for convenience (macOS)
         if: startsWith(matrix.platform, 'macos-')
         run: |
@@ -196,6 +219,11 @@ jobs:
           name: dmg-workdir-${{ matrix.arch }}
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/
 
+      # Windows / Linux：把 MCP 服务器放到主程序同级目录，随安装包一起分发
+      - name: Stage MCP server next to app binary (Windows/Linux)
+        if: matrix.os == 'Windows' || matrix.platform == 'ubuntu-22.04'
+        run: node scripts/bundle-mcp-server.mjs
+
       - name: Build Tauri app (Windows)
         if: matrix.os == 'Windows'
         run: npm run tauri:build -- --bundles nsis
@@ -214,6 +242,30 @@ jobs:
           $zip = Join-Path $outDir "flymd_portable_${{ matrix.arch }}.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
           Compress-Archive -Path $exe -DestinationPath $zip -Force
+
+      - name: Upload standalone MCP server (Windows)
+        if: matrix.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flymd-mcp-Windows-x64
+          path: mcp-server/target/x86_64-pc-windows-msvc/release/flymd-mcp.exe
+          if-no-files-found: error
+
+      - name: Upload standalone MCP server (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flymd-mcp-Linux-x64
+          path: mcp-server/target/x86_64-unknown-linux-gnu/release/flymd-mcp
+          if-no-files-found: error
+
+      - name: Upload standalone MCP server (macOS)
+        if: startsWith(matrix.platform, 'macos-')
+        uses: actions/upload-artifact@v4
+        with:
+          name: flymd-mcp-macOS-universal
+          path: mcp-server/target/universal-apple-darwin/release/flymd-mcp
+          if-no-files-found: error
 
       - name: Upload artifacts (Windows Portable)
         if: matrix.os == 'Windows'
@@ -269,6 +321,9 @@ jobs:
             flymd-Windows-x64-portable/**/*
             flymd-Linux-x64/**/*
             flymd-macOS-universal/**/*
+            flymd-mcp-Windows-x64/**/*
+            flymd-mcp-Linux-x64/**/*
+            flymd-mcp-macOS-universal/**/*
           draft: true
           generate_release_notes: true
 

@@ -1,0 +1,155 @@
+# flymd-mcp
+
+flymd 笔记库的 **MCP (Model Context Protocol) 服务器**：把本地笔记库以**只读**方式暴露给 Claude Code、Cursor、Codex 等 MCP 客户端。
+
+独立 Rust crate，零重依赖（仅 `serde` / `serde_json` / `regex`），release 产物约 1.3 MB。
+
+> 当前切片**全部只读**——不提供任何写入笔记的通道。AI 客户端能读、能搜、能看大纲与待办，但**不能改动用户的任何文件**。
+
+---
+
+## 快速开始
+
+```bash
+# 构建
+cargo build --release --manifest-path mcp-server/Cargo.toml
+
+# 运行（自动从 flymd 应用设置读取库根）
+./mcp-server/target/release/flymd-mcp
+
+# 手动指定库根
+./mcp-server/target/release/flymd-mcp --library "/path/to/notes"
+
+# 交互式验证
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+  | ./mcp-server/target/release/flymd-mcp
+```
+
+仓库根目录也提供了封装脚本：
+
+```bash
+node scripts/build-mcp-server.mjs     # 构建 + 放入 src-tauri/binaries/
+node scripts/build-mcp-server.mjs --universal   # macOS universal（lipo 合并）
+node scripts/bundle-mcp-server.mjs    # 注入打包产物（尽力而为，不阻断构建）
+pnpm mcp:test                         # 跑 Rust 单元测试
+```
+
+---
+
+## 在 MCP 客户端中配置
+
+### Claude Code
+
+```bash
+claude mcp add flymd -- /path/to/flymd-mcp
+# 或显式指定库根
+claude mcp add flymd -- /path/to/flymd-mcp --library /path/to/notes
+```
+
+写入 `~/.claude.json`（或项目级 `.mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "flymd": {
+      "command": "/path/to/flymd-mcp",
+      "args": ["--library", "/path/to/notes"]
+    }
+  }
+}
+```
+
+### Cursor
+
+在 `~/.cursor/mcp.json` 中：
+
+```json
+{
+  "mcpServers": {
+    "flymd": {
+      "command": "/path/to/flymd-mcp",
+      "args": ["--library", "/path/to/notes"]
+    }
+  }
+}
+```
+
+### Codex
+
+`~/.codex/config.toml`：
+
+```toml
+[mcp_servers.flymd]
+command = "/path/to/flymd-mcp"
+args = ["--library", "/path/to/notes"]
+```
+
+---
+
+## 工具清单
+
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `list_notes` | `filter?` `limit?` | 列出库内所有 Markdown 笔记（相对路径 / 大小 / 修改时间） |
+| `read_note` | `path` | 读取单个笔记的完整 Markdown 内容 |
+| `search` | `query` `regex?` `ignore_case?` `limit?` | 全库全文搜索，返回 `文件:行号: 内容` |
+| `get_outline` | `path` | 提取标题大纲（含层级与行号） |
+| `list_tasks` | `path?` `include_done?` | 提取待办项（`- [ ]` / `- [x]`），不传 `path` 则扫描全库 |
+| `get_backlinks` | `path` | 查询指向某笔记的双链来源（`[[目标]]`） |
+
+---
+
+## 库根定位优先级
+
+1. `--library <路径>` 命令行参数
+2. 环境变量 `FLYMD_LIBRARY`
+3. flymd 应用设置文件（按平台）：
+   - macOS：`~/Library/Application Support/com.flymd/flymd-settings.json`
+   - Linux：`$XDG_CONFIG_HOME/com.flymd/flymd-settings.json`（或 `~/.config/com.flymd/`）
+   - Windows：`%APPDATA%\com.flymd\flymd-settings.json`
+   - 便携模式：可执行文件同级目录的 `flymd-settings.json`
+4. 当前目录（若含 `.md` 文件）
+
+设置文件里优先取 `activeLibraryId` 对应的库，其次取 `libraryRoot`。
+
+---
+
+## 安全边界
+
+| 防护 | 实现 |
+|---|---|
+| 只读 | 当前切片不提供任何写入工具 |
+| 路径限制 | 所有路径必须是**相对库根**的相对路径；绝对路径、`..`、Windows 前缀一律拒绝 |
+| 符号链接逃逸 | 目标文件 `canonicalize` 后必须仍在库根内，指向库外的链接被拒绝 |
+| 体积上限 | 单个笔记读取上限 4 MB；输出上限 12 万字符 |
+| 忽略目录 | `.git` `.flymd` `.obsidian` `.trash` `node_modules` `target` `dist` |
+| 通道隔离 | **stdout 只承载 JSON-RPC 协议消息**，所有日志写 stderr |
+
+路径穿越与符号链接逃逸都有对应的单元测试覆盖（`library::tests`）。
+
+---
+
+## 架构
+
+```
+mcp-server/src/
+├── main.rs       # CLI 解析、库根解析、stdio JSON-RPC 循环
+├── protocol.rs   # JSON-RPC 2.0 分发 + MCP 握手（协议版本协商）
+├── library.rs    # 库根定位、文件索引、路径安全、时间格式化
+├── parse.rs      # 标题 / 待办 / 双链抽取（均跳过围栏代码块）
+└── tools.rs      # 工具 schema 与实现
+```
+
+**协议版本协商**：`initialize` 时若客户端请求的版本在支持列表内则原样应答，否则回落到 `2025-06-18`。
+
+**错误分层**（按 MCP 规范）：未知工具 / 参数非法 → JSON-RPC error；文件不存在 / 路径越界等执行错误 → `isError: true` + 文本内容。
+
+---
+
+## 测试
+
+```bash
+cargo test --manifest-path mcp-server/Cargo.toml
+```
+
+41 个单元测试，覆盖：围栏代码块内的伪标题/伪待办/伪链接不会被抽取、路径穿越拒绝、指向库外的符号链接拒绝、超大文件拦截、反链归一化匹配、协议握手与错误分层、CLI 参数解析。
