@@ -23,8 +23,9 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # 不写 version：版本统一由 package.json 的 packageManager（pnpm@10.28.0）决定。
+        # pnpm/action-setup@v4 新版会同时检查 action 的 version 输入与 packageManager，
+        # 两者都写会直接报 "Multiple versions of pnpm specified" 而失败。
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -94,8 +95,9 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
+        # 不写 version：版本统一由 package.json 的 packageManager（pnpm@10.28.0）决定。
+        # pnpm/action-setup@v4 新版会同时检查 action 的 version 输入与 packageManager，
+        # 两者都写会直接报 "Multiple versions of pnpm specified" 而失败。
 
       - name: Setup Node
         uses: actions/setup-node@v4
