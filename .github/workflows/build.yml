@@ -78,6 +78,12 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
+      # src-tauri/icons/ 被 .gitignore 忽略，图标是构建时从 Flymdnew.png 生成的。
+      # tauri-build 的 build script 要读 icons/icon.png（打 Windows 资源），
+      # 没有它 cargo check 会报 "failed to open icon"。
+      - name: Generate icons from Flymdnew.png
+        run: pnpm exec tauri icon ./Flymdnew.png
+
       - name: Check Tauri app (Rust)
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
