@@ -91,16 +91,13 @@ if [[ "$CLEAN_BUILD" -eq 1 ]]; then
   clean_release_target "src-tauri/target/release"
 fi
 
-# 安装前端依赖
-if [[ ! -d node_modules ]] || [[ "$CLEAN_BUILD" -eq 1 ]]; then
-  echo "==> Installing frontend dependencies"
-  if [[ -f pnpm-lock.yaml ]] && command -v pnpm >/dev/null 2>&1; then
-    echo "    detected pnpm-lock.yaml, using pnpm"
-    pnpm install --frozen-lockfile
-  else
-    echo "    error: 需要 pnpm（仓库以 pnpm-lock.yaml 为准，已不再维护 package-lock.json）" >&2
-    exit 1
-  fi
+# 前端依赖就位检查与安装(共用 helper)
+# shellcheck disable=SC1091
+source "$ROOT_DIR/scripts/_deps.sh"
+if [[ "$CLEAN_BUILD" -eq 1 ]]; then
+  ensure_frontend_deps "always" "$ROOT_DIR"
+else
+  ensure_frontend_deps "auto" "$ROOT_DIR"
 fi
 
 # Tauri 构建（生成 .deb + AppImage）

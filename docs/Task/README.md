@@ -53,6 +53,16 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-20-linux-packaging-script-failure-fix.md](Archive/2026-11/2026-11-20-linux-packaging-script-failure-fix.md) — 修复 Linux 打包脚本 `package-manjaro.sh --install` 失败（完成 2026-11-20）
+  - **报障现象**：脚本失败在**前端构建**而非打包阶段 —— `Error: [vite]: Rolldown failed to resolve import "@codemirror/state" from src/modes/cm6LivePreview.ts`
+  - **根因一（主因）**：`node_modules/` 停留在 2026-10-09，而 `@codemirror/state` 等 6 个直接依赖直到 2026-10-30（commit `3eb6b34`）才进 package.json；旧脚本只看**目录是否存在**就复用，从不比对依赖 → 报错点离病因隔了 3 周和一次依赖新增
+  - **根因二**：本机无全局 pnpm（只有 corepack + npm），`--npm-ci` 恢复路径也是死的（`command -v pnpm` 不满足 → 直接 exit 1）
+  - **根因三（波及两个打包路径）**：附注标签在 `git ls-remote --tags` 里返回两行，`sort -V | tail -1` 取到剥离引用 → 版本号变成非法的 `2.2.1^{}`。Arch 能装但升级比较失真；**Debian 的 `dpkg-deb` 直接硬失败**（"版本号含无效字符"），Debian 打包路径当时完全不可用
+  - **根因四**：`makepkg` 默认 `PACMAN_OPTS=()`，`--install` 未透传 `--noconfirm` → `pacman -U` 弹 `:: 进行安装吗？ [Y/n]`，非 TTY 下读到 EOF 放弃 → exit 14；`--syncdeps` 的 `pacman -S --asdeps` 同病
+  - **修复**：新增共享 helper `scripts/_deps.sh`（缺失依赖检测 + 锁文件漂移检测 + corepack 回退），两个打包脚本统一接入；`get-version.sh` 改用 awk 字符类 `[{]` 过滤剥离引用（不依赖 `git ls-remote --refs` 的 git ≥2.13）；`--noconfirm` 提升为无条件；版本一致性告警改为「打包版本 vs package.json 版本」，不再解析 PKGBUILD
+  - **验证**：4 脚本 `bash -n` 全过；helper 单测 5 项全过；移走 `@codemirror/state` 后 1.077s 自动重装修复；**`scripts/package-manjaro.sh --install` exit 0**，产出 `flymd-2.2.1-1-x86_64.pkg.tar.zst`（修前 `2.2.1^{}-1`），`pacman -Q flymd` → `flymd 2.2.1-1`；Debian 路径 `dpkg-deb` 接受版本号
+  - **外审**：coding-bridge 两轮（Round 1 NEEDS_CHANGES 7 条 risk 全部处置；Round 2 APPROVED，4 条非阻断建议全部采纳）。其中 Round 2 建议的 `--config.confirmModulesPurge=false` 经隔离工程 A/B 实测**无效**（`CI=true` 才是唯一有效杠杆，也是 pnpm 报错信息自身给的建议）
+
 - ✅ [2026-10-31-content-status-bar.md](Archive/2026-10/2026-10-31-content-status-bar.md) — 内容区底部**常驻状态栏**（左侧路径 / 中槽消息 / 右侧行·列·字数·未保存·缩放%）（完成 2026-10-31）
   - **锚点**：保留 `#status` 这个 DOM id，只把它从「整条状态栏」降级为「状态栏内的中槽消息元素」→ 10+ 个既有写入方（保存/导出/打印/同步/更新/错误）**一行都不用改**；常驻统计另开右侧槽，与消息互不覆盖
   - **挤压式占位零改动**：重定义 `--workspace-bottom-gap = calc(var(--dock-bottom-gap) + var(--statusbar-height))` → 内容区底边的 **8 个几何消费者**（editor.css 7 处 + cm6Editor.css 1 处）全部自动上移
