@@ -2,6 +2,35 @@
 
 [简体中文](ROADMAP.md) | [English](ROADMAP.en.md)
 
+## Update v2.2.2
+
+> Opening a Markdown file of unknown origin no longer means handing over the whole machine.
+
+### Security hardening
+
+- **Preview sanitization is now on by default and cannot be disabled in release builds**: scripts, event-handler attributes, iframes, forms, and non-checkbox inputs are stripped; if sanitization fails the content is shown as plain text instead of falling back to raw HTML
+- Every place that concatenated HTML directly (outline, recent files, notifications, plugin menus, font names, dialog titles, update overlay) now uses text nodes or escaping
+- A Tauri CSP is in place; the two pages with inline scripts now load external files; devtools is disabled in release builds; recursive write access to the executable and log directories was removed
+- **The trust anchor for update downloads moved into Rust**: only official assets and mirror URLs registered from the fixed repository are accepted; downloads require https, pass a host allowlist and a digest check, the file is re-hashed immediately before installation, and only `.exe` / `.msi` files inside the download or temp directories can run
+- Mermaid in the WYSIWYG mode uses `securityLevel: 'strict'`
+
+### Startup performance
+
+- The entry static closure dropped from **7.04MB to 0.69MB**: Mermaid and other heavy dependencies are no longer on the startup path and load on demand
+- Preview debounce now adapts to document length (150 / 250 / 400ms) so large documents stay responsive while typing
+
+### Fixes
+
+- **Linux packaging**: the `--install` failure was caused by a stale `node_modules` tree that made the frontend build unable to resolve dependencies; a shared dependency-check helper (lockfile drift detection + corepack fallback) was added, and version parsing is no longer polluted by the peeled reference of annotated tags
+- **MCP config hints**: after the rename, `--help`, error messages, and the README still pointed at the old file name; they now consistently reference `ai-scope.json`
+- **Plugin docs**: the English version gained the 18 missing sections and now matches the Chinese version
+
+### Web server deployment notes
+
+- When `NODE_ENV` is unset the server now treats itself as production; production requires an explicit `JWT_SECRET` or it refuses to start
+- Existing deployments only need to set `JWT_SECRET` to the value they used before to keep verifying legacy passwords and decrypting legacy API keys; password hashing is now scrypt, and legacy SHA-256 hashes still log in
+- Login and registration now have per-account and per-IP rate limits; `CORS_ORIGIN=*` disables `credentials` automatically
+
 ## Update v2.2.1
 
 > Directory exclusion no longer covers only the MCP channel. **One rule set, app-wide** —
