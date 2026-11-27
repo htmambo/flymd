@@ -92,7 +92,7 @@ npm run start  # server 跑在 8787,serves web-client/dist + API
 
 通过环境变量覆盖:
 ```bash
-ADMIN_EMAIL=alice@example.com ADMIN_PASSWORD=new-pw-1234 npm run dev:server
+ADMIN_EMAIL=alice@example.com ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD npm run dev:server
 ```
 
 ## API 一览
@@ -151,14 +151,18 @@ ADMIN_EMAIL=alice@example.com ADMIN_PASSWORD=new-pw-1234 npm run dev:server
 |---|---|---|
 | `HOST` | `127.0.0.1` | server 监听地址 |
 | `PORT` | `8787` | server 端口 |
-| `NODE_ENV` | `development` | `production` 时 serve 静态 web-client/dist |
+| `NODE_ENV` | `production` | 未设置按 production 处理(fail closed)；本地开发显式设为 `development` |
 | `ENABLE_VITE` | `true` | dev 模式启用 Vite middleware |
 | `ADMIN_EMAIL` | `admin@flymd.local` | 初始化 admin 邮箱 |
-| `ADMIN_PASSWORD` | `admin123` | 初始化 admin 密码 |
+| `ADMIN_PASSWORD` | 仅开发环境有默认值 | 初始化 admin 密码；生产未设置则不创建 admin，需用 `npm run reset-password` 恢复 |
 | `DATA_DIR` | `web/data` | SQLite 持久化目录 |
 | `WEB_DIST_PATH` | `web/web-client/dist` | 生产模式 serve 的静态目录 |
-| `CORS_ORIGIN` | `*` | CORS 允许来源 |
-| `JWT_SECRET` | `flymd-dev-secret-please-change-in-prod` | 密码哈希 / token 加盐(生产必改) |
+| `CORS_ORIGIN` | `*` | CORS 允许来源；为 `*` 时自动关闭 `credentials` |
+| `JWT_SECRET` | 仅开发环境有默认值 | token 签名 + 旧口令哈希/旧 API Key 密文的兼容密钥；生产必填 |
+| `PASSWORD_PEPPER` | 回退到 `JWT_SECRET` | 口令哈希专用密钥(建议独立设置并保持稳定) |
+| `DATA_ENCRYPTION_KEY` | 回退到 `JWT_SECRET` | API Key 密文的 AES 派生密钥(建议独立设置) |
+
+> 升级已有部署：把 `JWT_SECRET` 显式设置为原先使用的值即可继续验证旧口令、解密旧 API Key；否则需要重置口令并重新录入 API Key。
 
 ## 卡片 hover 效果
 
@@ -180,10 +184,11 @@ ADMIN_EMAIL=alice@example.com ADMIN_PASSWORD=new-pw-1234 npm run dev:server
 
 ## 安全注意事项
 
-1. **JWT_SECRET 默认值仅用于本地开发** — 生产前必须改成强随机字符串
-2. **默认 admin 密码 admin123** — 部署后立即通过 `/login` 改密,或用 `ADMIN_PASSWORD` 环境变量
-3. **CORS_ORIGIN=*** — 生产应限定为前端域名
-4. **设置项中的 apiKey 默认脱敏**(显示 `****xxxx` 末 4 位),`unmask=true` 时显示完整 — UI 调 `unmask=true` 时应警告用户
+1. **生产必须显式配置 `JWT_SECRET`** — 未设置时服务端按 production 处理并拒绝启动，不再静默使用开发默认值。`ADMIN_PASSWORD` 可选：未设置则不创建 admin（避免默认口令），需要时用 `npm run reset-password`（同样需要 `JWT_SECRET`）。
+2. **口令哈希为 scrypt(随机盐 + 可调参数)** — 旧版 `SHA-256(pepper::password)` 哈希仍可验证；启动时若检测到旧格式且 `ADMIN_PASSWORD` 能验证通过，会自动原地升级。
+3. **登录/注册已限流** — 账号 + IP 双维度固定窗口（登录 5 次/分、注册 3 次/分）。多实例部署需换成 Redis 等共享限流。
+4. **`CORS_ORIGIN=*` 时自动关闭 `credentials`** — 生产应限定为前端域名。
+5. **设置项中的 apiKey 默认脱敏**(显示 `****xxxx` 末 4 位),`unmask=true` 时显示完整 — UI 调 `unmask=true` 时应警告用户。
 
 ## 与 mdeditor 项目配合
 

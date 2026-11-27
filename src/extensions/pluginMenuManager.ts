@@ -298,18 +298,26 @@ export async function openPluginMenuManager(host: PluginMenuManagerHost): Promis
       const ddAttrDisabled = ddDisabled ? ' disabled' : ''
       const ribbonAttrDisabled = ribbonDisabled ? ' disabled' : ''
 
+      // 插件名/ID 来自第三方 manifest，拼入 HTML 前转义。
+      const esc = (v: unknown) => String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+      const pluginIdEsc = esc(row.pluginId)
       html += `<tr>`
-      html += `<td><span class="pmm-plugin-name" title="${row.pluginId}">${row.name || row.pluginId}</span></td>`
-      html += `<td><input type="checkbox" class="plugin-menu-manager-ctx" data-plugin-id="${row.pluginId}"${ctxChecked ? ' checked' : ''}${ctxAttrDisabled}></td>`
-      html += `<td><input type="checkbox" class="plugin-menu-manager-dropdown" data-plugin-id="${row.pluginId}"${ddChecked ? ' checked' : ''}${ddAttrDisabled}></td>`
-      html += `<td><input type="checkbox" class="plugin-menu-manager-ribbon" data-plugin-id="${row.pluginId}"${ribbonChecked ? ' checked' : ''}${ribbonAttrDisabled}></td>`
-      html += `<td><select class="plugin-menu-manager-ribbon-pos" data-plugin-id="${row.pluginId}"${ribbonAttrDisabled}>`
+      html += `<td><span class="pmm-plugin-name" title="${pluginIdEsc}">${esc(row.name || row.pluginId)}</span></td>`
+      html += `<td><input type="checkbox" class="plugin-menu-manager-ctx" data-plugin-id="${pluginIdEsc}"${ctxChecked ? ' checked' : ''}${ctxAttrDisabled}></td>`
+      html += `<td><input type="checkbox" class="plugin-menu-manager-dropdown" data-plugin-id="${pluginIdEsc}"${ddChecked ? ' checked' : ''}${ddAttrDisabled}></td>`
+      html += `<td><input type="checkbox" class="plugin-menu-manager-ribbon" data-plugin-id="${pluginIdEsc}"${ribbonChecked ? ' checked' : ''}${ribbonAttrDisabled}></td>`
+      html += `<td><select class="plugin-menu-manager-ribbon-pos" data-plugin-id="${pluginIdEsc}"${ribbonAttrDisabled}>`
       html += `<option value="top"${ribbonPos === 'top' ? ' selected' : ''}>${optTop}</option>`
       html += `<option value="bottom"${ribbonPos === 'bottom' ? ' selected' : ''}>${optBottom}</option>`
       html += `</select></td>`
       html += `<td style="white-space:nowrap;">`
-      html += `<button class="pmm-order-btn plugin-menu-manager-ribbon-up" data-plugin-id="${row.pluginId}" title="${tipUp}"${canUp ? '' : ' disabled'}>↑</button>`
-      html += `<button class="pmm-order-btn plugin-menu-manager-ribbon-down" data-plugin-id="${row.pluginId}" title="${tipDown}"${canDown ? '' : ' disabled'}>↓</button>`
+      html += `<button class="pmm-order-btn plugin-menu-manager-ribbon-up" data-plugin-id="${pluginIdEsc}" title="${tipUp}"${canUp ? '' : ' disabled'}>↑</button>`
+      html += `<button class="pmm-order-btn plugin-menu-manager-ribbon-down" data-plugin-id="${pluginIdEsc}" title="${tipDown}"${canDown ? '' : ' disabled'}>↓</button>`
       html += `</td>`
       html += `</tr>`
     }

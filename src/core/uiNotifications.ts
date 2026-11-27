@@ -345,7 +345,12 @@ export class NotificationManager {
       const item = document.createElement('div')
       item.className = 'notification-item' + (config.clickable ? ' clickable' : '')
       item.style.backgroundColor = config.bgColor
-      item.innerHTML = `<span class="notification-icon">${config.icon}</span> <span class="notification-text">${message}</span>`
+      // icon 是内部常量；message 可能含文件名/同步错误等外部文本，必须当纯文本插入。
+      item.innerHTML = `<span class="notification-icon">${config.icon}</span> `
+      const textEl = document.createElement('span')
+      textEl.className = 'notification-text'
+      textEl.textContent = String(message ?? '')
+      item.appendChild(textEl)
 
       // 点击事件
       if (onClick) {

@@ -30,7 +30,10 @@ async function renderMermaid(container: HTMLElement, code: string) {
     try {
       mermaid.initialize?.({
         startOnLoad: false,
-        securityLevel: 'loose',
+        // 所见模式曾用 'loose' 以支持 HTML label / click 交互，但 loose 允许
+        // 图内 HTML 与回调进入 webview，属于 Mermaid 官方标注的注入面。
+        // 与阅读模式统一为 strict：安全优先，HTML label 不再生效。
+        securityLevel: 'strict',
         theme: theme,
         logLevel: 'fatal' as any,
         fontSize: 16 as any,

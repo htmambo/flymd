@@ -76,56 +76,46 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
-        // 优化的代码分割策略
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
+        // 优化的代码分割策略。
+        // 用 rolldown 的 codeSplitting.groups（manualChunks 的替代，显式优先级）。
+        //
+        // 关键修复：Vite 的 __vitePreload 辅助函数会被入口与懒加载 chunk 同时引用。
+        // 旧配置下它被并入 mermaid 块，入口静态 import 该函数后，6.4MB 的
+        // mermaid 就变成启动必加载（modulepreload 只是表象）。这里给它最高优先级
+        // 单独成块，入口只依赖几十字节的 helper，mermaid 维持原有单一 chunk。
+        codeSplitting: {
+          groups: [
+            { name: 'vite-preload', test: /preload-helper/, priority: 300 },
             // Milkdown 编辑器（只在所见模式加载）
-            if (id.includes('@milkdown')) return 'milkdown'
+            { name: 'milkdown', test: /node_modules[\\/].*@milkdown/, priority: 100 },
             // ProseMirror 生态（WYSIWYG 依赖）
-            if (id.includes('prosemirror')) return 'prosemirror'
+            { name: 'prosemirror', test: /node_modules[\\/].*prosemirror/, priority: 100 },
             // 大型渲染库（按需加载）
-            if (id.includes('markdown-it')) return 'markdown-it'
-            if (id.includes('dompurify')) return 'dompurify'
-            if (id.includes('highlight')) return 'highlightjs'
-            if (id.includes('mermaid')) {
-              // 把 mermaid 所有模块合并到一个 chunk，避免 Rollup 拆分后
-              // 图表子 chunk 与共享 chunk 之间出现循环依赖，导致生产包
-              // 在 WebKit/Tauri 下出现 "g is not a function" 等初始化错误。
-              return 'mermaid'
-            }
-            if (id.includes('katex')) return 'katex'
-            if (id.includes('pdfjs-dist')) return 'pdfjs'
+            { name: 'markdown-it', test: /node_modules[\\/].*markdown-it/, priority: 100 },
+            { name: 'dompurify', test: /node_modules[\\/].*dompurify/, priority: 100 },
+            { name: 'highlightjs', test: /node_modules[\\/].*highlight/, priority: 100 },
+            // mermaid 保持单块：拆分后其子 chunk 与共享 chunk 之间曾出现循环依赖，
+            // 在 WebKit/Tauri 下报 "g is not a function"。helper 已单独成块，
+            // 不再需要靠“取消 mermaid 分块”来规避入口污染。
+            { name: 'mermaid', test: /node_modules[\\/].*mermaid/, priority: 100 },
+            { name: 'katex', test: /node_modules[\\/].*katex/, priority: 100 },
+            { name: 'pdfjs', test: /node_modules[\\/].*pdfjs-dist/, priority: 100 },
             // 导出相关库（按需加载）
-            if (id.includes('html2pdf') || id.includes('html-docx')) return 'docx'
-            if (id.includes('canvg')) return 'pdf'
+            { name: 'docx', test: /node_modules[\\/].*(html2pdf|html-docx)/, priority: 100 },
+            { name: 'pdf', test: /node_modules[\\/].*canvg/, priority: 100 },
             // WebDAV 相关
-            if (id.includes('webdav')) return 'wps'
+            { name: 'wps', test: /node_modules[\\/].*webdav/, priority: 100 },
             // Tauri 运行时
-            if (id.includes('@tauri-apps')) return 'tauri'
+            { name: 'tauri', test: /node_modules[\\/].*@tauri-apps/, priority: 100 },
             // 命令面板拼音搜索
-            if (id.includes('pinyin-pro')) return 'pinyin'
+            { name: 'pinyin', test: /node_modules[\\/].*pinyin-pro/, priority: 100 },
             // YAML 处理
-            if (id.includes('js-yaml')) return 'yaml'
+            { name: 'yaml', test: /node_modules[\\/].*js-yaml/, priority: 100 },
             // diff 库
-            if (id.includes('/diff/') || id.includes('diff/dist')) return 'diff'
-            // 其余小型依赖不再强制合并到 vendor，让 Rollup 自动处理
-          }
-          // 应用代码分割：将大型模块分离
-          if (id.includes('/src/')) {
-            // 注意：不要按目录强制把 /src/wysiwyg/、/src/extensions/ 等归入
-            // 独立 chunk——它们与入口共享的模块（uploader/utils/core 等）会被
-            // 一并拖进懒加载 chunk，入口静态引用这些共享模块后整条
-            // wysiwyg→milkdown→mermaid 链就会被拖成启动即加载
-            // （dist/index.html 里 mermaid 6.6MB 的 modulepreload 就是这么来的）。
-            // 交给 rolldown 按动态 import 边界自动拆分即可。
-            // 文件树不设 manualChunks（perf 批次 E）：原规则强制命名 fileTree.ts 为
-            // 独立 chunk，但会把它的静态依赖（i18n/libraryConfig 等）一并吸进该 chunk，
-            // 入口反向静态导入这些共享模块后整个 chunk 退回静态依赖，懒加载失效。
-            // 交给 rolldown 按动态 import 边界自动拆分即可；闭包门禁以
-            // /filetree/i（大小写不敏感）匹配产物 chunk 名兜底把关
+            { name: 'diff', test: /node_modules[\\/].*[\\/]diff[\\/]/, priority: 100 },
             // HTML 转 Markdown
-            if (id.includes('/html2md')) return 'html2md'
-          }
+            { name: 'html2md', test: /[\\/]src[\\/]html2md/, priority: 100 },
+          ],
         },
         // 优化文件名，启用内容哈希以利用浏览器缓存
         chunkFileNames: 'assets/[name]-[hash].js',

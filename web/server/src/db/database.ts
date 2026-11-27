@@ -131,9 +131,29 @@ export class DatabaseClient {
     return this.mapUser(u);
   }
 
-  ensureAdmin(email: string, passwordHash: string): void {
+  ensureAdmin(email: string, passwordHash: string, plainPassword?: string): void {
     const emailLc = email.toLowerCase();
-    if (this.findUserByEmail(emailLc)) return;
+    const existing = this.findUserByEmail(emailLc);
+    if (existing) {
+      // 旧格式（SHA-256(pepper::password)）在启动时原地升级为 scrypt。
+      // 仅当环境变量里的密码确实能验证通过才升级，避免覆盖用户自行修改过的密码。
+      if (plainPassword) {
+        try {
+          const row = this.db
+            .prepare("SELECT password_hash FROM users WHERE id = ?")
+            .get(existing.id) as { password_hash?: string } | undefined;
+          const current = String(row?.password_hash || "");
+          if (current && !current.startsWith("scrypt$") && verifyPassword(plainPassword, current)) {
+            this.db
+              .prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+              .run(passwordHash, existing.id);
+          }
+        } catch {
+          // 升级失败不影响启动；下次仍会重试
+        }
+      }
+      return;
+    }
     const id = "u_admin";
     const now = Math.floor(Date.now() / 1000);
     this.db

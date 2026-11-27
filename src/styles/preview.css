@@ -478,6 +478,12 @@
   transform: rotate(-90deg);
 }
 
+/* 初始折叠状态用 class 表达：消毒会剥离内联 style，不能再依赖
+   style="display:none" 在首帧隐藏内容。 */
+.callout.folded .callout-content {
+  display: none;
+}
+
 .callout-content > *:first-child {
   margin-top: 0;
 }

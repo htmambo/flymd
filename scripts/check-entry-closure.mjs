@@ -3,7 +3,7 @@
 // 无第三方依赖;在 vite build 后由 package.json build 脚本调用。
 // 校验失败打印违规路径并以 exit 1 退出。
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -14,7 +14,13 @@ const htmlPath = path.join(distDir, 'index.html')
 // 黑名单：yaml/diff（perf-2026-10 T2 起动态化）+ fileTree（perf 批次 E 起懒加载；
 // 产物 chunk 名大小写不定，用 i 标志匹配）。任何人重新静态引入这些模块，
 // build 会在本门禁直接失败
-const VIOLATION_RE = /assets\/(?:yaml|diff|filetree)-[^/]*\.js$/i
+// mermaid 同样必须懒加载：它曾被并入入口静态闭包（6.32MB 的 modulepreload），
+// 门禁只拦 yaml/diff/filetree 时没能发现。现在一并纳入黑名单。
+const VIOLATION_RE = /assets\/(?:yaml|diff|filetree|mermaid)-[^/]*\.js$/i
+
+// 入口静态闭包总预算。当前正常值约 0.75MB（index + tauri + dompurify + helper），
+// 3MB 留出合理余量；任何重库被重新拖回入口都会在此暴露。
+const MAX_CLOSURE_BYTES = 3 * 1024 * 1024
 
 function fail(msg) {
   console.error(`[check-entry-closure] FAIL: ${msg}`)
@@ -105,4 +111,19 @@ if (violations.length > 0) {
   process.exit(1)
 }
 
-console.log(`[check-entry-closure] OK: 入口静态闭包 ${closure.size} 个文件,不含 yaml/diff/filetree chunk`)
+let totalBytes = 0
+for (const f of closure) {
+  try { totalBytes += statSync(f).size } catch {}
+}
+if (totalBytes > MAX_CLOSURE_BYTES) {
+  console.error(`[check-entry-closure] FAIL: 入口静态闭包 ${(totalBytes / 1048576).toFixed(2)}MB 超过预算 ${(MAX_CLOSURE_BYTES / 1048576).toFixed(0)}MB`)
+  for (const f of closure) {
+    const rel = path.relative(distDir, f).split(path.sep).join('/')
+    let size = 0
+    try { size = statSync(f).size } catch {}
+    console.error(`  - ${rel} ${(size / 1024).toFixed(1)}KB`)
+  }
+  process.exit(1)
+}
+
+console.log(`[check-entry-closure] OK: 入口静态闭包 ${closure.size} 个文件, ${(totalBytes / 1048576).toFixed(2)}MB, 不含 yaml/diff/filetree/mermaid chunk`)

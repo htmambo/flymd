@@ -254,11 +254,27 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
         hasChild.set(cur.id, child)
       }
 
-      outline.innerHTML = items.map((it, idx) => {
-        const tg = (it.level <= 2 && hasChild.get(it.id)) ? `<span class="ol-tg" data-idx="${idx}">▾</span>` : `<span class="ol-tg"></span>`
-        const off = (typeof it.offset === 'number' && it.offset >= 0) ? ` data-offset="${it.offset}"` : ''
-        return `<div class="ol-item lvl-${it.level}" data-id="${it.id}" data-idx="${idx}"${off}>${tg}${it.text}</div>`
-      }).join('')
+      // 用 DOM API 构建而不是拼 HTML 字符串：标题文本来自文档原文
+      // （源码模式直接来自编辑器行），拼 innerHTML 会让 `# <img onerror=...>`
+      // 这类标题在渲染大纲时执行事件处理器。textContent 保证只当文本。
+      const frag = document.createDocumentFragment()
+      items.forEach((it, idx) => {
+        const row = document.createElement('div')
+        row.className = `ol-item lvl-${it.level}`
+        row.dataset.id = it.id
+        row.dataset.idx = String(idx)
+        if (typeof it.offset === 'number' && it.offset >= 0) row.dataset.offset = String(it.offset)
+        const tg = document.createElement('span')
+        tg.className = 'ol-tg'
+        if (it.level <= 2 && hasChild.get(it.id)) {
+          tg.dataset.idx = String(idx)
+          tg.textContent = '▾'
+        }
+        row.appendChild(tg)
+        row.appendChild(document.createTextNode(it.text))
+        frag.appendChild(row)
+      })
+      outline.replaceChildren(frag)
 
       // 折叠状态记忆(基于当前文件路径)
       const filePath = deps.getCurrentFilePath() || 'untitled'

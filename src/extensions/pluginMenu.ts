@@ -48,6 +48,17 @@ function removePluginDropdown() {
   } catch {}
 }
 
+// 插件提供的 label/note 属于第三方文本，拼进 innerHTML 前统一转义，
+// 避免 "<img onerror>" 一类内容在宿主菜单里生成可执行/可伪装节点。
+function escHtmlText(v: unknown): string {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 // 渲染单个菜单项（支持嵌套子菜单）
 function renderPluginMenuItem(item: any, callbacks: Map<string, () => void>, idCounter: { value: number }): string {
   if (!item) return ''
@@ -59,14 +70,14 @@ function renderPluginMenuItem(item: any, callbacks: Map<string, () => void>, idC
 
   // 分组标题
   if (item.type === 'group') {
-    return `<div class="plugin-menu-group-title">${item.label || ''}</div>`
+    return `<div class="plugin-menu-group-title">${escHtmlText(item.label)}</div>`
   }
 
   // 子菜单
   if (item.children && item.children.length > 0) {
     const id = `menu-item-${idCounter.value++}`
     const disabled = item.disabled ? ' disabled' : ''
-    const note = item.note ? `<span class="plugin-menu-note">${item.note}</span>` : ''
+    const note = item.note ? `<span class="plugin-menu-note">${escHtmlText(item.note)}</span>` : ''
 
     let childrenHtml = ''
     for (const child of item.children) {
@@ -80,7 +91,7 @@ function renderPluginMenuItem(item: any, callbacks: Map<string, () => void>, idC
 
     return `
       <div class="plugin-menu-item has-children${disabled}" data-id="${id}">
-        <span class="plugin-menu-label">${item.label || ''}</span>${note}
+        <span class="plugin-menu-label">${escHtmlText(item.label)}</span>${note}
         <span class="plugin-menu-arrow">▸</span>
         <div class="plugin-menu-submenu">${childrenHtml}</div>
       </div>
@@ -90,14 +101,14 @@ function renderPluginMenuItem(item: any, callbacks: Map<string, () => void>, idC
   // 普通菜单项
   const id = `menu-item-${idCounter.value++}`
   const disabled = item.disabled ? ' disabled' : ''
-  const note = item.note ? `<span class="plugin-menu-note">${item.note}</span>` : ''
+  const note = item.note ? `<span class="plugin-menu-note">${escHtmlText(item.note)}</span>` : ''
 
   // 保存回调
   if (item.onClick && typeof item.onClick === 'function') {
     callbacks.set(id, item.onClick)
   }
 
-  return `<button class="plugin-menu-item" data-id="${id}"${disabled}>${item.label || ''}${note}</button>`
+  return `<button class="plugin-menu-item" data-id="${id}"${disabled}>${escHtmlText(item.label)}${note}</button>`
 }
 
 // 渲染菜单项列表

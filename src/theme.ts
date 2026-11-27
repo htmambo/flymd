@@ -1208,9 +1208,16 @@ function ensureThemePanelReady(): HTMLDivElement | null {
           fontListEl.innerHTML = '<div class="font-list-empty">暂无已安装字体</div>'
           return
         }
+        // 字体名来自系统字体库，可能包含 HTML 特殊字符，统一转义后再拼接。
+        const esc = (v: unknown) => String(v ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;')
         fontListEl.innerHTML = list.map((f) =>
-          `<div class="font-list-item" data-id="${f.id}">` +
-          `<span class="font-list-item-name">${f.name}</span>` +
+          `<div class="font-list-item" data-id="${esc(f.id)}">` +
+          `<span class="font-list-item-name">${esc(f.name)}</span>` +
           `<button type="button" class="font-delete">删除</button>` +
           `</div>`
         ).join('')

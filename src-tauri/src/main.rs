@@ -26,6 +26,14 @@ pub struct AppState {
   // T8 S3 client 缓存：key = "endpoint|region|ak|sk|pathStyle" 组合字符串（不哈希，免碰撞），
   // value = (SdkConfig, s3::Client)。锁仅保护查/插两个短临界区，禁止持锁跨 await。
   pub s3_cache: std::sync::Mutex<std::collections::HashMap<String, (aws_config::SdkConfig, aws_sdk_s3::Client)>>,
+  // 更新安装包的“已验签”白名单：download_file 校验通过后写入
+  // 「规范化绝对路径 → SHA-256」。run_installer 只允许启动此表中的文件，
+  // 并在 spawn 前重新计算哈希，防止校验后被替换（TOCTOU）。
+  pub verified_installs: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>,
+  // 由 check_update 从 GitHub API（固定仓库）登记的「下载 URL → SHA-256」。
+  // 这是更新链路的信任锚：渲染进程只能引用这里出现过的 URL，
+  // 不能自带 URL + 自带摘要来让任意二进制通过校验。
+  pub pending_assets: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 /// 纯逻辑：把 shown 从 false 原子翻转为 true，仅「首次」调用返回 true。
@@ -2782,6 +2790,8 @@ fn main() {
         window_shown: std::sync::atomic::AtomicBool::new(false),
         http: reqwest::Client::builder().build()?,
         s3_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
+        verified_installs: std::sync::Mutex::new(std::collections::HashMap::new()),
+        pending_assets: std::sync::Mutex::new(std::collections::HashMap::new()),
       });
 
       // 处理 `flymd path/to/file.md` 以及文件关联传入的启动参数。
@@ -2907,6 +2917,9 @@ struct UpdateAssetInfo {
   size: u64,
   direct_url: String,
   proxy_url: String,
+  /// GitHub Releases API 的 asset.digest（形如 `sha256:<hex>`）。
+  /// 旧版本/部分资产可能没有该字段；缺失时前端不做自动安装。
+  sha256: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2950,6 +2963,8 @@ struct GhAsset {
   name: String,
   browser_download_url: String,
   size: Option<u64>,
+  /// GitHub 为 Release 资产提供的摘要，格式 `sha256:<hex>`（可能有版本差异）。
+  digest: Option<String>,
   #[allow(dead_code)]
   content_type: Option<String>,
 }
@@ -2965,9 +2980,43 @@ struct GhRelease {
 }
 
 fn gh_proxy_url(raw: &str) -> String {
-  // 代理前缀：按“https://gh-proxy.comb/原始URL”拼接
+  // 代理前缀：按“https://gh-proxy.com/原始URL”拼接
   let prefix = "https://gh-proxy.com/";
   if raw.starts_with(prefix) { raw.to_string() } else { format!("{}{}", prefix, raw) }
+}
+
+/// 从 GitHub 的 `digest` 字段（`sha256:<hex>`）提取规范化的小写 hex。
+/// 格式不符时返回 None（前端据此不做自动安装）。
+fn digest_sha256_hex(raw: Option<&str>) -> Option<String> {
+  let s = raw?.trim();
+  let hex_part = s.strip_prefix("sha256:").unwrap_or(s).trim().to_ascii_lowercase();
+  if hex_part.len() == 64 && hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+    Some(hex_part)
+  } else {
+    None
+  }
+}
+
+/// 把 check_update 从 GitHub API 拿到的「资产 URL + 摘要」登记进信任表。
+/// 同时登记直连与前端会尝试的镜像前缀，下载时只认这张表里的 URL。
+fn register_update_asset(
+  map: &mut std::collections::HashMap<String, String>,
+  direct_url: &str,
+  sha256: &str,
+) {
+  if map.len() > 64 {
+    map.clear();
+  }
+  let h = sha256.to_ascii_lowercase();
+  map.insert(direct_url.to_string(), h.clone());
+  map.insert(gh_proxy_url(direct_url), h.clone());
+  for prefix in [
+    "https://ghfast.top/",
+    "https://cdn.gh-proxy.com/",
+    "https://edgeone.gh-proxy.com/",
+  ] {
+    map.insert(format!("{}{}", prefix, direct_url), h.clone());
+  }
 }
 
 fn os_arch_tag() -> (&'static str, &'static str) {
@@ -3059,6 +3108,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
         size: a.size.unwrap_or(0),
         direct_url: a.browser_download_url.clone(),
         proxy_url: gh_proxy_url(&a.browser_download_url),
+        sha256: digest_sha256_hex(a.digest.as_deref()),
       });
     }
   } else if os_tag == "linux" {
@@ -3069,6 +3119,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
         size: a.size.unwrap_or(0),
         direct_url: a.browser_download_url.clone(),
         proxy_url: gh_proxy_url(&a.browser_download_url),
+        sha256: digest_sha256_hex(a.digest.as_deref()),
       });
     }
     if let Some(a) = deb {
@@ -3077,6 +3128,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
         size: a.size.unwrap_or(0),
         direct_url: a.browser_download_url.clone(),
         proxy_url: gh_proxy_url(&a.browser_download_url),
+        sha256: digest_sha256_hex(a.digest.as_deref()),
       });
     }
   } else if os_tag == "macos" {
@@ -3087,6 +3139,7 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
         size: a.size.unwrap_or(0),
         direct_url: a.browser_download_url.clone(),
         proxy_url: gh_proxy_url(&a.browser_download_url),
+        sha256: digest_sha256_hex(a.digest.as_deref()),
       });
     }
     if let Some(a) = arm {
@@ -3095,12 +3148,33 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
         size: a.size.unwrap_or(0),
         direct_url: a.browser_download_url.clone(),
         proxy_url: gh_proxy_url(&a.browser_download_url),
+        sha256: digest_sha256_hex(a.digest.as_deref()),
       });
     }
   }
 
   let notes = latest.body.unwrap_or_default();
   let name = latest.name.unwrap_or_else(|| latest_tag.clone());
+
+  // 信任锚：把本次 release 的资产 URL 与官方摘要登记到 Rust 侧。
+  // 渲染进程后续只能下载这里出现过的 URL，且摘要由 Rust 决定，不能由调用方提供。
+  if let Ok(mut map) = state.pending_assets.lock() {
+    map.clear();
+    for a in [
+      &asset_win,
+      &asset_linux_appimage,
+      &asset_linux_deb,
+      &asset_macos_x64,
+      &asset_macos_arm,
+    ]
+    .into_iter()
+    .flatten()
+    {
+      if let Some(hex) = a.sha256.as_deref() {
+        register_update_asset(&mut map, &a.direct_url, hex);
+      }
+    }
+  }
 
   Ok(CheckUpdateResp{
     has_update,
@@ -3117,66 +3191,234 @@ async fn check_update(_force: Option<bool>, include_prerelease: Option<bool>, st
   })
 }
 
+/// 更新下载允许的域名。GitHub 直连与前端使用的镜像都必须在表内；
+/// 这可以防止被注入的渲染进程把 download_file 当成任意 URL 的文件落地原语。
+const DOWNLOAD_ALLOWED_HOSTS: &[&str] = &[
+  "github.com",
+  "objects.githubusercontent.com",
+  "release-assets.githubusercontent.com",
+  "github-releases.githubusercontent.com",
+  "gh-proxy.com",
+  "cdn.gh-proxy.com",
+  "edgeone.gh-proxy.com",
+  "ghfast.top",
+];
+
+/// 下载文件名白名单化：只保留 ascii 字母数字与 . - _ +，去掉路径分隔符，
+/// 拒绝空 / "." / ".." / 隐藏文件名，最长 128 字符。返回 None 时调用方回退默认名。
+fn sanitize_download_name(raw: &str) -> Option<String> {
+  let decoded = percent_encoding::percent_decode_str(raw).decode_utf8_lossy().to_string();
+  let base = decoded.rsplit(['/', '\\']).next().unwrap_or("").trim();
+  if base.is_empty() || base == "." || base == ".." {
+    return None;
+  }
+  let cleaned: String = base
+    .chars()
+    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+    .take(128)
+    .collect();
+  if cleaned.is_empty() || cleaned.starts_with('.') {
+    None
+  } else {
+    Some(cleaned)
+  }
+}
+
+fn host_allowed(u: &url::Url) -> bool {
+  let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+  DOWNLOAD_ALLOWED_HOSTS
+    .iter()
+    .any(|h| host == *h || host.ends_with(&format!(".{}", h)))
+}
+
 #[tauri::command]
 #[allow(unused_assignments)]
-async fn download_file(url: String, use_proxy: Option<bool>, state: State<'_, AppState>) -> Result<String, String> {
+async fn download_file(
+  url: String,
+  use_proxy: Option<bool>,
+  expected_sha256: Option<String>,
+  state: State<'_, AppState>,
+) -> Result<String, String> {
+  // 上限 512MB：更新包远小于此值，同时阻断磁盘填充型 DoS。
+  const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 
-  // 解析文件名
-  let (direct, proxy) = {
-    let u = url::Url::parse(&url).map_err(|e| format!("invalid url: {e}"))?;
-    let fname = u
-      .path_segments()
-      .and_then(|mut s| s.next_back())
-      .unwrap_or("download.bin")
-      .to_string();
-        // 保存到用户下载目录（不可用时回退到临时目录）
-    #[cfg(target_os = "windows")]
-    let base_download = std::env::var("USERPROFILE")
-      .map(|p| std::path::PathBuf::from(p).join("Downloads"))
-      .unwrap_or_else(|_| std::env::temp_dir());
-    #[cfg(not(target_os = "windows"))]
-    let base_download = std::env::var("HOME")
-      .map(|p| std::path::PathBuf::from(p).join("Downloads"))
-      .unwrap_or_else(|_| std::env::temp_dir());
-    let mut path = base_download.clone();
-    path.push(&fname);
-    let direct = (u, path);
-    let proxy = (
-      url::Url::parse(&gh_proxy_url(&url)).map_err(|e| format!("invalid proxy url: {e}"))?,
-      base_download.join(&fname)
-    );
-    (direct, proxy)
-  };
+  let u = url::Url::parse(&url).map_err(|e| format!("invalid url: {e}"))?;
+  if u.scheme() != "https" {
+    return Err("仅允许 https 下载".into());
+  }
+  if !host_allowed(&u) {
+    return Err(format!("拒绝下载：域名不在白名单内 ({})", u.host_str().unwrap_or("")));
+  }
+  let fname = sanitize_download_name(
+    u.path_segments().and_then(|mut s| s.next_back()).unwrap_or(""),
+  )
+  .unwrap_or_else(|| "download.bin".to_string());
+
+  // 保存到用户下载目录（不可用时回退到临时目录）
+  #[cfg(target_os = "windows")]
+  let base_download = std::env::var("USERPROFILE")
+    .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+    .unwrap_or_else(|_| std::env::temp_dir());
+  #[cfg(not(target_os = "windows"))]
+  let base_download = std::env::var("HOME")
+    .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+    .unwrap_or_else(|_| std::env::temp_dir());
+
+  let proxy_url = url::Url::parse(&gh_proxy_url(&url))
+    .map_err(|e| format!("invalid proxy url: {e}"))?;
+  // 兼容旧前端参数，但**不信任**它：摘要必须来自 check_update 在 Rust 侧
+  // 登记的「官方资产 URL → 摘要」。否则被注入的渲染进程可以自带 URL + 自带
+  // 哈希，让任意 GitHub 仓库里的二进制通过校验。
+  let _ = expected_sha256;
+  let expected = {
+    let map = state
+      .pending_assets
+      .lock()
+      .map_err(|e| format!("state lock error: {e}"))?;
+    map.get(url.as_str())
+      .cloned()
+      .or_else(|| {
+        // 镜像 URL 形如 `<prefix><官方直链>`：用后缀匹配回查登记表
+        map.iter()
+          .find(|(k, _)| url.ends_with(k.as_str()))
+          .map(|(_, v)| v.clone())
+      })
+  }
+  .ok_or_else(|| "未知或未授权的更新资产，已拒绝下载".to_string())?;
+  let expected = Some(expected);
 
   // 下载函数（共享 client：原 builder 为 .user_agent("flymd-updater") + .timeout(120s)，
   // 均在此用 RequestBuilder::header("User-Agent")/.timeout 复原，见 AppState 注释审计）
-  async fn do_fetch(client: &reqwest::Client, url: &url::Url, save: &std::path::Path) -> Result<(), String> {
+  // 写临时文件 → 校验摘要 → 原子替换；同时限制大小并检查重定向后的最终域名。
+  async fn do_fetch(
+    client: &reqwest::Client,
+    url: &url::Url,
+    base_dir: &std::path::Path,
+    fname: &str,
+    expected: &Option<String>,
+  ) -> Result<std::path::PathBuf, String> {
     let resp = client
       .get(url.clone())
       .timeout(Duration::from_secs(120))
       .header("User-Agent", "flymd-updater")
       .send().await.map_err(|e| format!("request error: {e}"))?;
-    if !resp.status().is_success() { return Err(format!("http status {}", resp.status())); }
-    let mut f = std::fs::File::create(save).map_err(|e| format!("create file error: {e}"))?;
+    if !resp.status().is_success() {
+      return Err(format!("http status {}", resp.status()));
+    }
+    if !host_allowed(resp.url()) {
+      return Err(format!("重定向到未授权的域名: {}", resp.url().host_str().unwrap_or("")));
+    }
+    if let Some(len) = resp.content_length() {
+      if len > MAX_DOWNLOAD_BYTES {
+        return Err(format!("下载体积 {len} 字节超过上限"));
+      }
+    }
+    // 临时文件名带 pid + 纳秒 + 尝试序号，并用 create_new（O_EXCL）：
+    // 避免并发下载互相截断，也避免有人预置同名符号链接让写入跟随到别处。
+    let (tmp, mut f) = {
+      let mut created: Option<(std::path::PathBuf, std::fs::File)> = None;
+      for attempt in 0..8u32 {
+        let nanos = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map(|d| d.as_nanos())
+          .unwrap_or(0);
+        let candidate = base_dir.join(format!(
+          "{}.{}.{}.{}.part",
+          fname,
+          std::process::id(),
+          nanos,
+          attempt
+        ));
+        match std::fs::OpenOptions::new()
+          .create_new(true)
+          .write(true)
+          .open(&candidate)
+        {
+          Ok(fh) => {
+            created = Some((candidate, fh));
+            break;
+          }
+          Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+          Err(e) => return Err(format!("create file error: {e}")),
+        }
+      }
+      created.ok_or_else(|| "无法创建临时下载文件".to_string())?
+    };
+    let mut hasher = sha2::Sha256::new();
+    let mut total: u64 = 0;
     let mut stream = resp.bytes_stream();
     use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
-      let bytes = chunk.map_err(|e| format!("read chunk error: {e}"))?;
-      std::io::Write::write_all(&mut f, &bytes).map_err(|e| format!("write error: {e}"))?;
+      let bytes = match chunk {
+        Ok(b) => b,
+        Err(e) => {
+          let _ = std::fs::remove_file(&tmp);
+          return Err(format!("read chunk error: {e}"));
+        }
+      };
+      total += bytes.len() as u64;
+      if total > MAX_DOWNLOAD_BYTES {
+        drop(f);
+        let _ = std::fs::remove_file(&tmp);
+        return Err("下载体积超过上限，已中止".into());
+      }
+      hasher.update(&bytes);
+      if let Err(e) = std::io::Write::write_all(&mut f, &bytes) {
+        drop(f);
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("write error: {e}"));
+      }
     }
-    Ok(())
+    drop(f);
+
+    if let Some(exp) = expected {
+      let got = hex::encode(hasher.finalize());
+      if !got.eq_ignore_ascii_case(exp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("SHA-256 校验失败（期望 {exp}，实际 {got}）"));
+      }
+    }
+
+    let final_path = base_dir.join(fname);
+    // rename 前移除旧文件（若存在）。remove_file 对符号链接只删除链接本身，
+    // 不会写到链接目标；随后 rename 保证目标路径指向刚校验过的内容。
+    if final_path.exists() || final_path.symlink_metadata().is_ok() {
+      let _ = std::fs::remove_file(&final_path);
+    }
+    std::fs::rename(&tmp, &final_path).map_err(|e| {
+      let _ = std::fs::remove_file(&tmp);
+      format!("保存文件失败: {e}")
+    })?;
+    Ok(final_path)
   }
 
   let want_proxy = use_proxy.unwrap_or(false);
-  let mut last_err: Option<String> = None;
+  let mut attempts: Vec<(url::Url, bool)> = Vec::new();
   if want_proxy {
-    if let Err(e) = do_fetch(&state.http, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
-    // 代理失败 -> 尝试直连
-    if let Err(e) = do_fetch(&state.http, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
+    attempts.push((proxy_url, true));
+    attempts.push((u, false));
   } else {
-    if let Err(e) = do_fetch(&state.http, &direct.0, &direct.1).await { last_err = Some(e); } else { return Ok(direct.1.to_string_lossy().to_string()); }
-    // 直连失败 -> 尝试代理
-    if let Err(e) = do_fetch(&state.http, &proxy.0, &proxy.1).await { last_err = Some(e); } else { return Ok(proxy.1.to_string_lossy().to_string()); }
+    attempts.push((u, false));
+    attempts.push((proxy_url, true));
+  }
+
+  let mut last_err: Option<String> = None;
+  for (target, _is_proxy) in attempts {
+    match do_fetch(&state.http, &target, &base_download, &fname, &expected).await {
+      Ok(path) => {
+        // 摘要已由 do_fetch 强制校验通过；登记「路径 → 摘要」供 run_installer
+        // 在 spawn 前二次校验（防 TOCTOU 替换）。
+        if let Some(hex) = expected.as_deref() {
+          let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+          if let Ok(mut set) = state.verified_installs.lock() {
+            if set.len() > 16 { set.clear(); }
+            set.insert(canon, hex.to_string());
+          }
+        }
+        return Ok(path.to_string_lossy().to_string());
+      }
+      Err(e) => last_err = Some(e),
+    }
   }
   Err(last_err.unwrap_or_else(|| "download failed".into()))
 }
@@ -4336,28 +4578,97 @@ async fn force_remove_path(path: String, root: Option<String>) -> Result<(), Str
 }
 
 #[tauri::command]
-async fn run_installer(_path: String) -> Result<(), String> {
+async fn run_installer(path: String, state: State<'_, AppState>) -> Result<(), String> {
   #[cfg(target_os = "windows")]
   {
     use std::process::Command;
-    // 使用 PowerShell 以管理员权限启动安装程序
-    let status = Command::new("powershell")
+
+    // 只允许启动“下载目录/临时目录内的 .exe/.msi，且由 download_file 在
+    // SHA-256 校验通过后登记过”的安装包。任何任意路径（含注入 JS 构造的路径）
+    // 都会在登记表这一关被拒绝。
+    let canon = std::fs::canonicalize(&path).map_err(|e| format!("安装包不可访问: {e}"))?;
+    if !canon.is_file() {
+      return Err("安装包不是文件".into());
+    }
+    let ext = canon
+      .extension()
+      .and_then(|s| s.to_str())
+      .unwrap_or("")
+      .to_ascii_lowercase();
+    if ext != "exe" && ext != "msi" {
+      return Err(format!("拒绝运行非安装包文件: .{ext}"));
+    }
+
+    let download_dir = std::env::var("USERPROFILE")
+      .map(|p| std::path::PathBuf::from(p).join("Downloads"))
+      .unwrap_or_else(|_| std::env::temp_dir());
+    // canonicalize 两侧，避免 Windows 的 `\\?\` 前缀导致 starts_with 误判
+    let download_dir = std::fs::canonicalize(&download_dir).unwrap_or(download_dir);
+    let temp_dir = std::fs::canonicalize(std::env::temp_dir())
+      .unwrap_or_else(|_| std::env::temp_dir());
+    if !canon.starts_with(&download_dir) && !canon.starts_with(&temp_dir) {
+      return Err("拒绝运行下载目录之外的安装包".into());
+    }
+
+    // 先取出「路径 → 期望摘要」，spawn 成功后再消费，避免启动失败后无法重试。
+    let expected = {
+      let set = state
+        .verified_installs
+        .lock()
+        .map_err(|e| format!("state lock error: {e}"))?;
+      set.get(&canon).cloned()
+    };
+    let Some(expected) = expected else {
+      return Err("安装包未通过 SHA-256 校验，已拒绝自动运行；请手动打开".into());
+    };
+
+    // spawn 前重新计算文件哈希：校验通过后到真正启动之间的时间窗里，
+    // 文件可能被替换（注入 JS 具备 fs 写能力时尤其现实）。
+    {
+      use std::io::Read;
+      let mut file = std::fs::File::open(&canon)
+        .map_err(|e| format!("安装包不可读: {e}"))?;
+      let mut hasher = sha2::Sha256::new();
+      let mut buf = [0u8; 64 * 1024];
+      loop {
+        let n = file.read(&mut buf).map_err(|e| format!("读取安装包失败: {e}"))?;
+        if n == 0 { break; }
+        hasher.update(&buf[..n]);
+      }
+      let got = hex::encode(hasher.finalize());
+      if !got.eq_ignore_ascii_case(&expected) {
+        if let Ok(mut set) = state.verified_installs.lock() {
+          set.remove(&canon);
+        }
+        return Err("安装包在运行前被替换，已中止".into());
+      }
+    }
+
+    // 路径通过环境变量传入，不拼进 PowerShell 命令串，消除引号/分号注入面。
+    // 用 spawn 而不是 status：Start-Process 会立即返回，status 会阻塞异步线程
+    // 直到 powershell 退出。
+    let spawned = Command::new("powershell")
       .args([
         "-NoProfile",
+        "-NonInteractive",
         "-Command",
-        "Start-Process",
-        "-FilePath",
-        &_path,
-        "-Verb",
-        "runas",
+        "Start-Process -FilePath $env:FLYMD_INSTALLER -Verb RunAs",
       ])
-      .status()
-      .map_err(|e| format!("spawn error: {e}"))?;
-    let _ = status; // 忽略返回码，由安装器自行处理
-    Ok(())
+      .env("FLYMD_INSTALLER", &canon)
+      .spawn();
+    match spawned {
+      Ok(_child) => {
+        if let Ok(mut set) = state.verified_installs.lock() {
+          set.remove(&canon);
+        }
+        Ok(())
+      }
+      Err(e) => Err(format!("spawn error: {e}")),
+    }
   }
   #[cfg(not(target_os = "windows"))]
   {
+    let _ = (&path, &state);
     Err("run_installer only supports Windows".into())
   }
 }
@@ -4881,5 +5192,55 @@ mod ai_scope_tests {
 
   fn root_str_for_test() -> String {
     make_library().to_string_lossy().to_string()
+  }
+}
+
+#[cfg(test)]
+mod download_hardening_tests {
+  use super::{digest_sha256_hex, host_allowed, sanitize_download_name};
+  use url::Url;
+
+  #[test]
+  fn digest_accepts_sha256_prefix_and_normalizes_case() {
+    let hex = "a".repeat(64);
+    let raw = format!("sha256:{}", hex.to_ascii_uppercase());
+    assert_eq!(digest_sha256_hex(Some(&raw)), Some(hex.clone()));
+    assert_eq!(digest_sha256_hex(Some(hex.as_str())), Some(hex));
+  }
+
+  #[test]
+  fn digest_rejects_malformed_values() {
+    assert_eq!(digest_sha256_hex(None), None);
+    assert_eq!(digest_sha256_hex(Some("")), None);
+    assert_eq!(digest_sha256_hex(Some("sha512:abcd")), None);
+    assert_eq!(digest_sha256_hex(Some(&"a".repeat(63))), None);
+    assert_eq!(digest_sha256_hex(Some(&"g".repeat(64))), None);
+  }
+
+  #[test]
+  fn download_name_strips_paths_and_percent_encoding() {
+    assert_eq!(sanitize_download_name("file.exe").as_deref(), Some("file.exe"));
+    assert_eq!(sanitize_download_name("../../evil.exe").as_deref(), Some("evil.exe"));
+    assert_eq!(sanitize_download_name("%2e%2e%2fevil.exe").as_deref(), Some("evil.exe"));
+    assert_eq!(sanitize_download_name("a b.exe").as_deref(), Some("ab.exe"));
+    assert_eq!(sanitize_download_name("C:\\tmp\\x.msi").as_deref(), Some("x.msi"));
+  }
+
+  #[test]
+  fn download_name_rejects_empty_dotdot_and_hidden() {
+    assert_eq!(sanitize_download_name(""), None);
+    assert_eq!(sanitize_download_name(".."), None);
+    assert_eq!(sanitize_download_name("."), None);
+    assert_eq!(sanitize_download_name(".hidden"), None);
+  }
+
+  #[test]
+  fn host_allowlist_matches_exact_and_subdomains_only() {
+    assert!(host_allowed(&Url::parse("https://github.com/a/b").unwrap()));
+    assert!(host_allowed(&Url::parse("https://objects.githubusercontent.com/x").unwrap()));
+    assert!(host_allowed(&Url::parse("https://sub.gh-proxy.com/x").unwrap()));
+    assert!(!host_allowed(&Url::parse("https://evilgithub.com/x").unwrap()));
+    assert!(!host_allowed(&Url::parse("https://github.com.evil.test/x").unwrap()));
+    assert!(!host_allowed(&Url::parse("https://example.com/x").unwrap()));
   }
 }

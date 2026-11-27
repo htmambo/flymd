@@ -132,6 +132,21 @@ describe('renderOutlinePanel — source mode', () => {
     expect(outline.innerHTML).toBe(firstInner)
   })
 
+  it('treats heading HTML as text (no executable nodes)', () => {
+    const editor = document.createElement('textarea')
+    editor.value = '# <img src=x onerror="window.__pwned=1">'
+    document.body.appendChild(editor)
+    const outline = document.createElement('div')
+    outline.id = 'lib-outline'
+    document.body.appendChild(outline)
+    const api = createOutline(makeDeps({ getEditor: () => editor, getCurrentFilePath: () => '/x.md' }))
+    api.renderOutlinePanel()
+    expect(outline.querySelector('img')).toBeNull()
+    const item = outline.querySelector('.ol-item') as HTMLElement
+    expect(item.textContent).toContain('<img src=x onerror="window.__pwned=1">')
+    expect((window as any).__pwned).toBeUndefined()
+  })
+
   it('renders "未检测到标题" when no headings', () => {
     const editor = document.createElement('textarea')
     editor.value = 'plain text\nno headings here'

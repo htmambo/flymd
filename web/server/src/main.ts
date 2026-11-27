@@ -7,7 +7,11 @@ async function main() {
 
   // 初始化 admin 账号(从 env 读)
   if (env.adminEmail && env.adminPassword) {
-    app.database.ensureAdmin(env.adminEmail, hashPassword(env.adminPassword));
+    app.database.ensureAdmin(
+      env.adminEmail,
+      hashPassword(env.adminPassword),
+      env.adminPassword,
+    );
     app.log.info(`管理员账号已就绪: ${env.adminEmail}`);
   }
 

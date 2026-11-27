@@ -53,6 +53,7 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-27-security-perf-hardening.md](Archive/2026-11/2026-11-27-security-perf-hardening.md) — 安全与性能加固（预览 XSS 链、CSP、DOM 注入、更新链路、入口分包、web/server 默认配置）（完成 2026-11-27）
 - ✅ [2026-11-20-linux-packaging-script-failure-fix.md](Archive/2026-11/2026-11-20-linux-packaging-script-failure-fix.md) — 修复 Linux 打包脚本 `package-manjaro.sh --install` 失败（完成 2026-11-20）
   - **报障现象**：脚本失败在**前端构建**而非打包阶段 —— `Error: [vite]: Rolldown failed to resolve import "@codemirror/state" from src/modes/cm6LivePreview.ts`
   - **根因一（主因）**：`node_modules/` 停留在 2026-10-09，而 `@codemirror/state` 等 6 个直接依赖直到 2026-10-30（commit `3eb6b34`）才进 package.json；旧脚本只看**目录是否存在**就复用，从不比对依赖 → 报错点离病因隔了 3 周和一次依赖新增

@@ -67,8 +67,12 @@ export async function createApp(): Promise<FastifyInstance> {
     },
   });
 
-  // CORS(开发环境)
-  await app.register(cors, { origin: env.corsOrigin, credentials: true });
+  // CORS：通配来源与 credentials 互斥。origin=* 时不允许携带凭据，
+  // 避免浏览器端出现“任意站点携带 cookie 调用”的配置误用。
+  await app.register(cors, {
+    origin: env.corsOrigin,
+    credentials: env.corsOrigin !== "*",
+  });
 
   // DB + 服务
   const database = new DatabaseClient();

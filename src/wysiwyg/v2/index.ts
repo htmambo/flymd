@@ -2210,7 +2210,9 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
     try {
       mermaid.initialize?.({
         startOnLoad: false,
-        securityLevel: 'loose',
+        // 与阅读模式统一为 strict（见 plugins/mermaid.ts 的说明）：
+        // loose 会放行图内 HTML/click 回调，扩大注入面。
+        securityLevel: 'strict',
         theme: 'default',
         logLevel: 'fatal' as any,
         fontSize: 16 as any,

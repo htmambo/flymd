@@ -40,7 +40,7 @@ export async function showUpdateOverlayLinux(resp: CheckUpdateResp): Promise<voi
     body.innerHTML = await renderUpdateDetailsHTML(resp, extra)
   } catch {
     body.innerHTML = `
-      <div style="margin-bottom:8px;">发现新版本：<b>v${resp.latest}</b>（当前：v${resp.current}）</div>
+      <div style="margin-bottom:8px;">发现新版本：<b>v${String(resp.latest || '').replace(/</g,'&lt;')}</b>（当前：v${String(resp.current || '').replace(/</g,'&lt;')}）</div>
       <div style="white-space:pre-wrap;max-height:240px;overflow:auto;border:1px solid var(--fg-muted);padding:8px;border-radius:6px;">${(resp.notes||'').replace(/</g,'&lt;')}</div>
     `
   }
@@ -72,7 +72,7 @@ export function showUpdateDownloadedOverlay(savePath: string, resp: CheckUpdateR
   const act = ov.querySelector('#update-actions') as HTMLDivElement
   const esc = (s: string) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
   body.innerHTML = `
-    <div style="margin-bottom:8px;">已下载新版本 <b>v${resp.latest}</b>（当前 v${resp.current}）</div>
+    <div style="margin-bottom:8px;">已下载新版本 <b>v${esc(resp.latest || '')}</b>（当前 v${esc(resp.current || '')}）</div>
     <div>保存位置：<code>${esc(savePath)}</code></div>
   `
   act.innerHTML = ''
@@ -155,18 +155,37 @@ export async function renderUpdateDetailsHTML(
   // 兜底：退回到简单的文本替换
   const esc = (s: string) => (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
   const notes = esc(resp.notes || '').replace(/\n/g,'<br>')
-  const head = `<div class="update-title">发现新版本 <b>v${resp.latest}</b>（当前 v${resp.current}）</div>`
+  // 版本号来自 GitHub release 的 tag_name，同样按不可信文本转义
+  const head = `<div class="update-title">发现新版本 <b>v${esc(resp.latest || '')}</b>（当前 v${esc(resp.current || '')}）</div>`
   const box = `<div class="update-notes" style="max-height:260px;overflow:auto;border:1px solid var(--fg-muted);padding:8px;border-radius:6px;">${notes}</div>`
   let extraHtml = ''
   if (extra && extra.html) {
-    extraHtml += `<div class="update-extra" style="margin-top:8px;">${extra.html}</div>`
+    // update-extra.json 属于本地运维内容，但仍按不可信 HTML 处理：
+    // 消毒失败就丢弃，不退化成原始 HTML 注入。
+    try {
+      const mod: any = await import('dompurify')
+      const DP = mod?.default || mod
+      const clean = DP.sanitize(String(extra.html), {
+        USE_PROFILES: { html: true },
+        FORBID_ATTR: ['style'],
+        FORBID_TAGS: ['iframe', 'object', 'embed', 'form', 'base', 'link', 'meta', 'dialog', 'template', 'slot', 'marquee', 'select', 'textarea', 'button', 'input'],
+      })
+      if (clean) extraHtml += `<div class="update-extra" style="margin-top:8px;">${clean}</div>`
+    } catch {}
   }
   if (extra && extra.links && extra.links.length) {
-    const items = extra.links.map(it => {
-      const txt = (it.text || '').replace(/</g,'&lt;').replace(/&/g,'&amp;')
-      const href = it.href
-      return `<li><a href="${href}" target="_blank" rel="noopener noreferrer">${txt}</a></li>`
-    }).join('')
+    const items = extra.links
+      .filter(it => /^https?:\/\//i.test(String(it.href || '')))
+      .map(it => {
+        const txt = (it.text || '').replace(/</g,'&lt;').replace(/&/g,'&amp;')
+        // href 也要做属性转义：只校验 scheme 不足以阻止引号逃逸出 href="..."
+        const href = String(it.href)
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+        return `<li><a href="${href}" target="_blank" rel="noopener noreferrer">${txt}</a></li>`
+      }).join('')
     extraHtml += `<ul class="update-links" style="margin-top:8px;padding-left:18px;">${items}</ul>`
   }
   return head + box + extraHtml

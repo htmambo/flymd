@@ -862,9 +862,17 @@ export function createPluginHost(
   async function activatePlugin(p: InstalledPlugin): Promise<void> {
     if (state.activePlugins.has(p.id)) return
     const code = await readPluginMainCode(p)
-    const dataUrl =
-      'data:text/javascript;charset=utf-8,' + encodeURIComponent(code)
-    const mod: any = await import(/* @vite-ignore */ dataUrl)
+    // 用 Blob URL 而不是 data: URL 执行插件代码：
+    // 发行版 CSP 的 script-src 只放行 'self' 与 blob:（data: 会扩大注入面），
+    // data: 模块导入会被 CSP 直接阻断，导致所有插件无法激活。
+    // 模块求值完成后立即 revoke，URL 不再可达。
+    const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))
+    let mod: any
+    try {
+      mod = await import(/* @vite-ignore */ blobUrl)
+    } finally {
+      try { URL.revokeObjectURL(blobUrl) } catch {}
+    }
     const http = await getHttpClient()
     const pluginAssetsAbs = await resolvePluginInstallAbsolute(p.dir)
 

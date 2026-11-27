@@ -5,6 +5,8 @@ export type UpdateAssetInfo = {
   size: number
   directUrl: string
   proxyUrl: string
+  /** GitHub Release 资产摘要（sha256 hex）。缺失时不做自动安装/自动打开。 */
+  sha256?: string | null
 }
 
 export type CheckUpdateResp = {

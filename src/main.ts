@@ -257,7 +257,7 @@ import { getMermaidConfig } from './core/mermaidConfig'
 import { CONFIG_BACKUP_FILE_EXT, formatBackupTimestamp } from './core/configBackup'
 import { pluginNotice } from './core/pluginNotice'
 import { createStatusBar, type StatusBarApi } from './ui/statusBar'
-import { shouldSanitizePreview } from './core/sanitize'
+import { shouldSanitizePreview, sanitizePreviewWith } from './core/sanitize'
 // 应用版本号（用于窗口标题/关于弹窗）
 
 // UI 缩放与预览宽度（已拆分到 core/uiZoom.ts）
@@ -1933,7 +1933,7 @@ function scheduleWysiwygRender() {
 
 // YAML Front Matter 解析：仅检测文首形如
 
-// 预览消毒：默认仅开发环境开启（localStorage flymd:sanitizePreview 可覆盖，
+// 预览消毒：默认开启（localStorage flymd:sanitizePreview 可关闭，
 // 见 core/sanitize.ts），DOMPurify 按需动态加载并缓存。
 // KaTeX 占位符（data-math 属性）是普通 span，消毒后保留，后续仍由 KaTeX.render() 替换。
 let _previewSanitize: ((h: string) => string) | null = null
@@ -1943,11 +1943,19 @@ async function sanitizePreviewHtml(html: string): Promise<string> {
     if (!_previewSanitize) {
       const mod: any = await import('dompurify')
       const DOMPurify = mod?.default || mod
-      _previewSanitize = (h: string) => DOMPurify.sanitize(h)
+      _previewSanitize = (h: string) => sanitizePreviewWith(DOMPurify, h)
     }
     return _previewSanitize(html)
-  } catch {
-    return html
+  } catch (e) {
+    // fail-closed：消毒器不可用时把原文当纯文本转义，绝不回退到未消毒 HTML
+    try { console.error('[sanitize] 预览消毒失败，降级为纯文本:', e) } catch {}
+    try {
+      const d = document.createElement('div')
+      d.textContent = html
+      return d.innerHTML
+    } catch {
+      return ''
+    }
   }
 }
 
@@ -2973,6 +2981,11 @@ function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
     if (_renderPreviewTimer != null) {
       window.clearTimeout(_renderPreviewTimer)
     }
+    // 大文档单次全量渲染成本随长度线性上升（真机实测 623KB 约 4.6s）。
+    // 固定 150ms 防抖会让连续输入退化成排队渲染，这里按长度放宽到 250/400ms。
+    // 小文档保持原 150ms，交互手感不变。
+    const docLen = (editor?.value || '').length
+    const delay = docLen > 200_000 ? 400 : docLen > 80_000 ? 250 : 150
     _renderPreviewTimer = window.setTimeout(() => {
       _renderPreviewTimer = null
       const t0 = performance.now()
@@ -2982,7 +2995,7 @@ function scheduleRenderPreview(opts?: RenderPreviewOptions): void {
           try { logInfo('[启动耗时] 预览渲染', { 耗时ms: cost, 文档长度: (editor?.value || '').length }) } catch {}
         }
       })
-    }, 150)
+    }, delay)
   } catch {}
 }
 
@@ -3609,7 +3622,7 @@ async function checkUpdateInteractive() {
           for (const u of urls) {
             try {
               // 传 useProxy: false，避免后端二次拼接代理
-              savePath = await invoke('download_file', { url: u, useProxy: false }) as any as string
+              savePath = await invoke('download_file', { url: u, useProxy: false, expectedSha256: resp.assetWin.sha256 ?? null }) as any as string
               ok = true
               break
             } catch {}
@@ -3617,6 +3630,12 @@ async function checkUpdateInteractive() {
           if (!ok) throw new Error('all proxies failed')
         }
         NotificationManager.hide(downloadId)
+        if (!resp.assetWin.sha256) {
+          // 没有摘要就不自动提权运行：只提示保存位置，让用户手动确认
+          NotificationManager.show('appUpdate', '安装包未提供摘要，已停止自动安装', 6000)
+          showUpdateDownloadedOverlay(savePath, resp)
+          return
+        }
         NotificationManager.show('appUpdate', '下载完成，正在启动安装…', 5000)
         try {
           await invoke('run_installer', { path: savePath })
@@ -3654,7 +3673,7 @@ async function checkUpdateInteractive() {
           let ok = false
           for (const u of urls) {
             try {
-              savePath = await invoke('download_file', { url: u, useProxy: false }) as any as string
+              savePath = await invoke('download_file', { url: u, useProxy: false, expectedSha256: a.sha256 ?? null }) as any as string
               ok = true
               break
             } catch {}
@@ -3662,6 +3681,11 @@ async function checkUpdateInteractive() {
           if (!ok) throw new Error('all proxies failed')
         }
         NotificationManager.hide(downloadId)
+        if (!a.sha256) {
+          NotificationManager.show('appUpdate', '安装包未提供摘要，已停止自动打开', 6000)
+          showUpdateDownloadedOverlay(savePath, resp as any)
+          return
+        }
         NotificationManager.show('appUpdate', '下载完成，正在打开…', 5000)
         try {
           await openPath(savePath)
@@ -3699,12 +3723,17 @@ async function downloadAndInstallWin(asset: UpdateAssetInfo, resp: CheckUpdateRe
     for (const u of urls) {
       try {
         // 传 useProxy: false，避免后端二次拼接代理
-        savePath = await (invoke as any)('download_file', { url: u, useProxy: false }) as string
+        savePath = await (invoke as any)('download_file', { url: u, useProxy: false, expectedSha256: asset.sha256 ?? null }) as string
         ok = true
         break
       } catch {}
     }
     if (!ok) throw new Error('all proxies failed')
+    if (!asset.sha256) {
+      // 无摘要 → 不做提权自动安装，改为展示保存位置
+      showUpdateDownloadedOverlay(savePath, resp)
+      return
+    }
     upMsg('下载完成，正在启动安装…')
     try {
       await (invoke as any)('run_installer', { path: savePath })
@@ -3748,8 +3777,12 @@ async function showUpdateOverlay(resp: CheckUpdateResp) {
         const direct = a.directUrl
         const urls = [direct, 'https://ghfast.top/' + direct, 'https://gh-proxy.com/' + direct, 'https://cdn.gh-proxy.com/' + direct, 'https://edgeone.gh-proxy.com/' + direct]
         let ok = false
-        for (const u of urls) { try { savePath = await (invoke as any)('download_file', { url: u, useProxy: false }) as string; ok = true; break } catch {} }
+        for (const u of urls) { try { savePath = await (invoke as any)('download_file', { url: u, useProxy: false, expectedSha256: a.sha256 ?? null }) as string; ok = true; break } catch {} }
         if (!ok) throw new Error('all proxies failed')
+        if (!a.sha256) {
+          showUpdateDownloadedOverlay(savePath, resp)
+          return
+        }
         upMsg('下载完成，正在打开…')
         try { await openPath(savePath) } catch { showInstallFailedOverlay(savePath, resp) }
       } catch { try { await openInBrowser(resp.htmlUrl) } catch {} }
@@ -4529,19 +4562,29 @@ async function renderRecentPanel(toggle = true) {
   const panel = document.getElementById('recent-panel') as HTMLDivElement
   if (!panel) return
   const recents = await getRecent(store)
-  if (recents.length === 0) {
-    panel.innerHTML = '<div class="empty">暂时没有最近文件</div>'
+  // 文件名/路径来自文件系统与同步目录，可能包含 HTML。这里全部走 DOM API +
+  // textContent/dataset，避免 `<img onerror>` 这类文件名在面板渲染时执行。
+  const valid = (Array.isArray(recents) ? recents : [])
+    .filter((p): p is string => p != null && typeof p === 'string')
+  if (valid.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'empty'
+    empty.textContent = '暂时没有最近文件'
+    panel.replaceChildren(empty)
   } else {
-    panel.innerHTML = recents
-      .filter(p => p != null && typeof p === 'string')
-      .map(
-        (p, idx) =>
-          `<div class=\"item\" data-path=\"${p.replace(/\"/g, '&quot;')}\">` +
-          `${idx + 1}. ${p.split(/[/\\\\]/).pop()}` +
-          `<div class=\"path\">${p}</div>` +
-          `</div>`
-      )
-      .join('')
+    const frag = document.createDocumentFragment()
+    valid.forEach((p, idx) => {
+      const item = document.createElement('div')
+      item.className = 'item'
+      item.dataset.path = p
+      item.appendChild(document.createTextNode(`${idx + 1}. ${p.split(/[/\\\\]/).pop()}`))
+      const pathEl = document.createElement('div')
+      pathEl.className = 'path'
+      pathEl.textContent = p
+      item.appendChild(pathEl)
+      frag.appendChild(item)
+    })
+    panel.replaceChildren(frag)
   }
   // 绑定点击
   panel.querySelectorAll('.item').forEach((el) => {
@@ -5301,7 +5344,20 @@ try {
     ;(window as any).flymdRenderMarkdownToContainer = async (container: HTMLElement, markdown: string, currentFilePath?: string | null): Promise<void> => {
       const render = (window as any).flymdRenderMarkdown as ((md: string) => Promise<string>) | undefined
       if (typeof render !== 'function') throw new Error('Markdown 渲染器未初始化')
-      container.innerHTML = await render(markdown)
+      const rendered = await render(markdown)
+      // 导出路径（右键 PDF 等）同样把 md.render 的原始 HTML 写进 DOM。
+      // 这里无条件消毒（不受 flymd:sanitizePreview 排障开关影响），
+      // 否则「打开恶意 md → 导出 PDF」会绕过预览消毒执行事件属性。
+      let safeExportHtml = rendered
+      try {
+        const mod: any = await import('dompurify')
+        const DOMPurify = mod?.default || mod
+        safeExportHtml = sanitizePreviewWith(DOMPurify, rendered)
+      } catch (e) {
+        // 消毒器不可用时拒绝导出，避免 fail-open
+        throw new Error('导出前 HTML 消毒失败: ' + String(e))
+      }
+      container.innerHTML = safeExportHtml
       try { ensurePreviewHeadingIds(container) } catch {}
       // 注入图片绝对路径属性：与主预览路径保持一致，便于导出器直接命中。
       // 必须在 Mermaid/KaTeX 之前处理，避免二者对图片节点做无关转换。

@@ -1107,7 +1107,7 @@ export function showThreeButtonDialog(
     const titleEl = document.createElement('div')
     titleEl.className = 'custom-dialog-title'
     const finalTitle = (title && title.trim()) || t('dlg.exit.title')
-    titleEl.innerHTML = `<span class="custom-dialog-icon">ℹ️</span>${finalTitle}`
+    titleEl.innerHTML = `<span class="custom-dialog-icon">ℹ️</span>${escapeHtml(finalTitle)}`
 
     const messageEl = document.createElement('div')
     messageEl.className = 'custom-dialog-message'
