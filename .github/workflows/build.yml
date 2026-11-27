@@ -125,8 +125,11 @@ jobs:
             os: Linux
             arch: x64
           # macOS 14 镜像已于 2026-11-02 退役（macos-14-arm64-us-default 不再受支持），
-          # 之后 macos-14 的 job 会在 0 秒被取消、分配不到 runner。改用 macos-15（Apple Silicon）。
-          - platform: macos-15
+          # 之后 macos-14 的 job 会在 0 秒被取消、分配不到 runner。
+          # macos-15（arm64）在容量紧张时会排队 15 分钟后因
+          # "not acquired by Runner of type hosted" 被取消（v2.2.2 两次复现），
+          # 因此改用同代 Intel 镜像；universal 目标本来就在任一宿主上交叉编译双架构。
+          - platform: macos-15-intel
             os: macOS
             arch: universal
 
