@@ -5,6 +5,7 @@
 import type { Store } from '@tauri-apps/plugin-store'
 import { getActiveLibraryRoot, getActiveLibraryId, getActiveLibraryName } from '../utils/library'
 import { readDir, stat, readFile, writeFile, mkdir, exists, open as openFileHandle, BaseDirectory, remove } from '@tauri-apps/plugin-fs'
+import { sanitizeRemoteEntryName, sanitizeSyncRelPath } from './webdavPath'
 import { appLocalDataDir } from '@tauri-apps/api/path'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { t } from '../i18n'
@@ -1379,8 +1380,14 @@ async function scanLocal(root: string, lastMeta?: SyncMetadata): Promise<Map<str
     let ents: any[] = []
     try { ents = await readDir(dir, { recursive: false } as any) as any[] } catch { ents = [] }
     for (const e of ents) {
-      const name = String(e.name || '')
-      if (!name) continue
+      const rawName = String(e.name || '')
+      if (!rawName) continue
+      // 反斜杠/冒号/控制字符名字在另一平台可能变成穿越或 ADS：跳过而不是同步
+      const name = sanitizeRemoteEntryName(rawName)
+      if (!name) {
+        await syncLog('[scan-skip-unsafe-name] ' + JSON.stringify(rawName))
+        continue
+      }
       const full = dir + (dir.includes('\\') ? '\\' : '/') + name
       const relp = rel ? rel + '/' + name : name
       try {
@@ -1516,8 +1523,13 @@ async function listRemoteDir(baseUrl: string, auth: { username: string; password
 
       // 取最后一段作为 name
       const segs = href.replace(/\/+$/,'').split('/')
-      const name = segs.pop() || ''
-      if (!name) continue
+      const rawName = segs.pop() || ''
+      // href 已 decodeURIComponent，反斜杠/控制字符可能混进来：单段校验后再用
+      const name = sanitizeRemoteEntryName(rawName)
+      if (!name) {
+        await syncLog('[remote-skip-unsafe-name] ' + JSON.stringify(rawName))
+        continue
+      }
 
       // 改进目录判断
       const typeXml = typeEl?.outerHTML || typeEl?.innerHTML || ''
@@ -1589,8 +1601,13 @@ async function tryListRemoteInfinity(baseUrl: string, auth: { username: string; 
       // 提取相对路径
       const rootUrl = new URL(joinUrl(baseUrl, rootPath))
       const itemUrl = href.startsWith('http') ? new URL(href) : new URL(href, rootUrl)
-      let rel = itemUrl.pathname.replace(rootUrl.pathname, '').replace(/^\/+/, '')
-      if (!rel) continue
+      const rawRel = itemUrl.pathname.replace(rootUrl.pathname, '').replace(/^\/+/, '')
+      // 远端 pathname 不可信（已 decodeURIComponent）：穿越/反斜杠名字直接跳过
+      const rel = sanitizeSyncRelPath(rawRel)
+      if (!rel) {
+        await syncLog('[infinity-skip-unsafe-rel] ' + JSON.stringify(rawRel))
+        continue
+      }
 
       const typeXml = typeEl?.outerHTML || typeEl?.innerHTML || ''
       const isDir = /<d:collection\b/i.test(typeXml) || /<collection\b/i.test(typeXml) || /\bcollection\b/i.test(typeXml) || rawHref.endsWith('/')
@@ -2680,6 +2697,13 @@ export async function syncNow(reason: SyncReason): Promise<{ uploaded: number; d
         return { success: false, timeout: true }
       }
       try {
+        // 计划里的 rel 来自本地/远端扫描或旧版元数据：执行前统一复验，
+        // 防止反斜杠 / `..` 形式的相对路径被拼到库根之外。
+        const safeRel = sanitizeSyncRelPath(act.rel)
+        if (!safeRel || safeRel !== act.rel) {
+          await syncLog('[skip-unsafe-rel] ' + act.type + ' ' + JSON.stringify(act.rel))
+          return { success: false, type: act.type }
+        }
         if (act.type === 'move-remote') {
           // 处理重命名：使用 WebDAV MOVE
           await syncLog('[move-remote] ' + (act.oldRel || '') + ' -> ' + act.rel)
