@@ -4,7 +4,7 @@
 |------|------|
 | 创建日期 | 2026-06-07 |
 | 责任人 | 果农 + Claude（协作）+ Codex 复审 |
-| 状态 | 🔄 进行中（B1 + E1 调研完成） |
+| 状态 | 🔄 部分完成（2026-11-28 文档与事实对齐：E 系列基本完成、B 系列部分完成未达目标） |
 | 关联 | `2026-06-02-flymd-quality-baseline.md` Task B + Task E、`docs/Task/Active/2026-06-02-flymd-quality-baseline.md` |
 
 ## 0. 目标
@@ -71,21 +71,21 @@ src/styles/
 | 任务 | 文件 | 状态 |
 |------|------|------|
 | **B1** | 调研：Grep main.ts 调用点分类 → `main-ts-inventory.md` | ✅（144 addEventListener / 10 register / 18 invoke / 4 listen / 477 函数 / 103 import） |
-| **B2** | 剥离**无副作用纯逻辑**（命令处理函数）到 `src/commands/*.ts`（按命令族 file/view/edit/window/tools） | ⏳ |
-| **B3** | 剥离 **DOM 引导**到 `src/bootstrap/initDom.ts` | ⏳ |
-| **B4** | 剥离 **Tauri IPC / 单实例 / 文件托管**到 `src/bootstrap/initTauri.ts` | ⏳ |
-| **B5** | 剥离 **快捷键注册**到 `src/bootstrap/initShortcuts.ts`（注意输入法、便签模式、专注模式下的差异） | ⏳ |
-| **B6** | 剥离 **扩展宿主启动**到 `src/bootstrap/initExtensions.ts` | ⏳ |
-| **B7** | `main.ts` 收敛为顺序调用 + 顶级 try/catch + 启动 telemetry | ⏳ |
+| **B2** | 剥离**无副作用纯逻辑**（命令处理函数）到 `src/commands/*.ts`（按命令族 file/view/edit/window/tools） | 🔄 部分完成（改为按 `src/core/**` 功能域抽取；`src/commands/` 目录不存在） |
+| **B3** | 剥离 **DOM 引导**到 `src/bootstrap/initDom.ts` | ⏳ 未实施（`src/bootstrap/` 目录不存在） |
+| **B4** | 剥离 **Tauri IPC / 单实例 / 文件托管**到 `src/bootstrap/initTauri.ts` | ⏳ 未实施 |
+| **B5** | 剥离 **快捷键注册**到 `src/bootstrap/initShortcuts.ts`（注意输入法、便签模式、专注模式下的差异） | ⏳ 未实施 |
+| **B6** | 剥离 **扩展宿主启动**到 `src/bootstrap/initExtensions.ts` | ⏳ 未实施（扩展已按 `src/extensions/**` 功能域拆分） |
+| **B7** | `main.ts` 收敛为顺序调用 + 顶级 try/catch + 启动 telemetry | ⏳ 未实施（`main.ts` 当前 10,120 行） |
 
 ### 3.2 style.css 拆分
 
 | 任务 | 文件 | 状态 |
 |------|------|------|
 | **E1** | 调研：Grep style.css 注释段分组 → `style-css-inventory.md` | ✅（26 段大注释段，14 个候选 CSS 文件） |
-| **E2** | 逐组迁移并删除原段（每组单 commit） | ⏳ |
-| **E3** | 在 main.ts / Bootstrap 处确认 CSS 入口仍指向单一组合文件 | ⏳ |
-| **E4** | 验证：5 主题 × 3 模式 × 2 OS 截图对比 | ⏳ |
+| **E2** | 逐组迁移并删除原段（每组单 commit） | ✅ 基本完成（`2b669bd` / `814a857` 等；`style.css` 9,224 → 955 行） |
+| **E3** | 在 main.ts / Bootstrap 处确认 CSS 入口仍指向单一组合文件 | ✅ `style.css` 顶部 `@import "./styles/index.css"` |
+| **E4** | 验证：5 主题 × 3 模式 × 2 OS 截图对比 | 🔄 部分完成（parity 校验页已覆盖 10 主题 × 明暗 × 阅读/所见计算样式 + baseline 指纹完整性测试；源码模式与跨 OS 截图未做） |
 
 ## 4. 验收标准
 
@@ -120,15 +120,15 @@ src/styles/
 |---|---|---|
 | B1 调研 main.ts 调用点 | ✅ | 2026-06-07（main-ts-inventory.md） |
 | E1 调研 style.css 注释段 | ✅ | 2026-06-07（style-css-inventory.md） |
-| B2 剥离命令处理 | ⏳ | 计划 1 日 |
-| B3 剥离 DOM 引导 | ⏳ | 计划 0.5 日 |
-| B4 剥离 Tauri IPC | ⏳ | 计划 1 日 |
-| B5 剥离快捷键 | ⏳ | 计划 0.5 日 |
-| B6 剥离扩展宿主 | ⏳ | 计划 0.5 日 |
-| B7 main.ts 收敛 | ⏳ | 计划 0.5 日 |
-| E2 逐组迁移 | ⏳ | 计划 1-2 日 |
-| E3 验证入口 | ⏳ | 计划 0.5 日 |
-| E4 视觉回归 | ⏳ | 计划 0.5 日 |
+| B2 剥离命令处理 | 🔄 部分完成 | 按 `core/**` 功能域抽取；`src/commands/` 目录不存在 |
+| B3 剥离 DOM 引导 | ⏳ | `src/bootstrap/` 目录不存在 |
+| B4 剥离 Tauri IPC | ⏳ | — |
+| B5 剥离快捷键 | ⏳ | — |
+| B6 剥离扩展宿主 | ⏳ | 扩展按 `src/extensions/**` 功能域拆分 |
+| B7 main.ts 收敛 | ⏳ | `main.ts` 当前 10,120 行，目标 ≤800 |
+| E2 逐组迁移 | ✅ 基本完成 | `style.css` 当前 955 行 |
+| E3 验证入口 | ✅ | `@import "./styles/index.css"` |
+| E4 视觉回归 | 🔄 部分完成 | 10 主题 × 明暗 × 双模式计算样式矩阵 + baseline 完整性测试已落地；源码模式与跨 OS 截图未做 |
 
 **Phase B 估算总工时**：L（5-7 天）
 
@@ -138,3 +138,10 @@ src/styles/
 2. **E1** 并行调研 style.css 注释段
 
 调研产物先入 git，再开大改。
+
+
+## 9. 2026-11-28 文档与事实对齐说明
+
+本次对齐基于当前代码事实（`main.ts` 10,120 行、`style.css` 955 行、104 测试文件 / 1237 用例通过、`pnpm typecheck` 0 错误、`pnpm build` 通过）与 git 历史（`2b669bd`、`814a857` 等 CSS 拆分提交）。
+
+结论：原计划的 `bootstrap/ + commands/` 方案未实施，main.ts 拆分走的是 `core/ + modes/ + extensions/ + ui/` 功能域路径；CSS 模块化已基本完成但缺系统化视觉回归。后续若继续拆分 main.ts，应以当前功能域结构为基线重新规划，而非照搬 2026-06 的原始方案。
