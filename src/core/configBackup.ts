@@ -158,9 +158,24 @@ export interface LibraryBackupSpec {
   includeCredentials?: boolean
 }
 
+/**
+ * 备份路径的段级安全校验。
+ *
+ * `normalizeBackupPath` 会**丢弃** `.`/`..` 段（折叠而不是拒绝），这已经挡住了
+ * 相对路径逃逸；但 Windows 上 `C:/x` 这类绝对路径段一旦作为 relPath 传给
+ * Tauri（baseDir.join(relPath) 遇到绝对路径会替换 base），会直接写到盘上任意位置。
+ * 冒号同时覆盖盘符与 NTFS ADS，因此这里一并拒绝。
+ */
+function hasUnsafeBackupSegment(path: string): boolean {
+  return path
+    .split('/')
+    .some((seg) => !seg || seg === '.' || seg === '..' || seg.includes(':') || /[\x00-\x1f]/.test(seg))
+}
+
 export function resolveBackupPath(pathRaw: string): BackupPathInfo | null {
   const normalized = normalizeBackupPath(pathRaw)
   if (!normalized) return null
+  if (hasUnsafeBackupSegment(normalized)) return null
   if (normalized.startsWith(BACKUP_PREFIX_APPDATA + '/')) {
     const rel = normalizeBackupPath(normalized.slice((BACKUP_PREFIX_APPDATA + '/').length))
     if (!rel) return null
