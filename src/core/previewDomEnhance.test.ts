@@ -95,6 +95,17 @@ describe('enhancePreviewImages', () => {
     expect(img.src).toContain('asset://')
   })
 
+  it('已处理过的元素再次增强时不重复改写 src', () => {
+    const root = el(`<img src="images/pic.png">`)
+    enhancePreviewImages(root, { currentFilePath: '/lib/doc.md' })
+    const img = root.querySelector('img') as HTMLImageElement
+    const firstSrc = img.src
+    tauriStubs.convertFileSrc.mockClear()
+    enhancePreviewImages(root, { currentFilePath: '/lib/doc.md' })
+    expect(img.src).toBe(firstSrc)
+    expect(tauriStubs.convertFileSrc).not.toHaveBeenCalled()
+  })
+
   it('forPrint 不补懒加载；已有 loading 属性不动', () => {
     const root = el(`<img src="images/a.png"><img id="b" src="images/b.png" loading="eager">`)
     enhancePreviewImages(root, { currentFilePath: '/lib/doc.md', forPrint: true })

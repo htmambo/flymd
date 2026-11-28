@@ -208,10 +208,23 @@ export class VirtualPreview {
     const leading = this.metaHost?.offsetHeight || 0
     const anchorOffset = this.scroller.scrollTop - leading - (this.prefix[anchorIndex] ?? 0)
     const headingByBlock = new Map(model.headings.map(heading => [heading.blockIndex, heading]))
+    // 区间平移时复用仍在新区间内的块：重建 <img>/<svg> 会让图片与图表重新加载/渲染，
+    // 先按占位尺寸排布、加载完再撑高，滚动中就会出现高度跳变（所见模式没有这个问题，
+    // 因为它的 DOM 不重建）。复用后只有新进入区间的块需要首次加载。
+    const existing = new Map<string, HTMLElement>()
+    for (const el of Array.from(content.children) as HTMLElement[]) {
+      const key = el.dataset?.blockKey
+      if (key && !existing.has(key)) existing.set(key, el)
+    }
     const wrappers: HTMLElement[] = []
 
     for (let i = range.start; i < range.end; i++) {
       const block = model.blocks[i]
+      const reused = existing.get(block.key)
+      if (reused) {
+        wrappers.push(reused)
+        continue
+      }
       const wrapper = document.createElement('div')
       wrapper.className = 'virtual-block'
       wrapper.dataset.blockKey = block.key

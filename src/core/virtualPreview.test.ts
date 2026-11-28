@@ -57,6 +57,23 @@ describe('VirtualPreview', () => {
     expect(second[0]).toBe(first[0])
   })
 
+  it('滚动换区间时复用仍在区间内的块，不重建 DOM', async () => {
+    const source = Array.from({ length: 400 }, (_, i) => `段落 ${i}`).join('\n\n')
+    await renderer.setDocument(await createMarkdownBlockModel(source, md))
+    const first = new Map<string, HTMLElement>()
+    for (const el of Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]'))) first.set(el.dataset.blockKey!, el)
+    const r1 = (renderer as any).lastRange as { start: number; end: number }
+
+    scroller.scrollTop = 1600
+    await (renderer as any).render()
+    const r2 = (renderer as any).lastRange as { start: number; end: number }
+    expect(r2.start).toBeGreaterThan(r1.start)
+
+    const reused = Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]')).filter(el => first.has(el.dataset.blockKey!))
+    expect(reused.length).toBeGreaterThan(0)
+    for (const el of reused) expect(first.get(el.dataset.blockKey!)).toBe(el)
+  })
+
   it('快速跳转和源码查找会挂载目标块', async () => {
     const source = Array.from({ length: 100 }, (_, i) => `段落 ${i}`).join('\n\n')
     await renderer.setDocument(await createMarkdownBlockModel(source, md))

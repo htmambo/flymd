@@ -99,6 +99,9 @@ export function enhancePreviewImages(root: ParentNode, deps: EnhanceImagesDeps):
             el.setAttribute('referrerpolicy', 'no-referrer')
           }
         } catch {}
+        // 元素复用（虚拟预览滚动换区间）时已经处理过：src 已被改写为资产 URL，
+        // 再次解析/赋值会在部分环境下触发重新解码，反而造成闪烁，直接跳过。
+        if ((el as any).getAttribute('data-abs-path')) return
         const src = el.getAttribute('src') || ''
         const abs0 = resolveLocalImageAbsPathFromSrc(src, currentFilePath)
         if (!abs0) return
