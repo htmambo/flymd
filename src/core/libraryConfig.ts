@@ -51,6 +51,9 @@ export function setLibraryScopeCache(scope: LibraryScope): void {
     // 库切换后旧库的 mtime 基线作废；新库首次读取/写入时重建
     _lastKnownMtime = null
     try { if (next.root) ensureConfigWatcher() } catch {}
+    // 动态 fs scope：库变化后把新库根授予 Tauri fs 插件与后端 any 命令校验。
+    // 无库时传空串由后端清理状态（此时 any 命令回退到旧行为，避免启动期误伤）。
+    try { void invoke('grant_fs_scope', { path: next.root || '' }).catch(() => {}) } catch {}
     try {
       window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED_EVENT, { detail: { ...next } }))
     } catch {}

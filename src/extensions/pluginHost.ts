@@ -104,6 +104,8 @@ import type { InstalledPlugin } from './runtime'
 // 两者必须互斥且并集等于命令全表；src/extensions/pluginInvokeBoundary.test.ts 会校验。
 // 新增命令时，先决定归类，再同步本表与测试——否则 CI 失败。
 export const PLUGIN_INVOKE_DENYLIST: ReadonlySet<string> = new Set<string>([
+  // 动态 fs scope 授予：宿主内部命令，插件不可调用
+  'grant_fs_scope',
   // 破坏性 / 权限提升
   'move_to_trash',
   'write_file_atomic',

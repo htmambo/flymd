@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{Manager, Emitter, State};
+use tauri_plugin_fs::FsExt;
 
 mod ai_guard;
 use std::sync::atomic::Ordering;
@@ -15,6 +16,9 @@ struct PendingOpenPath(std::sync::Mutex<Option<String>>);
 // http client / s3 client 缓存等字段，字段保持 pub 便于直接扩展。
 pub struct AppState {
   pub window_shown: std::sync::atomic::AtomicBool,
+  // 当前库根（动态 fs scope 的可信来源）。frontend 在库激活/切换时通过
+  // grant_fs_scope 命令写入；后端 any 路径命令据此拒绝越界访问。
+  pub library_root: std::sync::Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
   // T8 共享 reqwest client：默认配置（无 timeout/redirect/代理/TLS 等特殊项）。
   // 逐点审计结论（FR-4）：原 4 个 Client::builder() 调用点均只配置了 timeout/User-Agent，
   // 可 per-request 复原，已改用 state.http + RequestBuilder::timeout/.header：
@@ -2688,8 +2692,9 @@ struct FlymdDirEntryLite {
 }
 
 #[tauri::command]
-async fn list_dir_any(path: String) -> Result<Vec<FlymdDirEntryLite>, String> {
+async fn list_dir_any(path: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<Vec<FlymdDirEntryLite>, String> {
   validate_any_path_arg(&path)?;
+  ensure_path_in_library_scope(&path, &state, &app)?;
   use std::fs;
   use std::path::PathBuf;
 
@@ -2866,6 +2871,7 @@ fn main() {
 
   let builder = builder
     .invoke_handler(tauri::generate_handler![
+        grant_fs_scope,
         upload_to_s3,
         presign_put,
         flymd_record_uploaded_image,
@@ -2938,6 +2944,7 @@ fn main() {
 
       app.manage(AppState {
         window_shown: std::sync::atomic::AtomicBool::new(false),
+        library_root: std::sync::Arc::new(std::sync::Mutex::new(None)),
         http: reqwest::Client::builder().build()?,
         http_xmlrpc: reqwest::Client::builder()
           .redirect(reqwest::redirect::Policy::custom(|attempt| {
@@ -4001,9 +4008,57 @@ fn validate_any_path_arg(path: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// 库根之外、但属于应用自身的路径（插件目录、Office 预览缓存、临时目录）。
+/// 这些路径由应用内部生成，不属于用户库，不计入 fs scope 越界。
+fn is_internal_app_path(path: &std::path::Path, app: &tauri::AppHandle) -> bool {
+  let canon = match std::fs::canonicalize(path) { Ok(p) => p, Err(_) => return false };
+  let mut roots = Vec::new();
+  if let Ok(p) = app.path().app_local_data_dir() { roots.push(p); }
+  if let Ok(p) = app.path().app_data_dir() { roots.push(p); }
+  if let Ok(p) = app.path().cache_dir() { roots.push(p); }
+  roots.push(std::env::temp_dir());
+  roots.into_iter().any(|r| std::fs::canonicalize(&r).map(|c| canon.starts_with(c)).unwrap_or(false))
+}
+
+/// 动态 fs scope 的命令层校验：路径必须位于当前库根内，或是应用内部路径。
+/// 库根未设置时放行（兼容库未初始化的启动阶段），但 grant_fs_scope 一旦调用即生效。
+fn ensure_path_in_library_scope(
+  path: &str,
+  state: &AppState,
+  app: &tauri::AppHandle,
+) -> Result<(), String> {
+  let root = match state.library_root.lock() { Ok(g) => g.clone(), Err(_) => return Err("scope state poisoned".into()) };
+  let Some(root) = root else { return Ok(()) };
+  let p = std::path::Path::new(path);
+  let canon = std::fs::canonicalize(p).map_err(|e| format!("路径不可访问: {e}"))?;
+  let root_canon = std::fs::canonicalize(&root).map_err(|e| format!("库根不可访问: {e}"))?;
+  if canon.starts_with(&root_canon) { return Ok(()); }
+  if is_internal_app_path(p, app) { return Ok(()); }
+  Err("路径不在当前库范围内，已拒绝访问".into())
+}
+
 #[tauri::command]
-async fn read_text_file_any(path: String) -> Result<String, String> {
+async fn grant_fs_scope(path: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+  // 空路径 = 无库：清理命令层约束，回到启动期放行状态。
+  if path.is_empty() || path.trim().is_empty() {
+    if let Ok(mut root) = state.library_root.lock() { *root = None; }
+    return Ok(())
+  }
   validate_any_path_arg(&path)?;
+  let p = std::path::PathBuf::from(&path);
+  if !p.is_absolute() { return Err("库根必须是绝对路径".into()); }
+  if !p.is_dir() { return Err("库根不是有效目录".into()); }
+  let canon = std::fs::canonicalize(&p).map_err(|e| format!("库根不可访问: {e}"))?;
+  // 插件 fs scope：运行时授予当前库根（递归），供 plugin-fs 的常规 API 使用。
+  app.fs_scope().allow_directory(&canon, true).map_err(|e| format!("授予 fs scope 失败: {e}"))?;
+  if let Ok(mut root) = state.library_root.lock() { *root = Some(canon); }
+  Ok(())
+}
+
+#[tauri::command]
+async fn read_text_file_any(path: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+  validate_any_path_arg(&path)?;
+  ensure_path_in_library_scope(&path, &state, &app)?;
   use std::fs::File;
   use std::io::Read;
   use std::path::PathBuf;
@@ -4037,8 +4092,9 @@ struct FileMeta {
 }
 
 #[tauri::command]
-async fn stat_any(path: String) -> Result<FileMeta, String> {
+async fn stat_any(path: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<FileMeta, String> {
   validate_any_path_arg(&path)?;
+  ensure_path_in_library_scope(&path, &state, &app)?;
   use std::fs;
   use std::path::PathBuf;
   use std::time::UNIX_EPOCH;
@@ -4071,8 +4127,9 @@ async fn stat_any(path: String) -> Result<FileMeta, String> {
 }
 
 #[tauri::command]
-async fn write_text_file_any(path: String, content: String) -> Result<(), String> {
+async fn write_text_file_any(path: String, content: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
   validate_any_path_arg(&path)?;
+  ensure_path_in_library_scope(&path, &state, &app)?;
   use std::fs;
   use std::path::PathBuf;
 
@@ -4125,8 +4182,9 @@ fn gen_lock_token() -> String {
 /// 原子写：先写 `<path>.tmp` → fsync → rename → fsync 父目录。
 /// 任一失败清理残留 .tmp 并返回错误。
 #[tauri::command]
-async fn write_file_atomic(path: String, content: String) -> Result<(), String> {
+async fn write_file_atomic(path: String, content: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
     validate_any_path_arg(&path)?;
+    ensure_path_in_library_scope(&path, &state, &app)?;
     use std::fs;
     use std::io::Write;
     use std::path::PathBuf;
@@ -4222,8 +4280,9 @@ async fn cleanup_stale_tmp_files(root: String) -> Result<u32, String> {
 ///   调用方会拿到无效 token（实际锁已被 drop），后续 unlock 找不到 → 不安全。
 ///   当前实现：先注册到 LOCK_REGISTRY，再 send；send 失败则从 registry 移除并 drop fd。
 #[tauri::command]
-async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> {
+async fn try_lock_file(path: String, timeout_ms: u64, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
     validate_any_path_arg(&path)?;
+    ensure_path_in_library_scope(&path, &state, &app)?;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -4315,9 +4374,9 @@ async fn unlock_file(token: String) -> Result<(), String> {
 
 /// 便捷：acquire lock + read + release。返回文件内容。
 #[tauri::command]
-async fn read_file_locked(path: String, timeout_ms: u64) -> Result<String, String> {
-    let token = try_lock_file(path.clone(), timeout_ms).await?;
-    let result = read_text_file_any(path.clone()).await;
+async fn read_file_locked(path: String, timeout_ms: u64, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<String, String> {
+    let token = try_lock_file(path.clone(), timeout_ms, state.clone(), app.clone()).await?;
+    let result = read_text_file_any(path.clone(), state, app).await;
     // 任何情况下都尝试释放（即使 read 失败）
     let _ = unlock_file(token).await;
     result
@@ -4329,9 +4388,11 @@ async fn write_file_locked(
     path: String,
     content: String,
     timeout_ms: u64,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let token = try_lock_file(path.clone(), timeout_ms).await?;
-    let result = write_file_atomic(path, content).await;
+    let token = try_lock_file(path.clone(), timeout_ms, state.clone(), app.clone()).await?;
+    let result = write_file_atomic(path, content, state, app).await;
     let _ = unlock_file(token).await;
     result
 }
@@ -4741,8 +4802,9 @@ fn check_read_size_any(len: u64) -> Result<(), String> {
 
 // 读取任意文件字节（供前端 mammoth 兜底读 docx；read_text_file_any 是 lossy 文本，不适用二进制）
 #[tauri::command]
-async fn read_file_bytes_any(path: String) -> Result<Vec<u8>, String> {
+async fn read_file_bytes_any(path: String, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<Vec<u8>, String> {
   validate_any_path_arg(&path)?;
+  ensure_path_in_library_scope(&path, &state, &app)?;
   use std::io::Read;
   let pathbuf = std::path::PathBuf::from(path);
   if !pathbuf.exists() {
