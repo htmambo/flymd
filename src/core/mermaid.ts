@@ -4,7 +4,7 @@
  */
 
 import { save } from '@tauri-apps/plugin-dialog'
-import { lsGetStringCached } from './lsCache'
+import { lsGetStringCached, lsSetStringCached } from './lsCache'
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs'
 
 // Mermaid 缓存开关：默认暂时关闭缓存以排查"图片很小"的问题；可用 localStorage 覆盖
@@ -20,9 +20,11 @@ export function isMermaidCacheDisabled(): boolean {
   return DISABLE_MERMAID_CACHE_DEFAULT
 }
 
+// perf：每张图表渲染都会读一次缩放；localStorage 在 WebKitGTK 大库下可达 ~26ms/次。
+// 缓存与写入必须成对使用 lsSetStringCached，否则同窗口写入不会让缓存失效。
 export function getMermaidScale(): number {
   try {
-    const v = localStorage.getItem('flymd:mermaidScale')
+    const v = lsGetStringCached('flymd:mermaidScale')
     const n = v ? parseFloat(v) : NaN
     if (Number.isFinite(n) && n > 0 && n < 10) return n
   } catch {}
@@ -40,7 +42,7 @@ function clamp(n: number, a: number, b: number): number { return Math.max(a, Mat
 export function setMermaidScaleClamped(next: number): void {
   try {
     const z = clamp(Math.round(next * 100) / 100, MERMAID_SCALE_MIN, MERMAID_SCALE_MAX)
-    try { localStorage.setItem('flymd:mermaidScale', String(z)) } catch {}
+    try { lsSetStringCached('flymd:mermaidScale', String(z)) } catch {}
     try { adjustExistingMermaidSvgsForScale() } catch {}
   } catch {}
 }

@@ -3,6 +3,7 @@
 
 import { history } from '@milkdown/plugin-history'
 import { logDebug } from '../../core/logger'
+import { lsGetStringCached } from '../../core/lsCache'
 import { isCodeContentClipped } from '../../ui/codeExpandClip'
 import { acquireEditLockAsync, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
@@ -2269,7 +2270,7 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
               const pbW = Math.max(0, host?.clientWidth || el.clientWidth || 0)
               const targetW = vw
               let scale = 0.75
-              try { const sv = localStorage.getItem('flymd:mermaidScale'); const n = sv ? parseFloat(sv) : NaN; if (Number.isFinite(n) && n > 0) scale = n } catch {}
+              try { const sv = lsGetStringCached('flymd:mermaidScale'); const n = sv ? parseFloat(sv) : NaN; if (Number.isFinite(n) && n > 0) scale = n } catch {}
               const base = pbW > 0 ? Math.min(pbW, targetW) : targetW
               const finalW = Math.max(10, Math.round(base * scale))
               ;(svgEl.style as any).width = finalW + 'px'

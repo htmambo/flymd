@@ -6,6 +6,7 @@ import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { HighlightCodeBlockNodeView } from './highlight'
 import { attachOverlayError } from '../overlayError'
+import { lsGetStringCached } from '../../../core/lsCache'
 
 // 检测当前是否为夜间模式
 function isDarkMode(): boolean {
@@ -131,7 +132,7 @@ async function renderMermaid(container: HTMLElement, code: string) {
 
               let scale = 0.75
               try {
-                const sv = localStorage.getItem('flymd:mermaidScale')
+                const sv = lsGetStringCached('flymd:mermaidScale')
                 const n = sv ? parseFloat(sv) : NaN
                 if (Number.isFinite(n) && n > 0) scale = n
               } catch {}

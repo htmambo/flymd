@@ -13,6 +13,7 @@ import { getPasteUrlTitleFetchEnabled } from './core/pasteUrlTitle'
 import { getPasteRemoteImagesEnabled } from './core/pasteRemoteImages'
 import { isOversizedDocumentSize, describeDocumentSize, formatDocumentSize, createOversizedNoticeDedup } from './core/largeDoc'
 import { getSymbolAutoCompletionEnabled } from './core/symbolAutoCompletion'
+import { lsSetStringCached } from './core/lsCache'
 // KaTeX 样式改为按需动态加载（首次检测到公式时再加载）
 // markdown-it 和 DOMPurify 改为按需动态 import，类型仅在编译期引用
 import type MarkdownIt from 'markdown-it'
@@ -655,12 +656,12 @@ try {
     ;(window as any).invalidateMermaidSvgCache = invalidateMermaidSvgCache
     ;(window as any).isMermaidCacheDisabled = () => { try { return isMermaidCacheDisabled() } catch { return true } }
     ;(window as any).setDisableMermaidCache = (v: boolean) => {
-      try { localStorage.setItem('flymd:disableMermaidCache', v ? '1' : '0') } catch {}
+      try { lsSetStringCached('flymd:disableMermaidCache', v ? '1' : '0') } catch {}
       try { invalidateMermaidSvgCache('toggle disable mermaid cache') } catch {}
       try { if (mode === 'preview') { void renderPreview() } else if (wysiwyg) { scheduleWysiwygRender() } } catch {}
     }
     ;(window as any).setMermaidScale = (n: number) => {
-      try { const v = (!Number.isFinite(n) || n <= 0) ? '1' : String(n); localStorage.setItem('flymd:mermaidScale', v) } catch {}
+      try { const v = (!Number.isFinite(n) || n <= 0) ? '1' : String(n); lsSetStringCached('flymd:mermaidScale', v) } catch {}
       try { adjustExistingMermaidSvgsForScale() } catch {}
     }
     try { if (isMermaidCacheDisabled()) invalidateMermaidSvgCache('startup: cache disabled') } catch {}
