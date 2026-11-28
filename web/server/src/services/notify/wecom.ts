@@ -8,6 +8,7 @@
  *  - 成功返 {errcode:0, errmsg:"ok"}
  */
 import type { ChannelSendResult, NotifyChannelConfig } from "./types.js";
+import { validateOutboundUrl } from "../../utils/urlGuard.js";
 
 const TIMEOUT_MS = 5_000;
 
@@ -22,9 +23,16 @@ export async function sendWecom(
       error: "webhook 为空", latencyMs: 0,
     };
   }
+  const target = validateOutboundUrl(cfg.webhook);
+  if (!target.ok) {
+    return {
+      channelId: cfg.id, channelType: cfg.type, success: false,
+      error: target.reason, latencyMs: 0,
+    };
+  }
   const body = { msgtype: "text", text: { content: text } };
   try {
-    const resp = await fetch(cfg.webhook, {
+    const resp = await fetch(target.url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

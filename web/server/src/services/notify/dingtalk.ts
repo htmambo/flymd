@@ -13,6 +13,7 @@
  */
 import crypto from "node:crypto";
 import type { ChannelSendResult, NotifyChannelConfig } from "./types.js";
+import { validateOutboundUrl } from "../../utils/urlGuard.js";
 
 const TIMEOUT_MS = 5_000;
 
@@ -40,7 +41,14 @@ export async function sendDingtalk(
       error: "webhook 为空", latencyMs: 0,
     };
   }
-  let url = cfg.webhook;
+  const target = validateOutboundUrl(cfg.webhook);
+  if (!target.ok) {
+    return {
+      channelId: cfg.id, channelType: cfg.type, success: false,
+      error: target.reason, latencyMs: 0,
+    };
+  }
+  let url = target.url.toString();
   if (cfg.secret) {
     url = appendDingtalkSign(url, cfg.secret, Date.now());
   }

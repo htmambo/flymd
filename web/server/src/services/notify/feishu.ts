@@ -16,6 +16,7 @@
  */
 import crypto from "node:crypto";
 import type { ChannelSendResult, NotifyChannelConfig } from "./types.js";
+import { validateOutboundUrl } from "../../utils/urlGuard.js";
 
 const TIMEOUT_MS = 5_000;
 
@@ -36,6 +37,13 @@ export async function sendFeishu(
       error: "webhook 为空", latencyMs: 0,
     };
   }
+  const target = validateOutboundUrl(cfg.webhook);
+  if (!target.ok) {
+    return {
+      channelId: cfg.id, channelType: cfg.type, success: false,
+      error: target.reason, latencyMs: 0,
+    };
+  }
   const body: Record<string, unknown> = { msg_type: "text", content: { text } };
   if (cfg.secret) {
     const ts = Math.floor(Date.now() / 1000);
@@ -43,7 +51,7 @@ export async function sendFeishu(
     body.sign = signFeishu(cfg.secret, ts);
   }
   try {
-    const resp = await fetch(cfg.webhook, {
+    const resp = await fetch(target.url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
