@@ -2689,6 +2689,7 @@ struct FlymdDirEntryLite {
 
 #[tauri::command]
 async fn list_dir_any(path: String) -> Result<Vec<FlymdDirEntryLite>, String> {
+  validate_any_path_arg(&path)?;
   use std::fs;
   use std::path::PathBuf;
 
@@ -3987,8 +3988,22 @@ async fn git_commit_snapshot(
   res
 }
 
+// 任意路径命令的统一输入卫生：拒绝 NUL / C0 控制字符 / DEL / 空路径。
+// 这些字符在路径中没有合法用途；NUL 会让 std::fs 返回 InvalidInput，
+// 控制字符则可能造成日志注入或跨平台路径解析歧义。
+fn validate_any_path_arg(path: &str) -> Result<(), String> {
+  if path.is_empty() || path.trim().is_empty() {
+    return Err("empty path".into());
+  }
+  if path.chars().any(|c| c == '\0' || c == '\u{7f}' || (c <= '\u{1f}')) {
+    return Err("path contains control characters".into());
+  }
+  Ok(())
+}
+
 #[tauri::command]
 async fn read_text_file_any(path: String) -> Result<String, String> {
+  validate_any_path_arg(&path)?;
   use std::fs::File;
   use std::io::Read;
   use std::path::PathBuf;
@@ -4023,6 +4038,7 @@ struct FileMeta {
 
 #[tauri::command]
 async fn stat_any(path: String) -> Result<FileMeta, String> {
+  validate_any_path_arg(&path)?;
   use std::fs;
   use std::path::PathBuf;
   use std::time::UNIX_EPOCH;
@@ -4056,6 +4072,7 @@ async fn stat_any(path: String) -> Result<FileMeta, String> {
 
 #[tauri::command]
 async fn write_text_file_any(path: String, content: String) -> Result<(), String> {
+  validate_any_path_arg(&path)?;
   use std::fs;
   use std::path::PathBuf;
 
@@ -4109,6 +4126,7 @@ fn gen_lock_token() -> String {
 /// 任一失败清理残留 .tmp 并返回错误。
 #[tauri::command]
 async fn write_file_atomic(path: String, content: String) -> Result<(), String> {
+    validate_any_path_arg(&path)?;
     use std::fs;
     use std::io::Write;
     use std::path::PathBuf;
@@ -4205,6 +4223,7 @@ async fn cleanup_stale_tmp_files(root: String) -> Result<u32, String> {
 ///   当前实现：先注册到 LOCK_REGISTRY，再 send；send 失败则从 registry 移除并 drop fd。
 #[tauri::command]
 async fn try_lock_file(path: String, timeout_ms: u64) -> Result<String, String> {
+    validate_any_path_arg(&path)?;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -4723,6 +4742,7 @@ fn check_read_size_any(len: u64) -> Result<(), String> {
 // 读取任意文件字节（供前端 mammoth 兜底读 docx；read_text_file_any 是 lossy 文本，不适用二进制）
 #[tauri::command]
 async fn read_file_bytes_any(path: String) -> Result<Vec<u8>, String> {
+  validate_any_path_arg(&path)?;
   use std::io::Read;
   let pathbuf = std::path::PathBuf::from(path);
   if !pathbuf.exists() {
@@ -5711,5 +5731,34 @@ mod hardening_round2_tests {
     assert!(canonical_paths_inside_root(&root, &sibling_file).is_err());
 
     let _ = std::fs::remove_dir_all(&base);
+  }
+}
+
+#[cfg(test)]
+mod any_path_guard_tests {
+  use super::*;
+
+  #[test]
+  fn accepts_normal_absolute_paths() {
+    assert!(validate_any_path_arg("/home/user/doc.md").is_ok());
+    assert!(validate_any_path_arg("C:\\Users\\user\\doc.md").is_ok());
+    assert!(validate_any_path_arg("\\\\server\\share\\doc.md").is_ok());
+    assert!(validate_any_path_arg("/tmp/报告 草稿.docx").is_ok());
+  }
+
+  #[test]
+  fn rejects_empty_and_whitespace_paths() {
+    assert!(validate_any_path_arg("").is_err());
+    assert!(validate_any_path_arg("   ").is_err());
+    assert!(validate_any_path_arg("\t\n").is_err());
+  }
+
+  #[test]
+  fn rejects_control_characters() {
+    assert!(validate_any_path_arg("/tmp/a\0b").is_err());
+    assert!(validate_any_path_arg("/tmp/a\nb").is_err());
+    assert!(validate_any_path_arg("/tmp/a\rb").is_err());
+    assert!(validate_any_path_arg("/tmp/a\u{7f}b").is_err());
+    assert!(validate_any_path_arg("/tmp/a\u{1f}b").is_err());
   }
 }
