@@ -13,6 +13,7 @@ import { PLUGINS_DIR } from '../core/configBackup'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from '../core/libraryConfig'
 import { logInfo, logDebug } from '../core/logger'
 import { raceWithHardBudget } from '../core/hardBudget'
+import { runWithConcurrency } from '../core/concurrency'
 import {
   sanitizePluginEntryName,
   sanitizePluginId,
@@ -247,6 +248,18 @@ export async function getHttpClient(): Promise<{
 
 const HTTP_TEXT_TIMEOUT_MS = 8000
 const HTTP_BINARY_TIMEOUT_MS = 30000
+
+/**
+ * 插件安装体积上限（网络来源不可信：恶意 manifest 可以指向几百 MB 的 main/assets，
+ * 下载会把内存打满、把插件目录写爆）。
+ * - manifest 文本按 UTF-16 码元计，1M 字符足够任何真实 manifest；
+ * - main 代码 8M 字符：正常插件远低于此；
+ * - 单个资源 8MB；条目数 500（防止 assets 数组刷屏式下载）。
+ */
+export const MAX_PLUGIN_MANIFEST_CHARS = 1 * 1024 * 1024
+export const MAX_PLUGIN_MAIN_CHARS = 8 * 1024 * 1024
+export const MAX_PLUGIN_ASSET_BYTES = 8 * 1024 * 1024
+export const MAX_PLUGIN_ASSETS = 500
 /**
  * 文本抓取的总预算（perf 批次 I）：覆盖 tauri http 主路径 + 浏览器 fetch 回退路径。
  * 真机实测：raw.githubusercontent.com 的 manifest 请求耗时 47,728ms，而单路径预算是
@@ -391,6 +404,8 @@ export async function fetchRemoteManifestVersion(
 ): Promise<string | null> {
   try {
     const text = await fetchTextSmart(url)
+    // 更新检查同样来自网络：超限直接当作"无更新"，避免内存被单次响应打满
+    if (text.length > MAX_PLUGIN_MANIFEST_CHARS) return null
     const json = JSON.parse(text) as PluginManifest
     const v =
       json && typeof json.version === 'string' ? json.version : null
@@ -400,28 +415,28 @@ export async function fetchRemoteManifestVersion(
   }
 }
 
+/**
+ * 更新检查的并发上限：安装插件较多时，一次性打出几十个 manifest 请求会同时
+ * 占满连接与主线程回调。限制在 4 路，总耗时与载荷都不受影响。
+ */
+export const PLUGIN_UPDATE_CHECK_CONCURRENCY = 4
+
 // 读取已安装扩展的“可更新”状态（只返回有新版本的）
 export async function getPluginUpdateStates(
   list: InstalledPlugin[],
   market: InstallableItem[],
 ): Promise<Record<string, PluginUpdateState>> {
   const res: Record<string, PluginUpdateState> = {}
-  if (!list.length) return res
-  const tasks: Promise<void>[] = []
-  for (const p of list) {
-    if (!p.version) continue
-    tasks.push(
-      (async () => {
-        const url = resolvePluginManifestUrl(p, market)
-        if (!url) return
-        const remote = await fetchRemoteManifestVersion(url)
-        if (!remote) return
-        if (compareVersions(remote, p.version) <= 0) return
-        res[p.id] = { manifestUrl: url, remoteVersion: remote }
-      })(),
-    )
-  }
-  await Promise.all(tasks)
+  const targets = list.filter((p) => !!p.version)
+  if (!targets.length) return res
+  await runWithConcurrency(targets, PLUGIN_UPDATE_CHECK_CONCURRENCY, async (p) => {
+    const url = resolvePluginManifestUrl(p, market)
+    if (!url) return
+    const remote = await fetchRemoteManifestVersion(url)
+    if (!remote) return
+    if (compareVersions(remote, p.version) <= 0) return
+    res[p.id] = { manifestUrl: url, remoteVersion: remote }
+  })
   return res
 }
 
@@ -442,6 +457,9 @@ export async function installPluginFromGitCore(
     throw new Error('无法识别的输入，请输入 URL 或 username/repo[@branch]')
   }
   const manifestText = await fetchTextSmart(parsed.manifestUrl)
+  if (manifestText.length > MAX_PLUGIN_MANIFEST_CHARS) {
+    throw new Error(`manifest.json 过大（>${MAX_PLUGIN_MANIFEST_CHARS} 字符）`)
+  }
   let manifest: PluginManifest
   try {
     manifest = JSON.parse(manifestText) as PluginManifest
@@ -462,6 +480,12 @@ export async function installPluginFromGitCore(
           `请先升级 flyMD 再安装此扩展。`,
       )
     }
+  }
+
+  // 资源清单在下载前先做结构校验：条目过多直接拒绝，避免逐个下载放大攻击面。
+  const assetList = Array.isArray(manifest.assets) ? manifest.assets : []
+  if (assetList.length > MAX_PLUGIN_ASSETS) {
+    throw new Error(`扩展资源条目过多（>${MAX_PLUGIN_ASSETS}）`)
   }
 
   async function ensurePluginPath(
@@ -485,6 +509,9 @@ export async function installPluginFromGitCore(
   const mainRel = sanitizePluginRelPath(manifest.main, 'main.js')
   const mainUrl = parsed.manifestUrl.replace(/manifest\.json$/i, '') + mainRel
   const mainCode = await fetchTextSmart(mainUrl)
+  if (mainCode.length > MAX_PLUGIN_MAIN_CHARS) {
+    throw new Error(`扩展主文件过大（>${MAX_PLUGIN_MAIN_CHARS} 字符）: ${mainRel}`)
+  }
 
   // 保存主文件与 manifest
   const dir = `${PLUGINS_DIR}/${pluginId}`
@@ -502,7 +529,6 @@ export async function installPluginFromGitCore(
   } as any)
 
   // 下载资源文件
-  const assetList = Array.isArray(manifest.assets) ? manifest.assets : []
   const assetBase = parsed.manifestUrl.replace(/manifest\.json$/i, '')
   for (const raw of assetList) {
     let rel: string
@@ -516,6 +542,10 @@ export async function installPluginFromGitCore(
     try {
       await ensurePluginPath(dir, rel)
       const data = await fetchBinarySmart(assetBase + rel)
+      if (data.byteLength > MAX_PLUGIN_ASSET_BYTES) {
+        console.warn(`[Extensions] 跳过超限资源: ${rel} (${data.byteLength} bytes)`)
+        continue
+      }
       await writeFile(`${dir}/${rel}` as any, data, {
         baseDir: BaseDirectory.AppLocalData,
       } as any)
@@ -629,6 +659,10 @@ export async function installPluginFromLocalCore(
       } else {
         try {
           const content = await readFile(srcPath)
+          if (content.byteLength > MAX_PLUGIN_ASSET_BYTES) {
+            console.warn(`[Extensions] 跳过超限文件: ${srcPath} (${content.byteLength} bytes)`)
+            continue
+          }
           await writeFile(destPath as any, content, {
             baseDir: BaseDirectory.AppLocalData,
           } as any)
