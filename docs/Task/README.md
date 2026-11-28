@@ -53,6 +53,14 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-28-outline-collapse-lscache.md](Archive/2026-11/2026-11-28-outline-collapse-lscache.md) — 大纲折叠状态读写走内存缓存（完成 2026-11-28）
+- ✅ [2026-11-28-mermaid-scale-lscache.md](Archive/2026-11/2026-11-28-mermaid-scale-lscache.md) — Mermaid 缩放读取走内存缓存并修复同窗口缓存陈旧（完成 2026-11-28）
+- ✅ [2026-11-28-plugin-update-check-hardening.md](Archive/2026-11/2026-11-28-plugin-update-check-hardening.md) — 插件更新检查并发上限与 manifest 体积上限（完成 2026-11-28）
+- ✅ [2026-11-28-plugin-install-size-caps.md](Archive/2026-11/2026-11-28-plugin-install-size-caps.md) — 插件安装 manifest/main/assets 体积上限（完成 2026-11-28）
+- ✅ [2026-11-28-scan-result-observability.md](Archive/2026-11/2026-11-28-scan-result-observability.md) — 目录文档预扫描结果可观测性（truncated/errors 结构化返回）（完成 2026-11-28）
+- ✅ [2026-11-28-webdav-path-traversal-guard.md](Archive/2026-11/2026-11-28-webdav-path-traversal-guard.md) — WebDAV 同步路径穿越防护（完成 2026-11-28）
+- ✅ [2026-11-28-plugin-install-integration-tests.md](Archive/2026-11/2026-11-28-plugin-install-integration-tests.md) — 插件安装链路 hostile 输入集成测试（完成 2026-11-28）
+- ✅ [2026-11-28-webhook-ssrf-guard.md](Archive/2026-11/2026-11-28-webhook-ssrf-guard.md) — 通知 webhook 出站 URL 校验（SSRF 防护）（完成 2026-11-28）
 - ✅ [2026-11-28-plugin-install-hardening.md](Archive/2026-11/2026-11-28-plugin-install-hardening.md) — 插件安装路径净化、安装风险确认、图片压缩、插件隔离设计文档（完成 2026-11-28）
 - ✅ [2026-11-28-sec-perf-round2.md](Archive/2026-11/2026-11-28-sec-perf-round2.md) — 安全与性能加固第二轮（插件命令边界与契约测试、Rust 参数校验、opener/CSP 收紧、PDF worker/favicon/WebDAV/Mermaid 优化）（完成 2026-11-28）
 - ✅ [2026-11-27-security-perf-hardening.md](Archive/2026-11/2026-11-27-security-perf-hardening.md) — 安全与性能加固（预览 XSS 链、CSP、DOM 注入、更新链路、入口分包、web/server 默认配置）（完成 2026-11-27）
