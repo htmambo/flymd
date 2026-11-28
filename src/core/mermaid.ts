@@ -257,6 +257,17 @@ export function cacheMermaidSvg(code: string, svg: string, renderId: string) {
   } catch {}
 }
 
+/**
+ * 剥掉 mermaid 输出里的空尺寸属性（width="" / height=""）。
+ *
+ * 容器在渲染时不可测量（隐藏面板、分屏尚未布局、游离节点）时，mermaid 可能
+ * 输出空 width，插入 innerHTML 时浏览器会报
+ * `Invalid value for <svg> attribute width=""`。空尺寸没有语义，直接去掉。
+ */
+export function stripEmptySvgSizeAttrs(markup: string): string {
+  return String(markup || '').replace(/\s(?:width|height)\s*=\s*(?:""|'')/gi, '')
+}
+
 // 规范化 Mermaid 生成的 SVG：保证在不同环境下按容器宽度自适应
 export function normalizeMermaidSvg(svgEl: SVGElement) {
   try {

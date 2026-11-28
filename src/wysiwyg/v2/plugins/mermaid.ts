@@ -7,6 +7,7 @@ import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { HighlightCodeBlockNodeView } from './highlight'
 import { attachOverlayError } from '../overlayError'
 import { lsGetStringCached } from '../../../core/lsCache'
+import { stripEmptySvgSizeAttrs } from '../../../core/mermaid'
 
 // 检测当前是否为夜间模式
 function isDarkMode(): boolean {
@@ -76,7 +77,7 @@ async function renderMermaid(container: HTMLElement, code: string) {
     // 包装成带工具条的容器
     container.innerHTML = ''
     const wrap = document.createElement('div')
-    wrap.innerHTML = svg
+    wrap.innerHTML = stripEmptySvgSizeAttrs(svg)
     const svgEl = wrap.firstElementChild as SVGElement | null
     if (svgEl) {
       const fig = document.createElement('div')

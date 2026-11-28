@@ -4,6 +4,7 @@
 import { history } from '@milkdown/plugin-history'
 import { logDebug } from '../../core/logger'
 import { lsGetStringCached } from '../../core/lsCache'
+import { stripEmptySvgSizeAttrs } from '../../core/mermaid'
 import { isCodeContentClipped } from '../../ui/codeExpandClip'
 import { acquireEditLockAsync, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
@@ -2226,7 +2227,7 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
     // 包装为带工具条的容器
     el.innerHTML = ''
     const wrap = document.createElement('div')
-    wrap.innerHTML = svg
+    wrap.innerHTML = stripEmptySvgSizeAttrs(svg)
     const svgEl = wrap.firstElementChild as SVGElement | null
     if (svgEl) {
       const fig = document.createElement('div')

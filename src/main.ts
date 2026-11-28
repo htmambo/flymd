@@ -486,7 +486,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
             svgMarkup = svg.split(renderId).join(desiredId)
           }
           const wrap = document.createElement('div')
-          wrap.innerHTML = svgMarkup || ''
+          wrap.innerHTML = stripEmptySvgSizeAttrs(svgMarkup || '')
           const svgEl = wrap.firstElementChild as SVGElement | null
           if (!svgEl) return { kind: 'noop' }
           try { normalizeMermaidSvg(svgEl) } catch {}
@@ -565,7 +565,7 @@ async function renderMermaidIn(root: HTMLElement): Promise<void> {
 
 
 // Mermaid 工具（已拆分到 core/mermaid.ts）
-import { isMermaidCacheDisabled, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache } from './core/mermaid'
+import { isMermaidCacheDisabled, adjustExistingMermaidSvgsForScale, exportMermaidViaDialog, createMermaidToolsFor, mermaidSvgCacheVersion, getCachedMermaidSvg, cacheMermaidSvg, normalizeMermaidSvg, postAttachMermaidSvgAdjust, invalidateMermaidSvgCache, stripEmptySvgSizeAttrs } from './core/mermaid'
 import { createPreviewMarkdownIt, renderMarkdownCore } from './core/previewRenderer'
 import { enhancePreviewLinks, enhancePreviewImages } from './core/previewDomEnhance'
 // 当前 PDF 预览 URL（iframe 使用），用于页内跳转
@@ -5446,7 +5446,7 @@ try {
           try {
             const { svg } = await mermaid.render(renderId, code)
             const wrap = document.createElement('div')
-            wrap.innerHTML = svg || ''
+            wrap.innerHTML = stripEmptySvgSizeAttrs(svg || '')
             const svgEl = wrap.firstElementChild as SVGElement | null
             if (svgEl) {
               try { normalizeMermaidSvg(svgEl) } catch {}
