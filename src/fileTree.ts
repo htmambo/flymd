@@ -737,6 +737,7 @@ const DIR_DOC_PRESENCE_RETRY_MS = 2000
 
 // 路径 key 归一与段级前缀匹配：抽到独立模块便于单测与复用。
 import { normDirKey } from './fileTreePathKey'
+import { normalizeDocPresenceScanResult } from './core/docPresenceResult'
 // watch 增量失效决策（纯函数，便于单测）：路径归一、祖先链前缀、N=64 降级阈值
 import {
   resolveDocPresenceRefresh,
@@ -788,12 +789,14 @@ async function prefetchDirDocPresence(
   // 未在列表中的目录视为"无文档"，避免返回全量 HashMap 造成的 IPC 体积浪费。
   // 传入 prefixes（增量路径）时 Rust 只扫描前缀子树；不传则 root 整树扫描（现状语义）。
   const prefixMode = !!(prefixes && prefixes.length)
-  const arr = await invoke<string[]>('scan_dirs_doc_presence', {
+  const raw = await invoke<unknown>('scan_dirs_doc_presence', {
     root,
     exts: Array.from(allow),
     maxDepth: 20,
     ...(prefixMode ? { prefixes } : {}),
   })
+  const scan = normalizeDocPresenceScanResult(raw)
+  const arr = scan.dirs
   // 新一轮 prefetch/invalidate 已发起，旧结果丢弃。full-scan 模式新轮必覆盖旧轮；
   // 前缀模式新轮只覆盖自己的前缀 → 本前缀集重排队，由下一次增量预取捎带（FR-3）。
   if (myEpoch !== _dirDocPresenceScanEpoch) {
@@ -815,6 +818,20 @@ async function prefetchDirDocPresence(
     for (const dir of arr || []) {
       _dirDocPresenceScan.set(normDirKey(dir), true)
     }
+  }
+  // 截断/遍历错误：结果只是正例子集（缓存缺失会回退懒检查），但需要在日志里可见。
+  if (scan.truncated || scan.errors > 0) {
+    try {
+      const { logWarn } = await import('./core/logger')
+      logWarn('[扫描] 目录文档预扫描结果不完整', {
+        root,
+        截断: scan.truncated,
+        遍历错误: scan.errors,
+        已访问: scan.visited,
+        返回目录: arr.length,
+        增量模式: prefixMode,
+      })
+    } catch {}
   }
   const cost = Date.now() - t0
   if (cost >= 300) {

@@ -2185,13 +2185,25 @@ async fn flymd_ai_scope_filter(
 // denylist 阻止插件调用此命令。该命令与 flymd_list_markdown_files / list_dir_any 等其他
 // 文件系统命令一致地接受绝对路径（应用自身数据区之外的合法库根也需可扫描）；
 // 真正的插件拦截放在前端包装层。后续可考虑增加 Rust 端"已授权库根"状态以加强纵深防御。
+///
+/// 返回结构体而非裸数组：`truncated` / `errors` / `visited` 是排查"为何某些目录没标出
+/// 文档"的关键信号。截断时 dirs 只是正例的子集（缓存只存 true，缺失会回退懒检查），
+/// 但调用方需要在日志/界面里知道这轮结果不完整。
+#[derive(serde::Serialize)]
+struct DocPresenceScanResult {
+  dirs: Vec<String>,
+  truncated: bool,
+  errors: usize,
+  visited: usize,
+}
+
 #[tauri::command]
 async fn scan_dirs_doc_presence(
   root: String,
   exts: Vec<String>,
   max_depth: Option<usize>,
   prefixes: Option<Vec<String>>,
-) -> Result<Vec<String>, String> {
+) -> Result<DocPresenceScanResult, String> {
   use std::collections::HashSet;
   use std::path::PathBuf;
   use walkdir::WalkDir;
@@ -2230,7 +2242,12 @@ async fn scan_dirs_doc_presence(
       .filter(|e| !e.is_empty())
       .collect();
     if allow.is_empty() {
-      return Ok::<Vec<String>, String>(Vec::new());
+      return Ok::<DocPresenceScanResult, String>(DocPresenceScanResult {
+        dirs: Vec::new(),
+        truncated: false,
+        errors: 0,
+        visited: 0,
+      });
     }
 
     // ---- 可选前缀过滤（增量补扫语义）：Some 且非空时只遍历前缀子树。
@@ -2436,7 +2453,12 @@ async fn scan_dirs_doc_presence(
         result.len()
       );
     }
-    Ok(result)
+    Ok(DocPresenceScanResult {
+      dirs: result,
+      truncated,
+      errors: error_count,
+      visited,
+    })
   })
   .await
   .map_err(|e| format!("join error: {e}"))?

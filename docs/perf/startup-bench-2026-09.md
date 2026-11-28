@@ -69,7 +69,7 @@ TEST_ROOT=/tmp/flymd-perf-bench/library-1000 node /tmp/gen-perf-fixture.js
 
 | 风险 | 当前缓解 | 后续 |
 |---|---|---|
-| `scan_dirs_doc_presence` 截断静默 | `eprintln` 含 root/计数/结果大小 | 升级到结构体返回 `truncated` + `error_samples`，前端可观测 |
+| `scan_dirs_doc_presence` 截断静默 | `eprintln` 含 root/计数/结果大小 | 已升级为结构体返回 `{dirs,truncated,errors,visited}`，前端 `logWarn` 可观测（2026-11-28）；`error_samples` 仅计数未采样 |
 | 平台 FS 大小写启发式 | memoize + UA 兜底 | Rust 端 `cfg!(target_os)` 权威返回 |
 | 遍历错误仅 `eprintln` | dev 可见 | 接 `tauri-plugin-log` |
 | `mermaid` 6.6 MB chunk 触发 vite 警告 | 恢复阈值到 1000 KB | 单独 PR 拆分 mermaid |
