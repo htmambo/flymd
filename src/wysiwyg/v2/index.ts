@@ -3,8 +3,7 @@
 
 import { history } from '@milkdown/plugin-history'
 import { logDebug } from '../../core/logger'
-import { lsGetStringCached } from '../../core/lsCache'
-import { stripEmptySvgSizeAttrs } from '../../core/mermaid'
+import { postAttachMermaidSvgAdjust, scrubInvalidSvgSizeAttrs, stripEmptySvgSizeAttrs } from '../../core/mermaid'
 import { isCodeContentClipped } from '../../ui/codeExpandClip'
 import { acquireEditLockAsync, bindEditLockEditor } from './editLock'
 import { attachOverlayError } from './overlayError'
@@ -2245,6 +2244,7 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
     try {
       const svgEl = el.querySelector('svg') as SVGElement | null
       if (svgEl) {
+        try { scrubInvalidSvgSizeAttrs(svgEl) } catch {}
         try { (svgEl.style as any).display = 'block'; (svgEl.style as any).maxWidth = '100%'; (svgEl.style as any).height = 'auto' } catch {}
         try { if (!svgEl.getAttribute('preserveAspectRatio')) svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet') } catch {}
         try {
@@ -2257,27 +2257,8 @@ async function renderMermaidInto(el: HTMLDivElement, code: string) {
         } catch {}
         try { if (svgEl.hasAttribute('width')) svgEl.removeAttribute('width') } catch {}
         try { if (svgEl.hasAttribute('height')) svgEl.removeAttribute('height') } catch {}
-        setTimeout(() => {
-          try {
-            const bb = (svgEl as any).getBBox ? (svgEl as any).getBBox() : null
-            if (bb && bb.width > 0 && bb.height > 0) {
-              const pad = (() => { try { return Math.max(2, Math.min(24, Math.round(Math.max(bb.width, bb.height) * 0.02))) } catch { return 8 } })()
-              const vx = Math.floor(bb.x) - pad
-              const vy = Math.floor(bb.y) - pad
-              const vw = Math.ceil(bb.width) + pad * 2
-              const vh = Math.ceil(bb.height) + pad * 2
-              svgEl.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`)
-              const host = el.parentElement as HTMLElement | null
-              const pbW = Math.max(0, host?.clientWidth || el.clientWidth || 0)
-              const targetW = vw
-              let scale = 0.75
-              try { const sv = lsGetStringCached('flymd:mermaidScale'); const n = sv ? parseFloat(sv) : NaN; if (Number.isFinite(n) && n > 0) scale = n } catch {}
-              const base = pbW > 0 ? Math.min(pbW, targetW) : targetW
-              const finalW = Math.max(10, Math.round(base * scale))
-              ;(svgEl.style as any).width = finalW + 'px'
-            }
-          } catch {}
-        }, 0)
+        // 同步定宽 + viewBox 贴合时跳过重置，避免挂载后"先满宽再缩回"的布局抖动
+        postAttachMermaidSvgAdjust(svgEl)
       }
     } catch {}
   } catch (e) {

@@ -47,6 +47,16 @@ describe('VirtualPreview', () => {
     expect(content).toBe(firstContent)
   })
 
+  it('同一块区间内重复渲染不重建已挂载内容', async () => {
+    const source = Array.from({ length: 100 }, (_, i) => `段落 ${i}`).join('\n\n')
+    await renderer.setDocument(await createMarkdownBlockModel(source, md))
+    const first = Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]'))
+    await (renderer as any).render()
+    const second = Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]'))
+    expect(second.length).toBe(first.length)
+    expect(second[0]).toBe(first[0])
+  })
+
   it('快速跳转和源码查找会挂载目标块', async () => {
     const source = Array.from({ length: 100 }, (_, i) => `段落 ${i}`).join('\n\n')
     await renderer.setDocument(await createMarkdownBlockModel(source, md))

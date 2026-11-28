@@ -6,8 +6,7 @@ import type { Node } from '@milkdown/prose/model'
 import type { EditorView, NodeView } from '@milkdown/prose/view'
 import { HighlightCodeBlockNodeView } from './highlight'
 import { attachOverlayError } from '../overlayError'
-import { lsGetStringCached } from '../../../core/lsCache'
-import { stripEmptySvgSizeAttrs } from '../../../core/mermaid'
+import { postAttachMermaidSvgAdjust, scrubInvalidSvgSizeAttrs, stripEmptySvgSizeAttrs } from '../../../core/mermaid'
 
 // 检测当前是否为夜间模式
 function isDarkMode(): boolean {
@@ -100,6 +99,7 @@ async function renderMermaid(container: HTMLElement, code: string) {
     try {
       const svgEl = container.querySelector('svg') as SVGElement | null
       if (svgEl) {
+        scrubInvalidSvgSizeAttrs(svgEl)
         svgEl.style.display = 'block'
         svgEl.style.maxWidth = '100%'
         svgEl.style.height = 'auto'
@@ -120,29 +120,8 @@ async function renderMermaid(container: HTMLElement, code: string) {
         if (svgEl.hasAttribute('width')) svgEl.removeAttribute('width')
         if (svgEl.hasAttribute('height')) svgEl.removeAttribute('height')
 
-        setTimeout(() => {
-          try {
-            const bb = (svgEl as any).getBBox ? (svgEl as any).getBBox() : null
-            if (bb && bb.width > 0 && bb.height > 0) {
-              const pad = Math.max(2, Math.min(24, Math.round(Math.max(bb.width, bb.height) * 0.02)))
-              const vx = Math.floor(bb.x) - pad
-              const vy = Math.floor(bb.y) - pad
-              const vw = Math.ceil(bb.width) + pad * 2
-              const vh = Math.ceil(bb.height) + pad * 2
-              svgEl.setAttribute('viewBox', `${vx} ${vy} ${vw} ${vh}`)
-
-              let scale = 0.75
-              try {
-                const sv = lsGetStringCached('flymd:mermaidScale')
-                const n = sv ? parseFloat(sv) : NaN
-                if (Number.isFinite(n) && n > 0) scale = n
-              } catch {}
-
-              const finalW = Math.max(10, Math.round(vw * scale))
-              svgEl.style.width = finalW + 'px'
-            }
-          } catch {}
-        }, 0)
+        // 同步定宽 + viewBox 贴合时跳过重置，避免挂载后"先满宽再缩回"的布局抖动
+        postAttachMermaidSvgAdjust(svgEl)
       }
     } catch {}
   } catch (e) {

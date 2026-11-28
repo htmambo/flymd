@@ -265,12 +265,34 @@ export function cacheMermaidSvg(code: string, svg: string, renderId: string) {
  * `Invalid value for <svg> attribute width=""`。空尺寸没有语义，直接去掉。
  */
 export function stripEmptySvgSizeAttrs(markup: string): string {
-  return String(markup || '').replace(/\s(?:width|height)\s*=\s*(?:""|'')/gi, '')
+  // 兼容空白值与 NaN：WebKit 对这两类同样会报 Invalid value
+  return String(markup || '').replace(/\s(?:width|height)\s*=\s*(["'])\s*(?:NaN)?\s*\1/gi, '')
+}
+
+/**
+ * DOM 层的兜底：在触发样式重算（normalizeMermaidSvg 会写 style）之前，
+ * 移除根节点及其内部 svg 上的非法 width/height。
+ *
+ * WebKit 对 SVG 长度属性的校验可能延迟到样式重算时才报，先把非法值摘掉，
+ * 控制台就不会再出现 `Invalid value for <svg> attribute width=""`。
+ */
+export function scrubInvalidSvgSizeAttrs(root: Element): void {
+  const targets: Element[] = [root, ...Array.from(root.querySelectorAll('svg'))]
+  for (const el of targets) {
+    for (const attr of ['width', 'height']) {
+      const v = el.getAttribute(attr)
+      if (v === null) continue
+      const t = v.trim()
+      if (!t || t === 'NaN') el.removeAttribute(attr)
+    }
+  }
 }
 
 // 规范化 Mermaid 生成的 SVG：保证在不同环境下按容器宽度自适应
 export function normalizeMermaidSvg(svgEl: SVGElement) {
   try {
+    // 先摘掉非法尺寸，避免下面的 style 写入触发 WebKit 的长度属性校验报错
+    try { scrubInvalidSvgSizeAttrs(svgEl) } catch {}
     try { (svgEl.style as any).display = 'block'; (svgEl.style as any).maxWidth = '100%'; (svgEl.style as any).height = 'auto'; (svgEl.style as any).overflow = 'visible' } catch {}
     try { if (!svgEl.getAttribute('preserveAspectRatio')) svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet') } catch {}
     try {
@@ -286,15 +308,72 @@ export function normalizeMermaidSvg(svgEl: SVGElement) {
   } catch {}
 }
 
+/**
+ * 按当前 viewBox 与容器宽度同步写入缩放后的像素宽度。
+ *
+ * 必须在插入 DOM 后的同一个同步块里调用：normalizeMermaidSvg 会摘掉 width/height
+ * 属性，此时 SVG 默认按容器满宽渲染；若等 setTimeout 再缩回，滚动挂载新块时会先
+ * 撑高整块再回缩，虚拟预览据此测得的高度会来回变化，锚点校正把滚动位置拉回原处。
+ * 容器不可测量（隐藏面板、游离节点、宽度为 0）时直接跳过，由 postAttach 的延迟校正兜底。
+ */
+export function applyMermaidSvgScale(svgEl: SVGElement): void {
+  try {
+    const host = (svgEl.closest('.preview-body') as HTMLElement | null) || (svgEl.parentElement as HTMLElement | null)
+    const pbW = Math.max(0, host?.clientWidth || 0)
+    if (pbW <= 0) return
+    const vb = (svgEl.getAttribute('viewBox') || '').trim().split(/[\s,]+/)
+    const vw = parseFloat(vb[2] || '')
+    if (!Number.isFinite(vw) || vw <= 0) return
+    const scale = getMermaidScale()
+    const s = Number.isFinite(scale) && scale > 0 ? scale : 1
+    const finalW = Math.max(10, Math.round(Math.min(Math.ceil(pbW), vw) * s))
+    const next = finalW + 'px'
+    if ((svgEl.style as any).width !== next) (svgEl.style as any).width = next
+  } catch {}
+}
+
+/**
+ * 判断现有 viewBox 是否已经贴合内容 bbox。
+ *
+ * mermaid 自带的 viewBox 通常就是按内容 bbox 算的；每次挂载都按 bbox + 新 padding
+ * 重写一遍会再触发一次布局与高度测量，滚动时表现为图先变大又缩回。已经够贴合时
+ * 直接沿用，只有 viewBox 明显偏大（图"看起来很小"）或没有包住内容时才重置。
+ */
+export function mermaidViewBoxFitsContent(svgEl: SVGElement, bb: { x: number; y: number; width: number; height: number }): boolean {
+  try {
+    const parts = (svgEl.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number)
+    if (parts.length !== 4 || parts.some(n => !Number.isFinite(n))) return false
+    const [vx, vy, vw, vh] = parts
+    if (vw <= 0 || vh <= 0) return false
+    const eps = 1
+    const covers = vx <= bb.x + eps && vy <= bb.y + eps
+      && vx + vw >= bb.x + bb.width - eps && vy + vh >= bb.y + bb.height - eps
+    if (!covers) return false
+    const slackW = vw <= Math.max(bb.width * 1.5, bb.width + 24)
+    const slackH = vh <= Math.max(bb.height * 1.5, bb.height + 24)
+    return slackW && slackH
+  } catch {
+    return false
+  }
+}
+
 // 插入到 DOM 之后再做一次自适应校正：
 // 如果 viewBox 非常大而容器较小，强制用实际内容 bbox 重置 viewBox，避免"看起来很小"。
 export function postAttachMermaidSvgAdjust(svgEl: SVGElement) {
   try {
-    // 放到 DOM 后统一用内容 bbox 重置 viewBox，确保按内容尺寸自适应
+    // 同步先定宽：调用方（renderMermaidIn / wysiwyg 回填）都在插入 DOM 后的同一同步块内调用，
+    // 这样首帧就是缩放后的高度，不会出现"先满宽再缩回"的布局抖动。
+    try { applyMermaidSvgScale(svgEl) } catch {}
+    // 放到 DOM 后统一用内容 bbox 校正 viewBox，确保按内容尺寸自适应
     setTimeout(() => {
       try {
         const bb = (svgEl as any).getBBox ? (svgEl as any).getBBox() : null
         if (bb && isFinite(bb.width) && isFinite(bb.height) && bb.width > 0 && bb.height > 0) {
+          // viewBox 已经贴合内容时不再重写，避免每次挂载都多触发一轮重排/测量
+          if (mermaidViewBoxFitsContent(svgEl, bb)) {
+            applyMermaidSvgScale(svgEl)
+            return
+          }
           const pad = (() => { try { return Math.max(2, Math.min(24, Math.round(Math.max(bb.width, bb.height) * 0.02))) } catch { return 8 } })()
           const vx = Math.floor(bb.x) - pad
           const vy = Math.floor(bb.y) - pad
@@ -305,11 +384,14 @@ export function postAttachMermaidSvgAdjust(svgEl: SVGElement) {
           try {
             const pb = (svgEl.closest('.preview-body') as HTMLElement | null) || (svgEl.parentElement as HTMLElement | null)
             const pbW = Math.max(0, pb?.clientWidth || 0)
-            const targetW = vw
-            const scale = getMermaidScale()
-            const base = pbW > 0 ? Math.min(Math.ceil(pbW), targetW) : targetW
-            const finalW = Math.max(10, Math.round(base * (Number.isFinite(scale) && scale > 0 ? scale : 1)))
-            ;(svgEl.style as any).width = finalW + 'px'
+            if (pbW > 0) {
+              applyMermaidSvgScale(svgEl)
+            } else {
+              // 容器仍不可测量（隐藏面板）：沿用旧兜底，等可见后由 adjustExistingMermaidSvgsForScale 修正
+              const scale = getMermaidScale()
+              const finalW = Math.max(10, Math.round(vw * (Number.isFinite(scale) && scale > 0 ? scale : 1)))
+              ;(svgEl.style as any).width = finalW + 'px'
+            }
           } catch {}
         }
       } catch {}

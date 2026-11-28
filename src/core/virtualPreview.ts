@@ -33,6 +33,8 @@ export class VirtualPreview {
   private footnoteRoot: HTMLElement | null = null
   private heights: number[] = []
   private prefix: number[] = [0]
+  // 已提交到 DOM 的块区间；滚动未跨越块边界时据此跳过整段重建
+  private lastRange: { start: number; end: number } | null = null
   private generation = 0
   private renderSeq = 0
   private raf = 0
@@ -129,6 +131,7 @@ export class VirtualPreview {
     this.content = content
     this.bottomSpacer = bottom
     this.footnoteRoot = null
+    this.lastRange = null
     try { this.resizeObserver?.observe(content) } catch {}
     try { this.resizeObserver?.observe(meta) } catch {}
   }
@@ -193,9 +196,13 @@ export class VirtualPreview {
     const model = this.model
     const content = this.content
     if (!model || !content) return
+    const range = this.visibleRange()
+    // 滚动未跨越块边界时，DOM 里已挂载的内容就是目标区间：
+    // 再 replaceChildren 整段重建会让 mermaid 等异步增强从头重来，
+    // 测高在"占位高度 → 图表最终高度"之间反复跳变，锚点校正会把滚动拉回原处。
+    if (this.lastRange && this.lastRange.start === range.start && this.lastRange.end === range.end) return
     const generation = this.generation
     const seq = ++this.renderSeq
-    const range = this.visibleRange()
     const anchorIndex = Math.max(0, Math.min(model.blocks.length - 1, range.start))
     const anchorKey = model.blocks[anchorIndex]?.key
     const leading = this.metaHost?.offsetHeight || 0
@@ -230,6 +237,7 @@ export class VirtualPreview {
 
     if (generation !== this.generation || seq !== this.renderSeq) return
     content.replaceChildren(...wrappers)
+    this.lastRange = range
     this.topSpacer!.style.height = `${this.prefix[range.start] || 0}px`
     this.bottomSpacer!.style.height = `${Math.max(0, this.prefix[model.blocks.length] - this.prefix[range.end])}px`
     for (const wrapper of wrappers) {
