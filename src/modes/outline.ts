@@ -1,4 +1,5 @@
 import { ensurePdfjsWorker } from '../core/pdfWorker'
+import { lsGetStringCached, lsSetStringCached } from '../core/lsCache'
 
 // 大纲面板子系统(Markdown / WYSIWYG / PDF 三路径统一入口)
 // 抽离自 main.ts:4462-5005(原 outline 滚动同步 + 渲染 + PDF 渲染)。
@@ -246,6 +247,14 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
 
       if (items.length === 0) { outline.innerHTML = '<div class="empty">未检测到标题</div>'; return }
 
+      // 折叠状态记忆(基于当前文件路径)：先读，供箭头初始方向使用。
+      // 渲染路径走 lsCache；同窗口写入必须成对使用 lsSetStringCached，否则缓存陈旧。
+      const collapseFilePath = deps.getCurrentFilePath() || 'untitled'
+      const collapseKey = 'outline-collapsed:' + collapseFilePath
+      const _collapsedRaw = (() => { try { return lsGetStringCached(collapseKey) } catch { return null } })()
+      const collapsed = new Set<string>(_collapsedRaw ? (() => { try { return JSON.parse(_collapsedRaw!) } catch { return [] } })() : [])
+      const saveCollapsed = () => { try { lsSetStringCached(collapseKey, JSON.stringify(Array.from(collapsed))) } catch {} }
+
       // 计算是否有子级(用于折叠/展开,限制到 H1/H2)
       const hasChild = new Map<string, boolean>()
       for (let i = 0; i < items.length; i++) {
@@ -270,20 +279,13 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
         tg.className = 'ol-tg'
         if (it.level <= 2 && hasChild.get(it.id)) {
           tg.dataset.idx = String(idx)
-          tg.textContent = '▾'
+          tg.textContent = collapsed.has(it.id) ? '▸' : '▾'
         }
         row.appendChild(tg)
         row.appendChild(document.createTextNode(it.text))
         frag.appendChild(row)
       })
       outline.replaceChildren(frag)
-
-      // 折叠状态记忆(基于当前文件路径)
-      const filePath = deps.getCurrentFilePath() || 'untitled'
-      const key = 'outline-collapsed:' + filePath
-      const _raw = (() => { try { return localStorage.getItem(key) } catch { return null } })()
-      const collapsed = new Set<string>(_raw ? (() => { try { return JSON.parse(_raw!) } catch { return [] } })() : [])
-      const saveCollapsed = () => { try { localStorage.setItem(key, JSON.stringify(Array.from(collapsed))) } catch {} }
 
       // 应用折叠:根据被折叠的 id 隐藏其后代
       const applyCollapse = () => {
@@ -449,8 +451,8 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
 
         const keyCollapse = 'outline-collapsed:' + filePath
         let collapsed = new Set<string>()
-        try { const raw = localStorage.getItem(keyCollapse); if (raw) collapsed = new Set(JSON.parse(raw)) } catch {}
-        const saveCollapsed = () => { try { localStorage.setItem(keyCollapse, JSON.stringify(Array.from(collapsed))) } catch {} }
+        try { const raw = lsGetStringCached(keyCollapse); if (raw) collapsed = new Set(JSON.parse(raw)) } catch {}
+        const saveCollapsed = () => { try { lsSetStringCached(keyCollapse, JSON.stringify(Array.from(collapsed))) } catch {} }
 
         outlineEl.innerHTML = items.map((it, idx) => {
           const k = String(idx)

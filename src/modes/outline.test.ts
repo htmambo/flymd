@@ -132,6 +132,39 @@ describe('renderOutlinePanel — source mode', () => {
     expect(outline.innerHTML).toBe(firstInner)
   })
 
+  it('折叠状态在重渲染后保持（lsCache 读写一致）', () => {
+    const editor = document.createElement('textarea')
+    editor.value = '# A\n## B\n### C\n\nbody'
+    document.body.appendChild(editor)
+    const outline = document.createElement('div')
+    outline.id = 'lib-outline'
+    document.body.appendChild(outline)
+    let sig = ''
+    const deps = makeDeps({
+      getEditor: () => editor,
+      // 独立文件路径，避免与本文件其它用例的折叠缓存互相影响
+      getCurrentFilePath: () => '/collapse-cache-test.md',
+      getOutlineLastSignature: () => sig,
+      setOutlineLastSignature: (s: string) => { sig = s },
+    })
+    const api = createOutline(deps)
+    api.renderOutlinePanel()
+
+    const firstTg = outline.querySelectorAll('.ol-tg')[0] as HTMLElement
+    expect(firstTg.textContent).toBe('▾')
+    firstTg.click()
+    expect(firstTg.textContent).toBe('▸')
+    expect(outline.querySelectorAll('.ol-item')[1].classList.contains('hidden')).toBe(true)
+
+    // 清签名强制重渲染：折叠状态应从本地缓存读回，箭头方向也保持一致
+    sig = ''
+    api.renderOutlinePanel()
+    const items2 = outline.querySelectorAll('.ol-item')
+    expect((items2[0].querySelector('.ol-tg') as HTMLElement).textContent).toBe('▸')
+    expect(items2[1].classList.contains('hidden')).toBe(true)
+    expect(localStorage.getItem('outline-collapsed:/collapse-cache-test.md')).toContain('h-0-A')
+  })
+
   it('treats heading HTML as text (no executable nodes)', () => {
     const editor = document.createElement('textarea')
     editor.value = '# <img src=x onerror="window.__pwned=1">'
