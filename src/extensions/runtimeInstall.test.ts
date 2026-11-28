@@ -84,6 +84,8 @@ vi.mock('../core/libraryConfig', () => ({
 import {
   installPluginFromGitCore,
   installPluginFromLocalCore,
+  normalizePluginPermissions,
+  PLUGIN_PERMISSIONS,
   MAX_PLUGIN_ASSETS,
   MAX_PLUGIN_ASSET_BYTES,
   MAX_PLUGIN_MAIN_CHARS,
@@ -117,6 +119,19 @@ beforeEach(() => {
   mem.dirs.clear()
   net.routes.clear()
   net.calls.length = 0
+})
+
+describe('normalizePluginPermissions', () => {
+  it('只保留已知权限枚举并去重', () => {
+    expect(normalizePluginPermissions(['fs.read', 'net', 'fs.read', 'ui'])).toEqual(['fs.read', 'net', 'ui'])
+  })
+
+  it('非数组、非字符串、未知项、超长数组均被忽略', () => {
+    expect(normalizePluginPermissions(undefined)).toEqual([])
+    expect(normalizePluginPermissions('fs.read')).toEqual([])
+    expect(normalizePluginPermissions([1, null, 'fs.exec', 'all'])).toEqual([])
+    expect(normalizePluginPermissions([...PLUGIN_PERMISSIONS, ...PLUGIN_PERMISSIONS])).toEqual([...PLUGIN_PERMISSIONS])
+  })
 })
 
 describe('installPluginFromGitCore — hostile manifest', () => {

@@ -24,6 +24,10 @@ import {
 // 尽量保持无副作用，方便 main.ts 以及其他扩展模块复用
 
 // 插件相关类型
+export type PluginPermission = 'fs.read' | 'fs.write' | 'net' | 'ui'
+
+export const PLUGIN_PERMISSIONS: readonly PluginPermission[] = ['fs.read', 'fs.write', 'net', 'ui']
+
 export type PluginManifest = {
   id: string
   name?: string
@@ -33,6 +37,23 @@ export type PluginManifest = {
   main?: string
   minHostVersion?: string
   assets?: string[]
+  permissions?: unknown
+}
+
+/**
+ * 归一化 manifest 的 permissions 声明：只保留已知枚举，拒绝非数组/超长项。
+ *
+ * 目的不是权限隔离（JS 层可绕过），而是给安装确认与后续的权限审计提供
+ * 一个可信的数据源——确认框绝不能使用 manifest 的原始字符串。
+ */
+export function normalizePluginPermissions(raw: unknown): PluginPermission[] {
+  if (!Array.isArray(raw)) return []
+  const out = new Set<PluginPermission>()
+  for (const item of raw.slice(0, PLUGIN_PERMISSIONS.length)) {
+    if (typeof item !== 'string') continue
+    if ((PLUGIN_PERMISSIONS as readonly string[]).includes(item)) out.add(item as PluginPermission)
+  }
+  return Array.from(out)
 }
 
 export type InstalledPlugin = {
@@ -47,6 +68,7 @@ export type InstalledPlugin = {
   builtin?: boolean
   description?: string
   manifestUrl?: string
+  permissions?: PluginPermission[]
 }
 
 export type InstallPluginOptions = {
@@ -570,6 +592,7 @@ export async function installPluginFromGitCore(
     main: mainRel,
     description: manifest.description,
     manifestUrl: parsed.manifestUrl,
+    permissions: normalizePluginPermissions(manifest.permissions),
   }
 
   const map = await loadInstalledPlugins(ctx.store)
@@ -693,6 +716,7 @@ export async function installPluginFromLocalCore(
     main: mainRel,
     description: manifest.description,
     manifestUrl: '', // 本地安装没有 URL
+    permissions: normalizePluginPermissions(manifest.permissions),
   }
 
   const map = await loadInstalledPlugins(ctx.store)

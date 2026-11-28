@@ -53,6 +53,7 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-28-plugin-permission-declaration.md](Archive/2026-11/2026-11-28-plugin-permission-declaration.md) — 插件 permissions 声明归一化（隔离方案 C 的过渡步骤，非安全边界）（完成 2026-11-28）
 - ✅ [2026-11-28-tauri-any-path-guard.md](Archive/2026-11/2026-11-28-tauri-any-path-guard.md) — Tauri 任意路径命令参数校验（拒绝 NUL/控制字符/空路径；scope 收窄评估后不实施）（完成 2026-11-28）
 - ✅ [2026-11-28-incremental-preview-render.md](Archive/2026-11/2026-11-28-incremental-preview-render.md) — 阅读模式增量预览更新（同文编辑复用 DOM，图表不闪不重载）（完成 2026-11-28）
 - ✅ [2026-11-28-post-hardening-smoke-checklist.md](Archive/2026-11/2026-11-28-post-hardening-smoke-checklist.md) — 加固批次人工冒烟（9/9 通过；实测发现的 Mermaid 空尺寸属性已修）（完成 2026-11-28）
