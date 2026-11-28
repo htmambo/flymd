@@ -53,6 +53,7 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-28-entry-name-guard.md](Archive/2026-11/2026-11-28-entry-name-guard.md) — 新建/重命名单段名校验（模板与对话框输入不可信）（完成 2026-11-28）
 - ✅ [2026-11-28-config-backup-path-guard.md](Archive/2026-11/2026-11-28-config-backup-path-guard.md) — 配置备份恢复路径校验（拒绝盘符/ADS/控制字符）（完成 2026-11-28）
 - ✅ [2026-11-28-outline-collapse-lscache.md](Archive/2026-11/2026-11-28-outline-collapse-lscache.md) — 大纲折叠状态读写走内存缓存（完成 2026-11-28）
 - ✅ [2026-11-28-mermaid-scale-lscache.md](Archive/2026-11/2026-11-28-mermaid-scale-lscache.md) — Mermaid 缩放读取走内存缓存并修复同窗口缓存陈旧（完成 2026-11-28）

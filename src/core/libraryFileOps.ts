@@ -10,6 +10,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { exists, mkdir, readDir, remove, stat, writeTextFile } from '@tauri-apps/plugin-fs'
 import { ensureDir, isInside } from './fsSafe'
+import { assertSafeEntryName } from './pathSafety'
 
 /**
  * 安全删除文件/目录。
@@ -97,11 +98,13 @@ export async function deleteFileSafe(p: string, permanent = false, opts?: { root
  * @returns 最终创建的全路径
  */
 export async function newFileSafe(dir: string, name = '新建文档.md', content?: string): Promise<string> {
+  // 名字来自模板 tp.filename 或重命名对话框：必须先按单段名校验，否则可写到库外
+  const baseName = assertSafeEntryName(name)
   const sep = dir.includes('\\') ? '\\' : '/'
-  let n = name
+  let n = baseName
   let i = 1
   while (await exists(dir + sep + n)) {
-    const m = name.match(/^(.*?)(\.[^.]+)$/)
+    const m = baseName.match(/^(.*?)(\.[^.]+)$/)
     const stem = m ? m[1] : name
     const ext = m ? m[2] : ''
     n = `${stem} ${++i}${ext}`
@@ -119,11 +122,12 @@ export async function newFileSafe(dir: string, name = '新建文档.md', content
  * @returns 最终创建的全路径
  */
 export async function newFolderSafe(dir: string, name = '新建文件夹'): Promise<string> {
+  const baseName = assertSafeEntryName(name)
   const sep = dir.includes('\\') ? '\\' : '/'
-  let n = name
+  let n = baseName
   let i = 1
   while (await exists(dir + sep + n)) {
-    n = `${name} ${++i}`
+    n = `${baseName} ${++i}`
   }
   const full = dir + sep + n
   await mkdir(full, { recursive: true } as any)

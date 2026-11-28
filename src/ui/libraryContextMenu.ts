@@ -257,6 +257,7 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
           await deps.openFile(fullPath)
         } catch (e) {
           console.error('新建文件失败', e)
+          alert(e instanceof Error ? e.message : String(e))
         }
       }))
 
@@ -277,6 +278,7 @@ export function initLibraryContextMenu(deps: LibraryContextMenuDeps): void {
           await deps.refreshTree()
         } catch (e) {
           console.error('新建文件夹失败', e)
+          alert(e instanceof Error ? e.message : String(e))
         }
       }))
     }

@@ -118,6 +118,7 @@ import { createImageUploader } from './core/imageUpload'
 import { resolveImageTarget, type ImageTargetDeps } from './core/imageTarget'
 import { hasDownloadableMarkdownImages, rewriteHtmlImagesByDownload, rewriteMarkdownImagesByDownload } from './core/htmlPasteImages'
 import { isInside, ensureDir, moveFileSafe, renameFileSafe, normalizePath, readTextFileAnySafe, writeTextFileAnySafe, statFileAnySafe } from './core/fsSafe'
+import { assertSafeEntryName } from './core/pathSafety'
 import { deleteFileSafe, newFileSafe } from './core/libraryFileOps'
 import { getLibrarySort, setLibrarySort, type LibSortMode } from './core/librarySort'
 
@@ -6225,6 +6226,8 @@ async function renamePathWithDialog(path: string): Promise<string | null> {
     const newStem = await openRenameDialog(oldStem, oldExt)
     if (!newStem || newStem === oldStem) return null
     const name = newStem + oldExt
+    // 对话框输入未净化：含分隔符 / .. 会把文件移到原目录之外
+    try { assertSafeEntryName(name) } catch (e) { alert(e instanceof Error ? e.message : String(e)); return null }
     const dst = base + (base.includes('\\') ? '\\' : '/') + name
     if (await exists(dst)) {
       alert('同名已存在')

@@ -2,6 +2,7 @@
 
 import { mkdir, rename, readFile, writeFile, remove, stat } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
+import { assertSafeEntryName } from './pathSafety'
 
 /** openFileWatcher 用的 file snapshot,跨 plugin-fs scope 兼容 */
 export type FileSnapshot = {
@@ -49,8 +50,10 @@ export async function moveFileSafe(src: string, dst: string): Promise<void> {
 
 // 安全重命名：在同一目录内构造新路径并调用 moveFileSafe
 export async function renameFileSafe(p: string, newName: string): Promise<string> {
+  // 新名必须是单段名：含分隔符 / .. 会把文件移到原目录之外
+  const safeName = assertSafeEntryName(newName)
   const base = p.replace(/[\\/][^\\/]*$/, '')
-  const dst = base + (base.includes('\\') ? '\\' : '/') + newName
+  const dst = base + (base.includes('\\') ? '\\' : '/') + safeName
   await moveFileSafe(p, dst)
   return dst
 }

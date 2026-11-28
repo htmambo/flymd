@@ -43,6 +43,9 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
   writeTextFile: async (p: string, _c: string) => {
     fsState.files.add(p)
   },
+  mkdir: async (p: string) => {
+    fsState.dirs.set(p, [])
+  },
 }))
 
 vi.mock('./fsSafe', () => ({
@@ -56,7 +59,7 @@ beforeEach(() => {
   invokeMock.mockClear()
 })
 
-const { deleteFileSafe, newFileSafe } = await import('./libraryFileOps')
+const { deleteFileSafe, newFileSafe, newFolderSafe } = await import('./libraryFileOps')
 
 describe('deleteFileSafe', () => {
   it('moves file to trash on first try', async () => {
@@ -114,5 +117,28 @@ describe('newFileSafe', () => {
     const p = await newFileSafe('/lib', 'init.md')
     // default content '# 标题\n\n'
     expect(fsState.files.has(p)).toBe(true)
+  })
+
+  it('拒绝越界 / 非法名字（模板与对话框输入不可信）', async () => {
+    for (const bad of ['../evil.md', '..', 'a/b.md', 'a\\b.md', 'C:x.md', 'a\0b.md']) {
+      await expect(newFileSafe('/lib', bad), JSON.stringify(bad)).rejects.toThrow()
+    }
+    // 拒绝时必须零写盘
+    expect(fsState.files.size).toBe(0)
+  })
+})
+
+describe('newFolderSafe', () => {
+  it('创建文件夹与占位 README', async () => {
+    const p = await newFolderSafe('/lib', '新目录')
+    expect(p).toBe('/lib/新目录')
+    expect(fsState.files.has('/lib/新目录/README.md')).toBe(true)
+  })
+
+  it('拒绝越界 / 非法名字', async () => {
+    for (const bad of ['../evil', 'a/b', 'a\\b', 'C:', 'a\0b']) {
+      await expect(newFolderSafe('/lib', bad), JSON.stringify(bad)).rejects.toThrow()
+    }
+    expect(fsState.files.size).toBe(0)
   })
 })
