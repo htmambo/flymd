@@ -93,20 +93,45 @@ export class VirtualPreview {
   }
 
   async setDocument(model: MarkdownBlockModel): Promise<boolean> {
+    // 完全同文（例如重复渲染请求）：沿用原快速路径，render 会因 lastRange 相同而跳过
     if (this.model?.source === model.source && this.root?.isConnected) {
       await this.render()
       return true
     }
     const generation = ++this.generation
+    const prev = this.model
+    // 同一文档的小编辑：保留 shell 与已挂载 DOM，让 render() 按 block key
+    // 只重建变化的块。销毁 shell 会让 mermaid/KaTeX/图片全部重新加载。
+    const sameDoc = !!prev && this.root?.isConnected === true && this.hasOverlappingKeys(prev, model)
+    const prevHeights = sameDoc && prev
+      ? new Map(prev.blocks.map((block, i) => [block.key, this.heights[i] || block.estimatedHeight]))
+      : null
     this.model = model
-    this.heights = model.blocks.map(block => block.estimatedHeight)
+    // 复用块保留已测得的高度（比 estimatedHeight 精确），避免编辑时前缀和跳变
+    this.heights = model.blocks.map(block => prevHeights?.get(block.key) ?? block.estimatedHeight)
     this.rebuildPrefix()
     this.findTerm = ''
     this.findIndex = -1
     this.findOffsets = []
-    this.mountShell()
+    if (sameDoc) {
+      // 强制 render 重新协调：lastRange 相同也会因 block 集合变化而需要更新元数据
+      this.lastRange = null
+    } else {
+      this.mountShell()
+    }
     await this.render()
     return generation === this.generation
+  }
+
+  private hasOverlappingKeys(prev: MarkdownBlockModel, next: MarkdownBlockModel): boolean {
+    if (!prev.blocks.length || !next.blocks.length) return false
+    const prevKeys = new Set(prev.blocks.map(block => block.key))
+    let shared = 0
+    for (const block of next.blocks) {
+      if (prevKeys.has(block.key)) shared++
+      if (shared >= 2) return true
+    }
+    return false
   }
 
   private mountShell(): void {
@@ -222,6 +247,15 @@ export class VirtualPreview {
       const block = model.blocks[i]
       const reused = existing.get(block.key)
       if (reused) {
+        // 复用块时同步新模型的元数据：索引可能随插入/删除变化，
+        // measureMounted / 滚动定位 / 任务勾选都依赖这些 dataset。
+        reused.dataset.blockIndex = String(block.index)
+        reused.dataset.originalStart = String(block.originalStart)
+        reused.dataset.originalEnd = String(block.originalEnd)
+        const heading = headingByBlock.get(block.index)
+        if (heading) reused.querySelector('h1,h2,h3,h4,h5,h6')?.setAttribute('id', heading.id)
+        const boxes = Array.from(reused.querySelectorAll<HTMLInputElement>('input.task-list-item-checkbox'))
+        boxes.forEach((box, i) => { box.dataset.taskId = String(block.taskStart + i) })
         wrappers.push(reused)
         continue
       }

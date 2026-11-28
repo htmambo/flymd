@@ -53,6 +53,7 @@ docs/Task/
 
 ### Archive (新增 2026-06-26)
 
+- ✅ [2026-11-28-incremental-preview-render.md](Archive/2026-11/2026-11-28-incremental-preview-render.md) — 阅读模式增量预览更新（同文编辑复用 DOM，图表不闪不重载）（完成 2026-11-28）
 - ✅ [2026-11-28-post-hardening-smoke-checklist.md](Archive/2026-11/2026-11-28-post-hardening-smoke-checklist.md) — 加固批次人工冒烟（9/9 通过；实测发现的 Mermaid 空尺寸属性已修）（完成 2026-11-28）
 - ✅ [2026-11-28-entry-name-guard.md](Archive/2026-11/2026-11-28-entry-name-guard.md) — 新建/重命名单段名校验（模板与对话框输入不可信）（完成 2026-11-28）
 - ✅ [2026-11-28-config-backup-path-guard.md](Archive/2026-11/2026-11-28-config-backup-path-guard.md) — 配置备份恢复路径校验（拒绝盘符/ADS/控制字符）（完成 2026-11-28）

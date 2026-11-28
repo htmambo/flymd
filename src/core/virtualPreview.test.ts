@@ -74,6 +74,33 @@ describe('VirtualPreview', () => {
     for (const el of reused) expect(first.get(el.dataset.blockKey!)).toBe(el)
   })
 
+  it('同文编辑保留 shell 并复用未变块的 DOM', async () => {
+    const source = Array.from({ length: 30 }, (_, i) => `段落 ${i}`).join('\n\n')
+    await renderer.setDocument(await createMarkdownBlockModel(source, md))
+    const shell = host.querySelector('.virtual-preview-body')
+    const content = host.querySelector('.virtual-preview-content')
+    const first = Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]'))
+    const firstMap = new Map(first.map(el => [el.dataset.blockKey!, el]))
+
+    // 改动末尾一个块：其余块的 key/内容不变
+    const nextSource = source.replace('段落 29', '段落 29 已改')
+    await renderer.setDocument(await createMarkdownBlockModel(nextSource, md))
+    expect(host.querySelector('.virtual-preview-body')).toBe(shell)
+    expect(host.querySelector('.virtual-preview-content')).toBe(content)
+
+    const reused = Array.from(host.querySelectorAll<HTMLElement>('[data-block-key]'))
+      .filter(el => firstMap.has(el.dataset.blockKey!))
+    expect(reused.length).toBeGreaterThan(0)
+    for (const el of reused) expect(firstMap.get(el.dataset.blockKey!)).toBe(el)
+  })
+
+  it('换文档时重建 shell', async () => {
+    await renderer.setDocument(await createMarkdownBlockModel('文档甲内容', md))
+    const shell = host.querySelector('.virtual-preview-body')
+    await renderer.setDocument(await createMarkdownBlockModel('完全不同的文档乙', md))
+    expect(host.querySelector('.virtual-preview-body')).not.toBe(shell)
+  })
+
   it('快速跳转和源码查找会挂载目标块', async () => {
     const source = Array.from({ length: 100 }, (_, i) => `段落 ${i}`).join('\n\n')
     await renderer.setDocument(await createMarkdownBlockModel(source, md))
