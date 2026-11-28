@@ -91,6 +91,14 @@ export function enhancePreviewImages(root: ParentNode, deps: EnhanceImagesDeps):
             el.setAttribute('loading', 'lazy')
           }
         } catch {}
+        // 远程图片：不发送 Referer，避免把本地文档路径/应用来源泄露给图片服务器。
+        // （release CSP 已移除 img-src 的裸 http:，此处主要覆盖 https 图源与 dev 环境）
+        try {
+          const src0 = el.getAttribute('src') || ''
+          if (/^https?:\/\//i.test(src0) && !el.hasAttribute('referrerpolicy')) {
+            el.setAttribute('referrerpolicy', 'no-referrer')
+          }
+        } catch {}
         const src = el.getAttribute('src') || ''
         const abs0 = resolveLocalImageAbsPathFromSrc(src, currentFilePath)
         if (!abs0) return

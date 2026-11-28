@@ -47,8 +47,10 @@ import { createOpenFileWatcher } from './core/openFileWatcher'
 import { attachExternalChangeWatcher } from './core/openFileWatcherIntegration'
 import { readTextFile, writeTextFile, stat, readFile, writeFile, exists } from '@tauri-apps/plugin-fs'
 import { Store } from '@tauri-apps/plugin-store'
-// Tauri v2 插件 opener 的导出为 openUrl / openPath，不再是 open
-import { openPath } from '@tauri-apps/plugin-opener'
+// Tauri v2 插件 opener 的导出为 openUrl（外链）；本地路径统一走受控的 openPathGuarded
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { openPathGuarded } from './core/openPathSafe'
+import { normalizeExternalWebUrl, isAbsoluteNonLocalHref } from './core/externalLink'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
@@ -107,7 +109,7 @@ import {
   setSyncBlockReasonProvider,
   openSyncLog as webdavOpenSyncLog,
   appendSyncLog as webdavAppendSyncLog,
-} from './extensions/webdavSync'
+} from './extensions/webdavSyncFacade'
 
 // 平台适配层（Android 支持）
 import { initPlatformIntegration } from './platform-integration'
@@ -382,6 +384,22 @@ async function renderKatexPlaceholders(root: HTMLElement, forPrint?: boolean, se
     if (typeof ric === 'function') ric(step, { timeout: 200 })
     else setTimeout(() => step(undefined), 0)
   })
+}
+
+// Mermaid 预热：文档包含 mermaid/flow/seq 围栏时，在 Markdown 解析期间并行加载
+// mermaid 模块（6.4MB，惰性 chunk）。renderMermaidIn 仍按需调用 loadMermaid，
+// 两边共享同一动态 import 缓存，不会重复求值。
+let _mermaidPreheatStarted = false
+function maybePreheatMermaid(raw: string): void {
+  if (_mermaidPreheatStarted) return
+  if (!/^[ \t]*(?:`{3,}|~{3,})[ \t]*(?:mermaid|flow|seq)\b/im.test(raw)) return
+  _mermaidPreheatStarted = true
+  void import('./core/mermaidLoader')
+    .then((m) => m.loadMermaid())
+    .catch(() => {
+      // 预热失败允许后续渲染重试（renderMermaidIn 仍会自行加载）
+      _mermaidPreheatStarted = false
+    })
 }
 
 // Mermaid 渲染：将 root 内的 ```mermaid / pre.mermaid 占位转为 SVG 图。
@@ -1597,7 +1615,24 @@ function ensurePreviewLinkHandlingBound(): void {
         }
 
         const resolvedPath = resolvePreviewLocalDocPath(href, currentFilePath)
-        if (!resolvedPath) return
+        if (!resolvedPath) {
+          // 非本地文档链接一律不允许在 WebView 内导航：
+          // - 绝对/协议相对/未知 scheme（含 //evil、ftp:、custom:）先 preventDefault；
+          // - 可识别的 web/mailto/tel 交给系统浏览器；协议相对统一补 https:。
+          if (isAbsoluteNonLocalHref(href)) {
+            ev.preventDefault()
+            try { ev.stopPropagation() } catch {}
+          }
+          const externalUrl = normalizeExternalWebUrl(href)
+          if (externalUrl) {
+            try {
+              await openUrl(externalUrl)
+            } catch (err) {
+              showError('打开链接失败', err)
+            }
+          }
+          return
+        }
 
         ev.preventDefault()
         try { ev.stopPropagation() } catch {}
@@ -3124,6 +3159,8 @@ async function renderPreview(opts?: RenderPreviewOptions) {
   try { logDebug('[renderPreview] ensureRenderer 完成') } catch {}
   if (seq !== _renderPreviewSeq) return
   let raw = editor.value
+  // 与后续 Markdown 解析并行预热 mermaid（仅当文档确实含图表围栏）。
+  try { maybePreheatMermaid(raw) } catch {}
   // 所见模式：用一个”.”标记插入点，优先不破坏 Markdown 结构
   try {
     if (wysiwyg && mode !== 'preview' && !opts?.forPrint) {
@@ -3688,7 +3725,7 @@ async function checkUpdateInteractive() {
         }
         NotificationManager.show('appUpdate', '下载完成，正在打开…', 5000)
         try {
-          await openPath(savePath)
+          await openPathGuarded(savePath)
         } catch {
           showUpdateDownloadedOverlay(savePath, resp as any)
         }
@@ -3784,7 +3821,7 @@ async function showUpdateOverlay(resp: CheckUpdateResp) {
           return
         }
         upMsg('下载完成，正在打开…')
-        try { await openPath(savePath) } catch { showInstallFailedOverlay(savePath, resp) }
+        try { await openPathGuarded(savePath) } catch { showInstallFailedOverlay(savePath, resp) }
       } catch { try { await openInBrowser(resp.htmlUrl) } catch {} }
     }); try { b.classList.add('btn-primary') } catch {} }
     { const b = mkBtn('发布页', () => { void openInBrowser(resp.htmlUrl) }); try { b.classList.add('btn-secondary') } catch {} }
@@ -5438,7 +5475,7 @@ try {
         // Windows 盘符根目录：C: -> C:\ （否则资源管理器会打开“当前目录”而非盘符根）
         if (/^[A-Za-z]:$/.test(target)) target += '\\'
 
-        await openPath(target)
+        await openPathGuarded(target)
       } catch {}
     }
     // 便签模式：以新实例打开并自动进入便签模式
@@ -9136,7 +9173,7 @@ function bindEvents() {
               getStore: () => store,
               pluginNotice,
               showError,
-              confirmNative: (message: string) => confirmNative(message),
+              confirmNative: (message: string, title?: string) => confirmNative(message, title),
               openUploaderDialog,
               openWebdavSyncDialog,
               getWebdavSyncConfig,
@@ -9423,7 +9460,8 @@ function bindEvents() {
             },
           }
           // 把 WebDAV 同步完成统一汇总：刷新库树 + 通知插件
-          setOnSyncComplete(async () => {
+          // （门面是懒加载，注册动作需 await 后再 init，避免初始化时序竞态）
+          await setOnSyncComplete(async () => {
             try {
               await refreshLibraryUiAndTree(true)
             } catch (e) {
@@ -9440,7 +9478,7 @@ function bindEvents() {
             } catch {}
           })
         } catch {}
-        setSyncBlockReasonProvider(() => isTemporaryLibraryActive() ? '临时库不参与 WebDAV 同步' : null)
+        await setSyncBlockReasonProvider(() => isTemporaryLibraryActive() ? '临时库不参与 WebDAV 同步' : null)
         await timedStep('WebDAV初始化', () => initWebdavSync())
       } catch (e) {
         console.warn('[WebDAV] 延迟初始化失败:', e)

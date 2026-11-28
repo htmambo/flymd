@@ -20,6 +20,9 @@ import type { Store } from '@tauri-apps/plugin-store'
 import { getLibraryScope } from '../core/libraryConfig'
 import { readLibraryPrivate, writeLibraryPrivate } from '../core/libraryPrivate'
 import { readTextFileAnySafe, writeTextFileAnySafe } from '../core/fsSafe'
+import { ensurePdfjsWorker } from '../core/pdfWorker'
+import { PLUGINS_DIR } from '../core/configBackup'
+import { sanitizePluginId, sanitizePluginRelPath } from './pluginPath'
 
 // ===== PR-5: 库作用域存储工厂 =====
 // 抽离成独立函数便于单测(类比 createDocPositionStore 模式)。
@@ -88,67 +91,96 @@ import { appLocalDataDir } from '@tauri-apps/api/path'
 import { getHttpClient } from './runtime'
 import type { InstalledPlugin } from './runtime'
 
-// ---- 插件 invoke denylist ----
-// 插件通过 ctx.invoke(cmd, args) 调用 Tauri 命令。原生 invoke 是 raw 暴露，等价于让插件以应用
-// 权限执行任意命令——包括读/写/删除任意绝对路径、扫描整树、删除上传图片、git/http/office 等。
-// 这里在 JS 层封装一层 denylist，阻止插件调用下列"内部/敏感"命令。真正的纵深防御仍应在
-// Rust 端加 scope 校验（参见 main.rs scan_dirs_doc_presence 顶部的 SECURITY 注释）。
+// ---- 插件 invoke 命令边界 ----
+// 插件通过 ctx.invoke(cmd, args) 调用 Tauri 命令。原生 invoke 是 raw 暴露。
 //
-// 列表按"被锁住的攻击面"分组（fs / upload / git / http / office / ai / lock / search / list）。
-// 注：denylist 是"黑名单"——任何不在表内的新命令都将默认放行。新增内部命令时请同步更新本表。
-const PLUGIN_INVOKE_DENYLIST: ReadonlySet<string> = new Set<string>([
-  // 文件系统：任意路径读/写/删/枚举
-  'scan_dirs_doc_presence',
-  'read_text_file_any',
-  'stat_any',
-  'write_text_file_any',
-  'list_dir_any',
-  'force_remove_path',
+// ⚠️ 重要：这里只是“防误用护栏”，**不是安全边界**。插件代码与主窗口同 realm 执行，
+// 可以直接调用 window.__TAURI_INTERNALS__.invoke(...) 绕过本表；真正的隔离需要独立
+// Webview/进程 + capability 拆分（见 docs/security/plugin-invoke-boundary.md）。
+//
+// 命令分两类，必须覆盖 src-tauri/src/main.rs 的 generate_handler! 全表：
+// - PLUGIN_INVOKE_DENYLIST：应用内部命令，插件一律不可调用（破坏性 / 越权 / 内部实现）。
+// - PLUGIN_INVOKE_PUBLIC_API：插件公开 API，官方内置插件与第三方插件均可能依赖。
+// 两者必须互斥且并集等于命令全表；src/extensions/pluginInvokeBoundary.test.ts 会校验。
+// 新增命令时，先决定归类，再同步本表与测试——否则 CI 失败。
+export const PLUGIN_INVOKE_DENYLIST: ReadonlySet<string> = new Set<string>([
+  // 破坏性 / 权限提升
   'move_to_trash',
   'write_file_atomic',
+  'cleanup_stale_tmp_files',
   'try_lock_file',
   'unlock_file',
   'read_file_locked',
   'write_file_locked',
-  // AI 写入护栏：命令的 library_root 参数若由插件提供，恶意插件可传
-  // libraryRoot="/" 让回滚写到库外的任意路径。因此**禁止插件直接调用**，
-  // 改由宿主提供 aiGuardList / aiGuardRollbackLast（库根由宿主决定）。
+  // 整树扫描与全文搜索：性能/隐私敏感，插件应通过宿主 API 而非直接调用
+  'scan_dirs_doc_presence',
+  'flymd_search_files_content',
+  // 更新链路：只能由宿主发起，避免插件把应用当作下载/安装原语
+  'check_update',
+  'download_file',
+  'run_installer',
+  // AI 写入护栏：library_root 若由插件提供，可让回滚写到库外任意路径
   'ai_guard_snapshot',
   'ai_guard_preview',
   'ai_guard_restore',
   'ai_guard_list',
-  // 上传图床管理
+  // 网络代理设置：改全局代理等于劫持后续所有请求
+  'set_network_proxy',
+  // 办公文档内部转换链路（宿主 officePreview 使用）
+  'office_probe',
+  'office_preview_cache_path',
+  'docx_to_markdown',
+  'office_to_pdf',
+  // 任意二进制读取（无扩展名/内容限制，宿主 officePreview 使用）
+  'read_file_bytes_any',
+  // 文件/安装包打开原语（宿主更新与导出流程使用）
+  'open_path_guarded',
+])
+
+// 插件公开 API：显式列出，便于契约测试发现遗漏。
+// 注意：read_text_file_any / write_text_file_any / force_remove_path / list_dir_any 仍是
+// 大权限命令——官方插件（ai-novel、note-templates 等）依赖它们，短期内无法收紧；
+// 它们的安全性取决于“插件是否可信”，而非本表。
+export const PLUGIN_INVOKE_PUBLIC_API: ReadonlySet<string> = new Set<string>([
+  'upload_to_s3',
+  'presign_put',
   'flymd_record_uploaded_image',
   'flymd_list_uploaded_images',
   'flymd_delete_uploaded_image',
-  'flymd_piclist_upload',
-  // 列表/搜索
-  'flymd_list_markdown_files',
-  'flymd_search_files_content',
-  // 办公文档转换
-  'office_to_markdown',
-  'office_supported',
-  // Git
-  'git_status',
-  'git_diff',
-  'git_log',
-  'git_show',
-  'git_commit',
-  'git_pull',
-  'git_push',
-  'git_fetch',
-  'git_clone',
-  'git_init',
-  'git_add',
-  'git_reset',
-  'git_checkout',
-  'git_branch',
-  // 内部 HTTP
-  'http_request',
-  'http_upload',
-  'http_download',
-  // AI
+  'flymd_imgla_list_albums',
+  'flymd_imgla_list_strategies',
+  'flymd_imgla_list_images',
+  'flymd_imgla_delete_image',
+  'flymd_imgla_upload',
+  'force_remove_path',
+  'read_text_file_any',
+  'stat_any',
+  'write_text_file_any',
+  'list_dir_any',
+  'get_pending_open_path',
+  'http_xmlrpc_post',
   'ai_novel_api',
+  'flymd_piclist_upload',
+  'flymd_list_markdown_files',
+  'flymd_ai_scope',
+  'flymd_ai_scope_filter',
+  'git_status_summary',
+  'git_file_history',
+  'git_file_diff',
+  'git_init_repo',
+  'git_commit_snapshot',
+  'git_restore_file_version',
+  'get_network_proxy',
+  'android_pick_document',
+  'android_create_document',
+  'android_read_uri',
+  'android_write_uri',
+  'android_persist_uri_permission',
+  'get_cli_args',
+  'get_platform',
+  'get_virtual_screen_size',
+  'open_as_sticky_note',
+  'flymd_window_ready',
 ])
 
 function pluginInvoke(cmd: string, args?: Record<string, unknown>): Promise<any> {
@@ -342,61 +374,9 @@ async function getPdfjsForTools(): Promise<any> {
 }
 
 // pdfjs-dist v5+ 在某些打包/运行时环境下需要显式配置 workerSrc/workerPort。
-// 否则首次调用 getDocument 可能直接报：No "GlobalWorkerOptions.workerSrc" specified.
-let _pdfjsWorkerForToolsPromise: Promise<boolean> | null = null
-let _pdfjsWorkerForTools: Worker | null = null
-
-function hasPdfjsWorkerConfigured(pdfjs: any): boolean {
-  try {
-    const g = pdfjs?.GlobalWorkerOptions
-    if (!g) return false
-    if ((g as any).workerPort) return true
-    const src = (g as any).workerSrc
-    return typeof src === 'string' && !!src
-  } catch {
-    return false
-  }
-}
-
+// 具体初始化收敛到 core/pdfWorker，避免 `?worker` 与 `?url` 两份产物同时打包。
 async function ensurePdfjsWorkerForTools(pdfjs: any): Promise<boolean> {
-  if (hasPdfjsWorkerConfigured(pdfjs)) return true
-  if (_pdfjsWorkerForToolsPromise) return _pdfjsWorkerForToolsPromise
-
-  _pdfjsWorkerForToolsPromise = (async () => {
-    const g = pdfjs?.GlobalWorkerOptions
-    if (!g) return false
-
-    // 先尝试使用 workerPort（不依赖 workerSrc 字符串）
-    try {
-      if (_pdfjsWorkerForTools) {
-        try { (g as any).workerPort = _pdfjsWorkerForTools } catch {}
-        return hasPdfjsWorkerConfigured(pdfjs)
-      }
-
-      const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')
-      const WorkerCtor: any = workerMod?.default || workerMod
-      const worker: Worker = new WorkerCtor()
-      _pdfjsWorkerForTools = worker
-      try { (g as any).workerPort = worker } catch {}
-      if (hasPdfjsWorkerConfigured(pdfjs)) return true
-    } catch {}
-
-    // fallback：尝试配置 workerSrc（URL）
-    try {
-      const urlMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?url')
-      const url: any = urlMod?.default || urlMod
-      if (typeof url === 'string' && url) {
-        try { (g as any).workerSrc = url } catch {}
-        if (hasPdfjsWorkerConfigured(pdfjs)) return true
-      }
-    } catch {}
-
-    return hasPdfjsWorkerConfigured(pdfjs)
-  })().finally(() => {
-    _pdfjsWorkerForToolsPromise = null
-  })
-
-  return _pdfjsWorkerForToolsPromise
+  return ensurePdfjsWorker(pdfjs)
 }
 
 async function getAppLocalDataDirCached(): Promise<string | null> {
@@ -430,9 +410,13 @@ async function resolvePluginInstallAbsolute(dir: string): Promise<string | null>
 function toPluginAssetUrl(absDir: string | null, relPath: string): string {
   try {
     if (!absDir) return ''
-    let rel = String(relPath || '').trim()
+    let rel = ''
+    try {
+      rel = sanitizePluginRelPath(relPath, '')
+    } catch {
+      return ''
+    }
     if (!rel) return ''
-    rel = rel.replace(/^[/\\]+/, '').replace(/[\\/]+/g, '/')
     const sep = absDir.includes('\\') ? '\\' : '/'
     const abs = absDir + sep + rel.replace(/\//g, sep)
     return typeof convertFileSrc === 'function' ? convertFileSrc(abs) : abs
@@ -752,8 +736,28 @@ function applyTextEditToTextarea(
   } catch {}
 }
 
+// 历史安装记录里的 dir 可能来自旧版本（未净化）：读取/拼资产 URL 前统一校验。
+function safePluginDir(p: InstalledPlugin): string {
+  const rawDir = String(p.dir || '')
+  if (
+    rawDir.startsWith(`${PLUGINS_DIR}/`) &&
+    !rawDir.includes('..') &&
+    !rawDir.includes('\\') &&
+    !/%2e|%2f/i.test(rawDir)
+  ) {
+    return rawDir
+  }
+  return `${PLUGINS_DIR}/${sanitizePluginId(p.id)}`
+}
+
 async function readPluginMainCode(p: InstalledPlugin): Promise<string> {
-  const path = `${p.dir}/${p.main || 'main.js'}`
+  let rel = 'main.js'
+  try {
+    rel = sanitizePluginRelPath(p.main, 'main.js')
+  } catch (e) {
+    console.warn(`[Plugin ${p.id}] 非法 main 路径，回退 main.js:`, e)
+  }
+  const path = `${safePluginDir(p)}/${rel}`
   return await readTextFile(path as any, {
     baseDir: BaseDirectory.AppLocalData,
   } as any)
@@ -874,7 +878,7 @@ export function createPluginHost(
       try { URL.revokeObjectURL(blobUrl) } catch {}
     }
     const http = await getHttpClient()
-    const pluginAssetsAbs = await resolvePluginInstallAbsolute(p.dir)
+    const pluginAssetsAbs = await resolvePluginInstallAbsolute(safePluginDir(p))
 
     async function openAiWindow() {
       try {

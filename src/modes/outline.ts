@@ -1,3 +1,5 @@
+import { ensurePdfjsWorker } from '../core/pdfWorker'
+
 // 大纲面板子系统(Markdown / WYSIWYG / PDF 三路径统一入口)
 // 抽离自 main.ts:4462-5005(原 outline 滚动同步 + 渲染 + PDF 渲染)。
 // 抽离理由:7 个非 PDF 函数 + 2 个 PDF 函数 + 大量共享 main-local 闭包
@@ -530,17 +532,15 @@ export function createOutline(deps: OutlineDeps): OutlineApi {
 
       let disableWorker = true
       try {
-        const workerMod: any = await import('pdfjs-dist/build/pdf.worker.min.mjs?worker')
-        const WorkerCtor: any = workerMod?.default || workerMod
-        const worker: Worker = new WorkerCtor()
-        if ((pdfjs as any).GlobalWorkerOptions) {
-          ;(pdfjs as any).GlobalWorkerOptions.workerPort = worker
+        // 统一走 core/pdfWorker：只打包一份 worker 资产（?url + module worker）。
+        if (await ensurePdfjsWorker(pdfjs)) {
           disableWorker = false
-          deps.logDebug('PDF 目录:workerPort 已设置')
+          deps.logDebug('PDF 目录:worker 已配置')
+        } else {
+          deps.logWarn('PDF 目录:worker 配置失败(将禁用 worker)', null)
         }
       } catch (e) {
-        deps.logWarn('PDF 目录:workerPort 设置失败(将禁用 worker)', e)
-        try { if ((pdfjs as any).GlobalWorkerOptions) (pdfjs as any).GlobalWorkerOptions.workerSrc = null } catch {}
+        deps.logWarn('PDF 目录:worker 配置异常(将禁用 worker)', e)
       }
 
       let bytes: Uint8Array

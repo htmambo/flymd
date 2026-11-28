@@ -25,7 +25,7 @@ export interface ExtensionsPanelHost {
   getStore(): Store | null
   pluginNotice(msg: string, level?: 'ok' | 'err', ms?: number): void
   showError(msg: string, err?: unknown): void
-  confirmNative(message: string): Promise<boolean>
+  confirmNative(message: string, title?: string): Promise<boolean>
   openUploaderDialog(): void | Promise<void>
   openWebdavSyncDialog(): void | Promise<void>
   getWebdavSyncConfig(): Promise<{ enabled: boolean }>
@@ -47,6 +47,21 @@ export interface ExtensionsPanelHost {
 }
 
 let host: ExtensionsPanelHost | null = null
+
+// 安装前风险确认：扩展以应用权限运行（可读写本机文件、访问网络）。
+// 自动更新走 runtime core，不经过这里，避免每次启动弹窗。
+async function confirmInstall(source: string, name?: string): Promise<boolean> {
+  if (!host) return false
+  const label = name ? `${name} — ${source}` : source
+  try {
+    return await host.confirmNative(
+      t('ext.install.confirmRisk', { source: label }),
+      t('ext.install.confirmTitle'),
+    )
+  } catch {
+    return false
+  }
+}
 
 // 官方扩展在市场中的多语言映射（按插件 id → i18n key）
 const MARKET_OFFICIAL_I18N: Record<string, { name: string; author: string; desc: string }> = {
@@ -1097,6 +1112,7 @@ export async function refreshExtensionsUI(): Promise<void> {
           const btnInstall = document.createElement('button'); btnInstall.className = 'btn primary'; btnInstall.textContent = t('ext.install.btn')
           btnInstall.addEventListener('click', async () => {
             try {
+              if (!(await confirmInstall(it.install.ref, it.name))) return
               btnInstall.textContent = t('ext.install.btn') + '...'; (btnInstall as HTMLButtonElement).disabled = true
               const rec = await host!.installPluginFromGit(it.install.ref)
               await host!.activatePlugin(rec)
@@ -1267,6 +1283,7 @@ function ensureExtensionsOverlayMounted(): void {
     if (!host) return
     const v = (_extInstallInput?.value || '').trim()
     if (!v) return
+    if (!(await confirmInstall(v))) return
     try {
       let rec: InstalledPlugin
       if (isLikelyLocalPath(v)) {

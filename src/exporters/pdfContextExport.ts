@@ -3,7 +3,7 @@
 
 import { readTextFile, writeFile } from '@tauri-apps/plugin-fs'
 import { save } from '@tauri-apps/plugin-dialog'
-import { openPath } from '@tauri-apps/plugin-opener'
+import { openPathGuarded } from '../core/openPathSafe'
 import { exportPdf } from './pdf'
 
 export interface PdfExportOptions {
@@ -182,11 +182,11 @@ export async function exportFileToPdf(options: PdfExportOptions): Promise<void> 
         {
           label: '打开 PDF',
           primary: true,
-          onClick: () => { try { void openPath(savePath) } catch (e) { console.error('[PDF导出] 打开 PDF 失败:', e) } },
+          onClick: () => { try { void openPathGuarded(savePath) } catch (e) { console.error('[PDF导出] 打开 PDF 失败:', e) } },
         },
         {
           label: '在文件夹中查看',
-          onClick: () => { try { if (parentDir) void openPath(parentDir) } catch (e) { console.error('[PDF导出] 打开文件夹失败:', e) } },
+          onClick: () => { try { if (parentDir) void openPathGuarded(parentDir) } catch (e) { console.error('[PDF导出] 打开文件夹失败:', e) } },
         },
         {
           label: '关闭',

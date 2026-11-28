@@ -109,6 +109,7 @@ describe('enhancePreviewImages', () => {
     const img = root.querySelector('img') as HTMLImageElement
     expect(img.hasAttribute('data-abs-path')).toBe(false)
     expect(img.getAttribute('loading')).toBe('lazy') // 懒加载仍适用
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer') // 不泄露来源
     expect(img.src).toBe('https://example.com/remote.png')
   })
 

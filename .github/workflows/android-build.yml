@@ -1,5 +1,9 @@
 name: Android Build
 
+# 与 build.yml 保持一致：构建只需读取仓库内容，避免默认写权限。
+permissions:
+  contents: read
+
 on:
   # 仅手动触发构建（禁用自动触发）
   workflow_dispatch:

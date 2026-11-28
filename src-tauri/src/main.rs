@@ -23,6 +23,9 @@ pub struct AppState {
   // 例外（保留独立 client，无法 per-request 复原，与 ai_novel 同列）：
   //   ai_novel_api —— connect_timeout / http1_only / pool_max_idle_per_host(0) 均为 client 级配置。
   pub http: reqwest::Client,
+  // XML-RPC 专用 client：默认 client 会跟随重定向，公网 URL 可 302 到 169.254.169.254，
+  // 绕过 validate_xmlrpc_url 的入口校验。这里在每一跳重定向上重新执行同一校验。
+  pub http_xmlrpc: reqwest::Client,
   // T8 S3 client 缓存：key = "endpoint|region|ak|sk|pathStyle" 组合字符串（不哈希，免碰撞），
   // value = (SdkConfig, s3::Client)。锁仅保护查/插两个短临界区，禁止持锁跨 await。
   pub s3_cache: std::sync::Mutex<std::collections::HashMap<String, (aws_config::SdkConfig, aws_sdk_s3::Client)>>,
@@ -1654,12 +1657,123 @@ struct XmlHttpReq {
   xml: String,
 }
 
+/// XML-RPC 目标校验：只允许 http/https，拒绝 link-local/0.0.0.0/8/云元数据主机。
+///
+/// 私网与回环保留——Typecho 自托管经常是 `http://127.0.0.1` 或 `http://192.168.x.x`。
+/// 这条命令的定位是“内部代理”，所以不追求完全禁 SSRF，只切断最危险的 metadata 通道。
+///
+/// 已知残余：不做 DNS 解析，主机名解析到 link-local 的情况未覆盖（需要 IP 锁定才能根治）；
+/// 重定向由 AppState.http_xmlrpc 的 custom policy 在每一跳重新执行本校验。
+/// 云元数据 / link-local 等受限地址。私网与回环不放行判断（自托管需要）。
+fn ip_is_blocked(ip: std::net::IpAddr) -> Option<&'static str> {
+  use std::net::IpAddr;
+  match ip {
+    IpAddr::V4(v4) => {
+      let o = v4.octets();
+      if o[0] == 169 && o[1] == 254 {
+        return Some("IPv4 link-local / ECS metadata");
+      }
+      if o[0] == 0 {
+        return Some("0.0.0.0/8");
+      }
+      if o == [100, 100, 100, 200] {
+        return Some("Alibaba Cloud metadata");
+      }
+      if o == [168, 63, 129, 16] {
+        return Some("Azure WireServer");
+      }
+      if o == [192, 0, 0, 192] {
+        return Some("Oracle Cloud metadata");
+      }
+      None
+    }
+    IpAddr::V6(v6) => {
+      if v6.is_unspecified() {
+        return Some("未指定地址");
+      }
+      let s = v6.segments();
+      if (s[0] & 0xffc0) == 0xfe80 {
+        return Some("IPv6 link-local");
+      }
+      // AWS IPv6 IMDS: fd00:ec2::254
+      if s[0] == 0xfd00
+        && s[1] == 0x0ec2
+        && s[2] == 0
+        && s[3] == 0
+        && s[4] == 0
+        && s[5] == 0
+        && s[6] == 0
+        && s[7] == 0x0254
+      {
+        return Some("AWS IPv6 metadata");
+      }
+      if let Some(v4) = v6.to_ipv4_mapped() {
+        return ip_is_blocked(IpAddr::V4(v4));
+      }
+      None
+    }
+  }
+}
+
+fn validate_xmlrpc_url(raw: &str) -> Result<url::Url, String> {
+  let u = url::Url::parse(raw.trim()).map_err(|e| format!("invalid url: {e}"))?;
+  match u.scheme() {
+    "http" | "https" => {}
+    other => return Err(format!("仅允许 http/https，收到 {other}")),
+  }
+  let host = u
+    .host_str()
+    .unwrap_or("")
+    .trim_end_matches('.')
+    .to_ascii_lowercase();
+  if host.is_empty() {
+    return Err("URL 缺少主机名".into());
+  }
+  if host == "metadata.google.internal" || host == "metadata.goog" {
+    return Err("拒绝访问云元数据主机".into());
+  }
+  let ip_host = host.trim_start_matches('[').trim_end_matches(']');
+  if let Ok(ip) = ip_host.parse::<std::net::IpAddr>() {
+    if let Some(reason) = ip_is_blocked(ip) {
+      return Err(format!("拒绝访问受限地址（{reason}）"));
+    }
+  }
+  Ok(u)
+}
+
+/// 初始请求前做一次 DNS 解析校验，拦截 `*.nip.io` 这类解析到 link-local 的主机名。
+/// 注意：仍未锁定解析结果，存在 DNS rebinding TOCTOU；重定向跳只做字面量校验。
+fn resolved_ips_blocked(host: &str, port: u16) -> Result<(), String> {
+  use std::net::ToSocketAddrs;
+  let host = host.trim_start_matches('[').trim_end_matches(']');
+  let Ok(addrs) = (host, port).to_socket_addrs() else {
+    // 解析失败交给 reqwest 报错，避免本地 mDNS/特殊解析器被误杀。
+    return Ok(());
+  };
+  for addr in addrs {
+    if let Some(reason) = ip_is_blocked(addr.ip()) {
+      return Err(format!("目标解析到受限地址（{reason}），已拒绝"));
+    }
+  }
+  Ok(())
+}
+
+/// XML-RPC 响应体上限（8MB）：普通 Typecho 响应远小于此值，同时阻断内存型 DoS。
+const XMLRPC_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
 #[tauri::command]
 async fn http_xmlrpc_post(req: XmlHttpReq, state: State<'_, AppState>) -> Result<String, String> {
+  let target = validate_xmlrpc_url(&req.url)?;
+  // 主机名解析到 link-local/metadata 的初始请求也拒绝（重定向由 client policy 逐跳校验）。
+  let host_for_dns = target.host_str().unwrap_or("").to_string();
+  let port = target.port_or_known_default().unwrap_or(80);
+  tauri::async_runtime::spawn_blocking(move || resolved_ips_blocked(&host_for_dns, port))
+    .await
+    .map_err(|e| format!("join error: {e}"))??;
   // 共享 client：原 builder 仅 .timeout(20s)，此处用 RequestBuilder::timeout 复原（见 AppState 注释审计）
   let res = state
-    .http
-    .post(&req.url)
+    .http_xmlrpc
+    .post(target)
     .timeout(Duration::from_secs(20))
     .header("Content-Type", "text/xml; charset=UTF-8")
     .header("Accept", "text/xml, */*;q=0.1")
@@ -1669,7 +1783,19 @@ async fn http_xmlrpc_post(req: XmlHttpReq, state: State<'_, AppState>) -> Result
     .await
     .map_err(|e| format!("send error: {e}"))?;
   let status = res.status();
-  let text = res.text().await.map_err(|e| format!("read error: {e}"))?;
+  // 流式读取而非 res.text()：先缓冲再检查会在恶意大响应上先耗尽内存。
+  let mut body: Vec<u8> = Vec::new();
+  let mut resp = res;
+  while let Some(chunk) = resp.chunk().await.map_err(|e| format!("read error: {e}"))? {
+    if body.len() + chunk.len() > XMLRPC_MAX_RESPONSE_BYTES {
+      return Err(format!(
+        "响应体超过 {}MB 上限",
+        XMLRPC_MAX_RESPONSE_BYTES / 1024 / 1024
+      ));
+    }
+    body.extend_from_slice(&chunk);
+  }
+  let text = String::from_utf8_lossy(&body).to_string();
   if !status.is_success() {
     return Err(format!("HTTP {}: {}", status.as_u16(), text));
   }
@@ -2780,6 +2906,7 @@ fn main() {
       docx_to_markdown,
       office_to_pdf,
       read_file_bytes_any,
+      open_path_guarded,
       flymd_window_ready
     ])
     .setup(|app| {
@@ -2789,6 +2916,18 @@ fn main() {
       app.manage(AppState {
         window_shown: std::sync::atomic::AtomicBool::new(false),
         http: reqwest::Client::builder().build()?,
+        http_xmlrpc: reqwest::Client::builder()
+          .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 3 {
+              return attempt.stop();
+            }
+            if validate_xmlrpc_url(attempt.url().as_str()).is_ok() {
+              attempt.follow()
+            } else {
+              attempt.stop()
+            }
+          }))
+          .build()?,
         s3_cache: std::sync::Mutex::new(std::collections::HashMap::new()),
         verified_installs: std::sync::Mutex::new(std::collections::HashMap::new()),
         pending_assets: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -3542,6 +3681,27 @@ async fn git_status_summary(repo_path: String) -> Result<GitStatusSummary, Strin
   res
 }
 
+/// 规范化 target 后确认位于 root 内，返回 (canonical_root, canonical_target)。
+/// 用于“只能改仓库内文件”的命令：符号链接会被 canonicalize 解析，
+/// root 内指向外部的 symlink 同样会被拒绝。
+/// Git revision 只接受 4-40 位十六进制：`commit` 会拼进 `git show` 的参数，
+/// 若允许 `--output=/path` 之类的值，git 会把输出写到仓库外。
+fn valid_git_rev(rev: &str) -> bool {
+  (4..=40).contains(&rev.len()) && rev.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn canonical_paths_inside_root(
+  root: &std::path::Path,
+  target: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+  let root_canon = std::fs::canonicalize(root).map_err(|e| format!("仓库路径不可访问: {e}"))?;
+  let target_canon = std::fs::canonicalize(target).map_err(|e| format!("目标文件不可访问: {e}"))?;
+  if !target_canon.starts_with(&root_canon) {
+    return Err("目标文件不在仓库内，已拒绝操作".into());
+  }
+  Ok((root_canon, target_canon))
+}
+
 #[tauri::command]
 async fn git_restore_file_version(
   repo_path: String,
@@ -3561,14 +3721,20 @@ async fn git_restore_file_version(
     if !file.exists() {
       return Err("目标文件不存在".into());
     }
+    if !valid_git_rev(&commit) {
+      return Err("非法 commit 标识（只接受 4-40 位十六进制）".into());
+    }
 
-    let rel = file.strip_prefix(&root).unwrap_or(&file);
+    let (root_canon, file_canon) = canonical_paths_inside_root(&root, &file)?;
+    let rel = file_canon
+      .strip_prefix(&root_canon)
+      .map_err(|_| "目标文件不在仓库内，已拒绝操作".to_string())?;
     let rel_str = rel.to_string_lossy().replace('\\', "/");
 
     let output = git_command()
       .arg("show")
       .arg(format!("{commit}:{rel_str}"))
-      .current_dir(&root)
+      .current_dir(&root_canon)
       .output()
       .map_err(|e| format!("git show error: {e}"))?;
     if !output.status.success() {
@@ -3576,7 +3742,7 @@ async fn git_restore_file_version(
       return Err(if msg.is_empty() { "git show failed".into() } else { msg });
     }
 
-    fs::write(&file, &output.stdout).map_err(|e| format!("写入文件失败: {e}"))?;
+    fs::write(&file_canon, &output.stdout).map_err(|e| format!("写入文件失败: {e}"))?;
     Ok(())
   })
   .await
@@ -3671,6 +3837,11 @@ async fn git_file_diff(
   let res = tauri::async_runtime::spawn_blocking(move || {
     use std::path::PathBuf;
 
+    if let Some(c) = commit_arg.as_deref() {
+      if !valid_git_rev(c) {
+        return Err("非法 commit 标识（只接受 4-40 位十六进制）".into());
+      }
+    }
     let root = PathBuf::from(&repo_path);
     if !root.exists() {
       return Ok::<String, String>(String::new());
@@ -4512,6 +4683,21 @@ async fn office_to_pdf(path: String) -> Result<OfficeToPdfResult, String> {
   Ok(res)
 }
 
+/// 任意字节读取上限（256MB）：docx 兜底转换远小于此值，同时阻断把整个大文件读进内存。
+const MAX_READ_BYTES_ANY: u64 = 256 * 1024 * 1024;
+
+fn check_read_size_any(len: u64) -> Result<(), String> {
+  if len > MAX_READ_BYTES_ANY {
+    Err(format!(
+      "文件过大：{} 字节，上限 {}MB",
+      len,
+      MAX_READ_BYTES_ANY / 1024 / 1024
+    ))
+  } else {
+    Ok(())
+  }
+}
+
 // 读取任意文件字节（供前端 mammoth 兜底读 docx；read_text_file_any 是 lossy 文本，不适用二进制）
 #[tauri::command]
 async fn read_file_bytes_any(path: String) -> Result<Vec<u8>, String> {
@@ -4520,15 +4706,146 @@ async fn read_file_bytes_any(path: String) -> Result<Vec<u8>, String> {
   if !pathbuf.exists() {
     return Err("path not found".into());
   }
+  let meta = std::fs::metadata(&pathbuf).map_err(|e| format!("stat error: {e}"))?;
+  check_read_size_any(meta.len())?;
 
   tauri::async_runtime::spawn_blocking(move || {
-    let mut f = std::fs::File::open(&pathbuf).map_err(|e| format!("open error: {e}"))?;
+    let f = std::fs::File::open(&pathbuf).map_err(|e| format!("open error: {e}"))?;
+    // 再 take(MAX+1)：防止 metadata 检查后文件被追加/替换导致无界读取。
+    let mut limited = f.take(MAX_READ_BYTES_ANY + 1);
     let mut buf = Vec::new();
-    f.read_to_end(&mut buf).map_err(|e| format!("read error: {e}"))?;
+    limited
+      .read_to_end(&mut buf)
+      .map_err(|e| format!("read error: {e}"))?;
+    check_read_size_any(buf.len() as u64)?;
     Ok::<Vec<u8>, String>(buf)
   })
   .await
   .map_err(|e| format!("join error: {e}"))?
+}
+
+const OPEN_PATH_INSTALLER_EXTS: &[&str] = &["exe", "msi", "appimage", "deb", "rpm", "pkg", "dmg"];
+// 不含 html/htm/svg：这些文件可携带脚本，交给系统浏览器打开等于新增执行面。
+const OPEN_PATH_FILE_EXTS: &[&str] = &[
+  "pdf", "md", "markdown", "txt", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif",
+  "mp4", "webm", "mov", "mp3", "wav", "m4a", "flac",
+  "json", "csv", "log",
+];
+
+/// 计算文件 SHA-256（十六进制）。run_installer 与 open_path_guarded 共用。
+fn sha256_file_hex(path: &std::path::Path) -> Result<String, String> {
+  use std::io::Read;
+  let mut file = std::fs::File::open(path).map_err(|e| format!("安装包不可读: {e}"))?;
+  let mut hasher = sha2::Sha256::new();
+  let mut buf = [0u8; 64 * 1024];
+  loop {
+    let n = file.read(&mut buf).map_err(|e| format!("读取安装包失败: {e}"))?;
+    if n == 0 {
+      break;
+    }
+    hasher.update(&buf[..n]);
+  }
+  Ok(hex::encode(hasher.finalize()))
+}
+
+/// 查 download_file 登记过的「路径 → 期望摘要」。注册键可能未 canonicalize
+/// （macOS /var → /private/var 等），这里同时按 canonical 形式匹配。
+fn expected_install_hash(state: &AppState, canon: &std::path::Path) -> Option<String> {
+  let set = state.verified_installs.lock().ok()?;
+  if let Some(v) = set.get(canon) {
+    return Some(v.clone());
+  }
+  for (k, v) in set.iter() {
+    if let Ok(kc) = std::fs::canonicalize(k) {
+      if kc == canon {
+        return Some(v.clone());
+      }
+    }
+  }
+  None
+}
+
+/// 安装包路径是否在 Downloads / temp 内（纯函数，便于单测）。
+fn installer_path_allowed(
+  canon: &std::path::Path,
+  downloads: Option<&std::path::Path>,
+  temp: Option<&std::path::Path>,
+) -> bool {
+  downloads.map(|d| canon.starts_with(d)).unwrap_or(false)
+    || temp.map(|t| canon.starts_with(t)).unwrap_or(false)
+}
+
+/// 扩展名分类：`installer`（仅下载/临时目录）、`file`（普通可打开文件）、None（拒绝）。
+fn open_path_ext_kind(ext: &str) -> Option<&'static str> {
+  if OPEN_PATH_INSTALLER_EXTS.contains(&ext) {
+    Some("installer")
+  } else if OPEN_PATH_FILE_EXTS.contains(&ext) {
+    Some("file")
+  } else {
+    None
+  }
+}
+
+/// 前端文件/目录打开的唯一入口（取代 `opener:allow-open-path` 的 `**` 授权）。
+///
+/// - 目录：交给系统文件管理器；
+/// - 文件：扩展名白名单（文档/图片/音视频），避免把任意可执行文件当“文件”打开；
+/// - 安装包：只允许 Downloads / temp，保留更新流程“下载后手动打开”的回退能力。
+#[tauri::command]
+async fn open_path_guarded(path: String, state: State<'_, AppState>) -> Result<(), String> {
+  use std::path::PathBuf;
+
+  let canon = std::fs::canonicalize(&path).map_err(|e| format!("路径不可访问: {e}"))?;
+  if canon.is_dir() {
+    return tauri_plugin_opener::open_path(&canon, None::<&str>)
+      .map_err(|e| format!("打开目录失败: {e}"));
+  }
+  if !canon.is_file() {
+    return Err("只能打开文件或目录".into());
+  }
+
+  let ext = canon
+    .extension()
+    .and_then(|s| s.to_str())
+    .unwrap_or("")
+    .to_ascii_lowercase();
+
+  match open_path_ext_kind(&ext) {
+    Some("installer") => {
+      let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()
+        .map(PathBuf::from);
+      let downloads = home
+        .as_ref()
+        .and_then(|h| std::fs::canonicalize(h.join("Downloads")).ok());
+      let temp = std::fs::canonicalize(std::env::temp_dir()).ok();
+      if !installer_path_allowed(&canon, downloads.as_deref(), temp.as_deref()) {
+        return Err("安装包只能从下载目录或临时目录打开".into());
+      }
+      // 安装包必须来自 download_file 的登记（SHA-256 已校验），并在打开前重新哈希，
+      // 防止“校验通过后被替换”的 TOCTOU。未登记的文件只允许用户手动打开。
+      let Some(expected) = expected_install_hash(&state, &canon) else {
+        return Err("安装包未通过 SHA-256 校验，已拒绝打开；请通过应用内更新或手动安装".into());
+      };
+      // 大文件哈希放到阻塞线程池，避免占用 Tokio worker（100–500MB 约 0.2–1s）。
+      let hash_path = canon.clone();
+      let got = tauri::async_runtime::spawn_blocking(move || sha256_file_hex(&hash_path))
+        .await
+        .map_err(|e| format!("join error: {e}"))??;
+      if !got.eq_ignore_ascii_case(&expected) {
+        if let Ok(mut set) = state.verified_installs.lock() {
+          set.remove(&canon);
+        }
+        return Err("安装包在打开前被替换，已中止".into());
+      }
+    }
+    Some("file") => {}
+    _ => return Err(format!("拒绝打开该类型文件: .{ext}")),
+  }
+
+  tauri_plugin_opener::open_path(&canon, None::<&str>).map_err(|e| format!("打开失败: {e}"))
 }
 
 // 前端兜底查询：获取并清空待打开路径，避免事件竞态丢失
@@ -4606,42 +4923,23 @@ async fn run_installer(path: String, state: State<'_, AppState>) -> Result<(), S
     let download_dir = std::fs::canonicalize(&download_dir).unwrap_or(download_dir);
     let temp_dir = std::fs::canonicalize(std::env::temp_dir())
       .unwrap_or_else(|_| std::env::temp_dir());
-    if !canon.starts_with(&download_dir) && !canon.starts_with(&temp_dir) {
+    if !installer_path_allowed(&canon, Some(&download_dir), Some(&temp_dir)) {
       return Err("拒绝运行下载目录之外的安装包".into());
     }
 
-    // 先取出「路径 → 期望摘要」，spawn 成功后再消费，避免启动失败后无法重试。
-    let expected = {
-      let set = state
-        .verified_installs
-        .lock()
-        .map_err(|e| format!("state lock error: {e}"))?;
-      set.get(&canon).cloned()
-    };
-    let Some(expected) = expected else {
+    // 复用 download_file 登记的摘要；spawn 前重新哈希防 TOCTOU。
+    let Some(expected) = expected_install_hash(&state, &canon) else {
       return Err("安装包未通过 SHA-256 校验，已拒绝自动运行；请手动打开".into());
     };
-
-    // spawn 前重新计算文件哈希：校验通过后到真正启动之间的时间窗里，
-    // 文件可能被替换（注入 JS 具备 fs 写能力时尤其现实）。
-    {
-      use std::io::Read;
-      let mut file = std::fs::File::open(&canon)
-        .map_err(|e| format!("安装包不可读: {e}"))?;
-      let mut hasher = sha2::Sha256::new();
-      let mut buf = [0u8; 64 * 1024];
-      loop {
-        let n = file.read(&mut buf).map_err(|e| format!("读取安装包失败: {e}"))?;
-        if n == 0 { break; }
-        hasher.update(&buf[..n]);
+    let hash_path = canon.clone();
+    let got = tauri::async_runtime::spawn_blocking(move || sha256_file_hex(&hash_path))
+      .await
+      .map_err(|e| format!("join error: {e}"))??;
+    if !got.eq_ignore_ascii_case(&expected) {
+      if let Ok(mut set) = state.verified_installs.lock() {
+        set.remove(&canon);
       }
-      let got = hex::encode(hasher.finalize());
-      if !got.eq_ignore_ascii_case(&expected) {
-        if let Ok(mut set) = state.verified_installs.lock() {
-          set.remove(&canon);
-        }
-        return Err("安装包在运行前被替换，已中止".into());
-      }
+      return Err("安装包在运行前被替换，已中止".into());
     }
 
     // 路径通过环境变量传入，不拼进 PowerShell 命令串，消除引号/分号注入面。
@@ -5242,5 +5540,154 @@ mod download_hardening_tests {
     assert!(!host_allowed(&Url::parse("https://evilgithub.com/x").unwrap()));
     assert!(!host_allowed(&Url::parse("https://github.com.evil.test/x").unwrap()));
     assert!(!host_allowed(&Url::parse("https://example.com/x").unwrap()));
+  }
+}
+
+#[cfg(test)]
+mod hardening_round2_tests {
+  use super::{
+    canonical_paths_inside_root, check_read_size_any, installer_path_allowed, ip_is_blocked,
+    open_path_ext_kind, valid_git_rev, validate_xmlrpc_url, MAX_READ_BYTES_ANY,
+  };
+  use std::net::IpAddr;
+
+  #[test]
+  fn xmlrpc_allows_public_and_private_http() {
+    assert!(validate_xmlrpc_url("https://blog.example.com/xmlrpc.php").is_ok());
+    // 自托管 Typecho：回环/私网必须保留
+    assert!(validate_xmlrpc_url("http://127.0.0.1:8080/xmlrpc.php").is_ok());
+    assert!(validate_xmlrpc_url("http://192.168.1.20/xmlrpc.php").is_ok());
+  }
+
+  #[test]
+  fn xmlrpc_rejects_dangerous_targets() {
+    assert!(validate_xmlrpc_url("ftp://example.com/x").is_err());
+    assert!(validate_xmlrpc_url("file:///etc/passwd").is_err());
+    assert!(validate_xmlrpc_url("http://169.254.169.254/latest/meta-data/").is_err());
+    assert!(validate_xmlrpc_url("http://0.0.0.0:8080/").is_err());
+    assert!(validate_xmlrpc_url("http://metadata.google.internal/").is_err());
+    assert!(validate_xmlrpc_url("http://metadata.google.internal./").is_err());
+    // WHATWG URL 会把十进制/十六进制/末尾点的 IPv4 归一化，必须仍然命中 link-local。
+    assert!(validate_xmlrpc_url("http://2852039166/").is_err());
+    assert!(validate_xmlrpc_url("http://0xa9.0xfe.0xa9.0xfe/").is_err());
+    assert!(validate_xmlrpc_url("http://169.254.169.254./").is_err());
+    assert!(validate_xmlrpc_url("http://[fe80::1]/").is_err());
+    assert!(validate_xmlrpc_url("http://[::ffff:169.254.169.254]/").is_err());
+    assert!(validate_xmlrpc_url("not a url").is_err());
+  }
+
+  #[test]
+  fn read_size_cap_boundary() {
+    assert!(check_read_size_any(0).is_ok());
+    assert!(check_read_size_any(MAX_READ_BYTES_ANY).is_ok());
+    assert!(check_read_size_any(MAX_READ_BYTES_ANY + 1).is_err());
+  }
+
+  #[test]
+  fn open_path_extension_classification() {
+    assert_eq!(open_path_ext_kind("pdf"), Some("file"));
+    assert_eq!(open_path_ext_kind("md"), Some("file"));
+    assert_eq!(open_path_ext_kind("exe"), Some("installer"));
+    assert_eq!(open_path_ext_kind("appimage"), Some("installer"));
+    assert_eq!(open_path_ext_kind("sh"), None);
+    assert_eq!(open_path_ext_kind("desktop"), None);
+    // 可携带脚本、交给系统浏览器会新增执行面
+    assert_eq!(open_path_ext_kind("html"), None);
+    assert_eq!(open_path_ext_kind("htm"), None);
+    assert_eq!(open_path_ext_kind("svg"), None);
+    assert_eq!(open_path_ext_kind(""), None);
+  }
+
+  #[test]
+  fn git_rev_only_accepts_hex() {
+    assert!(valid_git_rev("abc1234"));
+    assert!(valid_git_rev(&"a".repeat(40)));
+    assert!(!valid_git_rev("abc"));
+    assert!(!valid_git_rev(&"a".repeat(41)));
+    assert!(!valid_git_rev("HEAD"));
+    assert!(!valid_git_rev("--output=/tmp/x"));
+    assert!(!valid_git_rev("abc1234;rm"));
+  }
+
+  #[test]
+  fn metadata_ip_ranges_blocked() {
+    for s in [
+      "169.254.169.254",
+      "169.254.170.2",
+      "100.100.100.200",
+      "168.63.129.16",
+      "192.0.0.192",
+      "0.0.0.0",
+      "::",
+      "fe80::1",
+      "::ffff:169.254.169.254",
+      "fd00:ec2::254",
+    ] {
+      let ip: IpAddr = s.parse().unwrap();
+      assert!(ip_is_blocked(ip).is_some(), "{s} should be blocked");
+    }
+    for s in ["8.8.8.8", "127.0.0.1", "192.168.1.10", "::1"] {
+      let ip: IpAddr = s.parse().unwrap();
+      assert!(ip_is_blocked(ip).is_none(), "{s} should be allowed");
+    }
+  }
+
+  #[test]
+  fn installer_path_allowed_checks_downloads_and_temp() {
+    let base = std::env::temp_dir().join(format!(
+      "flymd-installer-{}-{}",
+      std::process::id(),
+      line!()
+    ));
+    let downloads = base.join("Downloads");
+    let temp = base.join("tmp");
+    let other = base.join("other");
+    for d in [&downloads, &temp, &other] {
+      std::fs::create_dir_all(d).unwrap();
+    }
+    let in_dl = downloads.join("setup.exe");
+    let in_tmp = temp.join("setup.exe");
+    let outside = other.join("setup.exe");
+    for f in [&in_dl, &in_tmp, &outside] {
+      std::fs::write(f, "x").unwrap();
+    }
+
+    assert!(installer_path_allowed(&in_dl, Some(&downloads), Some(&temp)));
+    assert!(installer_path_allowed(&in_tmp, Some(&downloads), Some(&temp)));
+    assert!(!installer_path_allowed(&outside, Some(&downloads), Some(&temp)));
+    // 兄弟目录前缀不能被误判
+    let sibling = base.join("Downloads-backup");
+    std::fs::create_dir_all(&sibling).unwrap();
+    let sibling_file = sibling.join("setup.exe");
+    std::fs::write(&sibling_file, "x").unwrap();
+    assert!(!installer_path_allowed(&sibling_file, Some(&downloads), Some(&temp)));
+
+    let _ = std::fs::remove_dir_all(&base);
+  }
+
+  #[test]
+  fn canonical_paths_reject_outside_root() {
+    let base = std::env::temp_dir().join(format!(
+      "flymd-hardening-{}-{}",
+      std::process::id(),
+      line!()
+    ));
+    let root = base.join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let inside = root.join("a.md");
+    let outside = base.join("outside.md");
+    std::fs::write(&inside, "x").unwrap();
+    std::fs::write(&outside, "y").unwrap();
+
+    assert!(canonical_paths_inside_root(&root, &inside).is_ok());
+    assert!(canonical_paths_inside_root(&root, &outside).is_err());
+    // 兄弟目录前缀不能被误判为同一棵树
+    let sibling = base.join("repo-backup");
+    std::fs::create_dir_all(&sibling).unwrap();
+    let sibling_file = sibling.join("b.md");
+    std::fs::write(&sibling_file, "z").unwrap();
+    assert!(canonical_paths_inside_root(&root, &sibling_file).is_err());
+
+    let _ = std::fs::remove_dir_all(&base);
   }
 }

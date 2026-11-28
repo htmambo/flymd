@@ -1,44 +1,78 @@
-# 插件 invoke 安全边界（2026-09）
+# 插件 invoke 安全边界（2026-11 修订）
+
+## 结论先行
+
+`ctx.invoke` 上的命令名单是**防误用护栏，不是安全边界**。插件代码以 Blob URL 的 ESM 形式运行在
+主窗口同一 realm，可以直接调用 `window.__TAURI_INTERNALS__.invoke(...)`，绕过 `pluginInvoke` 的任何判断。
+因此本文档描述的是“减少事故面”，而不是“隔离恶意插件”。真正的隔离方案见文末「后续方向」。
 
 ## 背景
 
-`3f0bf6f perf(startup): 大库场景下启动期主线程让出与整树文档预扫描` 引入了 `scan_dirs_doc_presence`
-等内部命令供主应用使用，但插件运行时通过 `ctx.invoke(cmd, args)` 调用 Tauri 命令是 **raw 暴露**——
-等价于让插件以应用权限执行任意命令。
+`src/extensions/pluginHost.ts` 通过 `pluginInvoke(cmd, args)` 包装 `ctx.invoke`：
 
-## 威胁模型
+- `PLUGIN_INVOKE_DENYLIST`：应用内部命令，插件一律不可调用；
+- `PLUGIN_INVOKE_PUBLIC_API`：显式列出的插件公开 API；
+- 两者必须互斥，并集等于 `src-tauri/src/main.rs` 中 `generate_handler!` 注册的全部命令。
 
-| 威胁 | 攻击面 | 后果 |
-|---|---|---|
-| 任意文件读取 | `read_text_file_any`、`stat_any`、`list_dir_any` | 信息泄露 |
-| 任意文件写/删 | `write_file_atomic`、`force_remove_path`、`move_to_trash` | 持久破坏 |
-| 整树扫描 | `scan_dirs_doc_presence` | 性能/隐私 |
-| 上传图床管理 | `flymd_record/list/delete_uploaded_image`、`flymd_piclist_upload` | 越权删除 |
-| 列表/搜索 | `flymd_list_markdown_files`、`flymd_search_files_content` | 元数据泄露 |
-| 办公文档 | `office_to_markdown`、`office_supported` | 子进程启动 |
-| Git 操作 | `git_status/diff/log/commit/pull/push/...` | 仓库篡改 |
-| 内部 HTTP | `http_request`、`http_upload`、`http_download` | 网络通道 |
-| AI 调用 | `ai_novel_api` | API 配额滥用 |
+2026-11-28 审计发现旧名单有 23 个条目对应的命令早已不存在，同时 `read_file_bytes_any`、
+`git_restore_file_version`、`http_xmlrpc_post` 等真实敏感命令未被拦截。本轮按真实命令表重建了分类，
+并增加契约测试防止再次漂移。
 
-## 防御模型：denylist 黑名单
+## 命令分类（唯一事实源）
 
-由于插件 API 已稳定且第三方插件可能依赖某些命令，**不引入 allowlist（白名单）**。
-新增 denylist 集中拦截"内部/敏感"命令，列入 8 类共 28 项。
+以代码为准：
 
-实现位置：`src/extensions/pluginHost.ts` 顶部 `PLUGIN_INVOKE_DENYLIST` + `pluginInvoke()`。
+- 内部命令：`src/extensions/pluginHost.ts` 的 `PLUGIN_INVOKE_DENYLIST`
+  —— `move_to_trash`、`write_file_atomic`、文件锁四件套、`scan_dirs_doc_presence`、
+  `flymd_search_files_content`、`check_update`、`download_file`、`run_installer`、
+  `ai_guard_*`、`set_network_proxy`、`office_*`、`docx_to_markdown`、
+  `read_file_bytes_any`、`open_path_guarded`。
+- 公开 API：`PLUGIN_INVOKE_PUBLIC_API`。官方插件（`public/plugins/*`）实际依赖的
+  `read_text_file_any`、`write_text_file_any`、`force_remove_path`、`list_dir_any`、`git_*`、
+  `http_xmlrpc_post`、`upload_to_s3`、`flymd_imgla_*` 等均在此列。
 
-两处暴露点（运行时 ctx L1028 / 插件设置 ctx L2620）已统一替换。
+契约测试 `src/extensions/pluginInvokeBoundary.test.ts` 断言：
 
-## 未来工作
+1. 两份名单互斥；
+2. 并集等于 `generate_handler!` 的真实命令集合（新增/删除命令未分类即失败）；
+3. `public/plugins/*/main.js` 中 `context.invoke('...')` 用到的真实命令必须属于公开 API。
 
-**真正的纵深防御仍在 Rust 端 scope 校验**——denylist 是黑名单模型，新增内部命令时
-**必须**同步更新本表。后续可：
+## 本轮新增的 Rust 侧硬化
 
-1. 在 Tauri command 宏层加权限（`#[tauri::command(rename_all = "snake_case")]` + 权限 attribute）
-2. 在 Rust 端 `scan_dirs_doc_presence` 顶部校验 root 是否在 `app_data_dir` / `app_local_data_dir` / `app_config_dir` 之一内
-3. 用 `cfg!(target_os = "windows" || target_os = "macos")` 权威返回当前进程的"默认 FS"取代前端启发式大小写检测
+即使名单被绕过，以下命令本身也收紧了参数：
 
-## 单元测试覆盖
+- `read_file_bytes_any`：256MB 上限，metadata 预检 + `take(MAX+1)` 防追加竞态。
+- `http_xmlrpc_post`：仅 http/https；拒绝 link-local、0.0.0.0/8、Azure/Alibaba/Oracle/AWS
+  等云元数据地址；流式读取，响应体上限 8MB；初始主机名做 DNS 解析校验，独立 client 在每一跳
+  重定向上重新校验（阻断 302 → 169.254.169.254）。私网/回环保留（Typecho 自托管场景）。
+  残余：解析结果未锁定，重定向跳只做字面量校验，DNS rebinding TOCTOU 需 IP 锁定才能根治。
+- `git_restore_file_version`：canonicalize 后强制目标位于仓库内，拒绝越界与 symlink 逃逸。
+- `git_restore_file_version` / `git_file_diff`：`commit` 只接受 4-40 位十六进制，阻断
+  `--output=/path` 之类借 `git show` 写仓库外文件的参数注入。
+- `open_path_guarded`：前端文件/目录打开的唯一入口，扩展名白名单（不含 html/htm/svg）；
+  安装包仅限 Downloads/temp，且必须命中 `download_file` 登记的 SHA-256 并在打开前重新哈希。
 
-`src/fileTreePathKey.test.ts`（15 用例）覆盖 denylist 周边路径归一与段级前缀匹配。
-`src-tauri/tests/scan_dirs_doc_presence.rs`（11 用例）覆盖后端命令语义。
+> 兼容性提醒：`git_restore_file_version` / `git_file_diff` 的 `commit` 现在只接受 4-40 位十六进制。
+> 从历史列表拿到完整 hash 的插件（官方 git-history）不受影响；若第三方插件传 `HEAD` 或分支名，
+> 需要改为传 hash。
+
+## 为什么仍然不是安全边界
+
+1. 同 realm：插件 ESM 可直接访问 `window.__TAURI_INTERNALS__`、`document`、`fetch`。
+2. capability 仍给主窗口 `fs:allow-*` 且 scope 为 `"**"`，`assetProtocol.scope` 也是 `"**"`。
+3. 插件从市场/GitHub 安装，无签名或内容哈希校验。
+4. 公开 API 里的 `read_text_file_any` / `write_text_file_any` / `force_remove_path` 本身就是大权限；
+   官方插件依赖它们，短期无法移除。
+
+## 后续方向（按收益排序）
+
+1. **窗口/进程隔离**：插件运行在独立 Webview 或 sidecar 进程，只通过消息桥调用宿主白名单方法；
+   主窗口 capability 不再授予 `**` 文件权限。
+2. **签名与固定版本**：插件市场索引增加内容哈希，安装时校验；官方插件用发布密钥签名。
+3. **按库根动态授权**：用 Tauri scope 运行时 API 替代 `"**"`，只放行用户主动打开的库目录。
+4. 若短期无法隔离，至少在安装确认里明确提示“该扩展将以应用权限读写本机文件”。
+
+## 验证
+
+- `pnpm vitest run src/extensions/pluginInvokeBoundary.test.ts`
+- `cargo test --manifest-path src-tauri/Cargo.toml hardening_round2_tests`

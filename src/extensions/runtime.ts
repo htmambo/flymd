@@ -13,6 +13,11 @@ import { PLUGINS_DIR } from '../core/configBackup'
 import { getLibraryScope, readLibraryConfig, writeLibraryConfig } from '../core/libraryConfig'
 import { logInfo, logDebug } from '../core/logger'
 import { raceWithHardBudget } from '../core/hardBudget'
+import {
+  sanitizePluginEntryName,
+  sanitizePluginId,
+  sanitizePluginRelPath,
+} from './pluginPath'
 
 // 插件运行时基础：类型 + 目录保证 + 仓库输入解析 + 版本比较 + HTTP 工具 + 更新检测
 // 尽量保持无副作用，方便 main.ts 以及其他扩展模块复用
@@ -444,6 +449,8 @@ export async function installPluginFromGitCore(
     throw new Error('manifest.json 解析失败')
   }
   if (!manifest?.id) throw new Error('manifest.json 缺少 id')
+  // id 进入目录路径与 Store key，必须先净化（拒绝 ../、分隔符等）。
+  const pluginId = sanitizePluginId(manifest.id)
 
   // 宿主版本兼容性检查
   if (manifest.minHostVersion) {
@@ -475,12 +482,12 @@ export async function installPluginFromGitCore(
     }
   }
 
-  const mainRel = (manifest.main || 'main.js').replace(/^\/+/, '')
+  const mainRel = sanitizePluginRelPath(manifest.main, 'main.js')
   const mainUrl = parsed.manifestUrl.replace(/manifest\.json$/i, '') + mainRel
   const mainCode = await fetchTextSmart(mainUrl)
 
   // 保存主文件与 manifest
-  const dir = `${PLUGINS_DIR}/${manifest.id}`
+  const dir = `${PLUGINS_DIR}/${pluginId}`
   await mkdir(dir as any, {
     baseDir: BaseDirectory.AppLocalData,
     recursive: true,
@@ -498,10 +505,14 @@ export async function installPluginFromGitCore(
   const assetList = Array.isArray(manifest.assets) ? manifest.assets : []
   const assetBase = parsed.manifestUrl.replace(/manifest\.json$/i, '')
   for (const raw of assetList) {
-    let rel = String(raw || '').trim()
+    let rel: string
+    try {
+      rel = sanitizePluginRelPath(raw, '')
+    } catch (e) {
+      console.warn(`[Extensions] 跳过非法资源路径: ${String(raw)}`, e)
+      continue
+    }
     if (!rel) continue
-    rel = rel.replace(/\\/g, '/').replace(/^\/+/, '')
-    if (!rel || rel.includes('..')) continue
     try {
       await ensurePluginPath(dir, rel)
       const data = await fetchBinarySmart(assetBase + rel)
@@ -519,7 +530,7 @@ export async function installPluginFromGitCore(
     opt && typeof opt.showInMenuBar === 'boolean' ? opt.showInMenuBar : false
 
   const record: InstalledPlugin = {
-    id: manifest.id,
+    id: pluginId,
     name: manifest.name,
     version: manifest.version,
     author: manifest.author,
@@ -532,7 +543,7 @@ export async function installPluginFromGitCore(
   }
 
   const map = await loadInstalledPlugins(ctx.store)
-  map[manifest.id] = record
+  map[pluginId] = record
   await saveInstalledPlugins(ctx.store, map)
   return record
 }
@@ -565,6 +576,8 @@ export async function installPluginFromLocalCore(
   }
 
   if (!manifest?.id) throw new Error('manifest.json 缺少 id')
+  // id 进入目录路径与 Store key，必须先净化（拒绝 ../、分隔符等）。
+  const pluginId = sanitizePluginId(manifest.id)
 
   // 宿主版本兼容性检查
   if (manifest.minHostVersion) {
@@ -582,7 +595,12 @@ export async function installPluginFromLocalCore(
   async function copyDirRecursive(
     src: string,
     dest: string,
+    depth = 0,
   ): Promise<void> {
+    if (depth > 20) {
+      console.warn(`[Extensions] 本地安装目录层级过深，已跳过: ${src}`)
+      return
+    }
     try {
       await mkdir(dest as any, {
         baseDir: BaseDirectory.AppLocalData,
@@ -592,11 +610,22 @@ export async function installPluginFromLocalCore(
 
     const entries = await readDir(src)
     for (const entry of entries as any[]) {
-      const srcPath = `${src}/${entry.name}`
-      const destPath = `${dest}/${entry.name}`
+      let name: string
+      try {
+        name = sanitizePluginEntryName(entry?.name)
+      } catch (e) {
+        console.warn(`[Extensions] 跳过非法目录条目: ${String(entry?.name)}`, e)
+        continue
+      }
+      if (entry.isSymlink) {
+        console.warn(`[Extensions] 跳过符号链接条目: ${src}/${name}`)
+        continue
+      }
+      const srcPath = `${src}/${name}`
+      const destPath = `${dest}/${name}`
 
       if (entry.isDirectory) {
-        await copyDirRecursive(srcPath, destPath)
+        await copyDirRecursive(srcPath, destPath, depth + 1)
       } else {
         try {
           const content = await readFile(srcPath)
@@ -610,17 +639,17 @@ export async function installPluginFromLocalCore(
     }
   }
 
-  const dir = `${PLUGINS_DIR}/${manifest.id}`
+  const dir = `${PLUGINS_DIR}/${pluginId}`
   await copyDirRecursive(sourcePath, dir)
 
-  const mainRel = (manifest.main || 'main.js').replace(/^\/+/, '')
+  const mainRel = sanitizePluginRelPath(manifest.main, 'main.js')
   const enabled =
     opt && typeof opt.enabled === 'boolean' ? opt.enabled : true
   const showInMenuBar =
     opt && typeof opt.showInMenuBar === 'boolean' ? opt.showInMenuBar : false
 
   const record: InstalledPlugin = {
-    id: manifest.id,
+    id: pluginId,
     name: manifest.name,
     version: manifest.version,
     author: manifest.author,
@@ -633,7 +662,7 @@ export async function installPluginFromLocalCore(
   }
 
   const map = await loadInstalledPlugins(ctx.store)
-  map[manifest.id] = record
+  map[pluginId] = record
   await saveInstalledPlugins(ctx.store, map)
   return record
 }

@@ -10,6 +10,7 @@ type WebdavMod = {
   isWebdavConfiguredForActiveLibrary: typeof Webdav.isWebdavConfiguredForActiveLibrary
   syncNow: typeof Webdav.syncNow
   setOnSyncComplete: typeof Webdav.setOnSyncComplete
+  setSyncBlockReasonProvider: typeof Webdav.setSyncBlockReasonProvider
   openSyncLog: typeof Webdav.openSyncLog
   appendSyncLog: typeof Webdav.appendSyncLog
 }
@@ -33,7 +34,7 @@ export async function openWebdavSyncDialog(): Promise<void> {
   return mod.openWebdavSyncDialog()
 }
 
-export async function getWebdavSyncConfig(): Promise<ReturnType<typeof Webdav.getWebdavSyncConfig>> {
+export async function getWebdavSyncConfig(): Promise<Awaited<ReturnType<typeof Webdav.getWebdavSyncConfig>>> {
   const mod = await loadMod()
   return mod.getWebdavSyncConfig()
 }
@@ -43,7 +44,7 @@ export async function isWebdavConfiguredForActiveLibrary(): Promise<boolean> {
   return mod.isWebdavConfiguredForActiveLibrary()
 }
 
-export async function syncNow(reason: Parameters<typeof Webdav.syncNow>[0]): Promise<ReturnType<typeof Webdav.syncNow>> {
+export async function syncNow(reason: Parameters<typeof Webdav.syncNow>[0]): Promise<Awaited<ReturnType<typeof Webdav.syncNow>>> {
   const mod = await loadMod()
   return mod.syncNow(reason)
 }
@@ -51,6 +52,13 @@ export async function syncNow(reason: Parameters<typeof Webdav.syncNow>[0]): Pro
 export async function setOnSyncComplete(callback: Parameters<typeof Webdav.setOnSyncComplete>[0]): Promise<void> {
   const mod = await loadMod()
   mod.setOnSyncComplete(callback)
+}
+
+export async function setSyncBlockReasonProvider(
+  provider: Parameters<typeof Webdav.setSyncBlockReasonProvider>[0],
+): Promise<void> {
+  const mod = await loadMod()
+  mod.setSyncBlockReasonProvider(provider)
 }
 
 export async function openSyncLog(): Promise<void> {

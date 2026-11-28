@@ -1,7 +1,7 @@
 // 更新对话框 UI 模块
 // 从 main.ts 拆分：负责 update-overlay 的 DOM 构建与交互（检查更新细节展示等）
 
-import { openPath } from '@tauri-apps/plugin-opener'
+import { openPathGuarded } from '../core/openPathSafe'
 import type { CheckUpdateResp, UpdateExtra } from '../core/updateTypes'
 import { openInBrowser } from '../core/updateUtils'
 
@@ -84,8 +84,8 @@ export function showUpdateDownloadedOverlay(savePath: string, resp: CheckUpdateR
     return b
   }
   const dir = savePath.replace(/[\/\\][^\/\\]+$/, '')
-  mkBtn('直接运行安装包', () => { void openPath(savePath) })
-  mkBtn('打开所在文件夹', () => { if (dir) void openPath(dir) })
+  mkBtn('直接运行安装包', () => { void openPathGuarded(savePath) })
+  mkBtn('打开所在文件夹', () => { if (dir) void openPathGuarded(dir) })
   mkBtn('前往发布页', () => { void openInBrowser(resp.htmlUrl) })
   mkBtn('关闭', () => ov.classList.add('hidden'))
   ov.classList.remove('hidden')
@@ -110,7 +110,7 @@ export function showInstallFailedOverlay(savePath: string, resp: CheckUpdateResp
     act.appendChild(b)
     return b
   }
-  mkBtn('打开下载目录', () => { if (dir) void openPath(dir) })
+  mkBtn('打开下载目录', () => { if (dir) void openPathGuarded(dir) })
   mkBtn('前往发布页', () => { void openInBrowser(resp.htmlUrl) })
   mkBtn('关闭', () => ov.classList.add('hidden'))
   ov.classList.remove('hidden')
